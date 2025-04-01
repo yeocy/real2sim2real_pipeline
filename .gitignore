@@ -1,0 +1,10 @@
+assets/
+checkpoints/
+deps/
+training_results/
+*.egg-info/
+__pycache__/
+our_method_test/acdc_output/
+
+chatgpt_api_key
+execute
