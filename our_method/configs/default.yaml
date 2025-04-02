@@ -57,7 +57,7 @@ pipeline:
       gpt_api_key: null
       gpt_version: 4o
 
-  TaskObjectMatcher:
+  TaskObjectRetrieval:
     call:
       gpt_api_key: null
       gpt_version: 4o

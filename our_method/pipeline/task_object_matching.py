@@ -35,7 +35,7 @@ RE_AXIS_MAT = [
 ]
 
 
-class TaskObjectMatcher:
+class TaskObjectRetrieval:
     """
     2nd Step in ACDC pipeline. This takes in the output from Step 1 (Real World Extraction) and generates
     ordered digital cousin candidates from a given dataset (default is Behavior-1K dataset)
