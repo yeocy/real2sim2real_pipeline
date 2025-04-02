@@ -184,15 +184,15 @@ class TaskObjectSpatialReasoning:
         )
 
         gpt_text_response = gpt(nn_selection_payload)
-
+        print("GPT Response:", gpt_text_response)
         if gpt_text_response is None:
             # Failed, terminate early
             return False, None
-
         if "json" in gpt_text_response.lower() and "```" in gpt_text_response:
             # ```json 또는 ```으로 감싸진 블록 제거
             gpt_text_response = re.sub(r"^```[a-z]*\n|\n```$", "", gpt_text_response.strip(), flags=re.IGNORECASE)
 
+        print("GPT Response:", gpt_text_response)
         try:
             gpt_result = json.loads(gpt_text_response)
         except json.JSONDecodeError as e:

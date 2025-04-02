@@ -85,6 +85,7 @@ def test_acdc_step_4(args):
         # task_obj_output_path=f"{TEST_DIR}/acdc_output/task_output/task_obj_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
+        goal_task = args.goal_task
     )
     del pipeline
 
@@ -200,6 +201,7 @@ if __name__ == "__main__":
                         help="GPT API key to use. Must be compatible with GPT model specified")
     parser.add_argument("--gpt_version", type=str, default="4o", choices=list(GPT.VERSIONS.keys()),
                         help=f"GPT model version to use. Valid options: {list(GPT.VERSIONS.keys())}")
+    parser.add_argument("--goal_task", type=str, default="Give me the cup in the cabinet above the microwave", help=f"User Guieded Task")
 
     args = parser.parse_args()
 

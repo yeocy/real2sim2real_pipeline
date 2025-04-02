@@ -73,6 +73,7 @@ class TaskObjectExtraction:
             step_3_output_path,
             gpt_api_key,
             gpt_version="4o",
+            goal_task = None,
             top_k_categories=3,
             top_k_models=3,
             n_digital_cousins=3,
@@ -124,7 +125,6 @@ class TaskObjectExtraction:
                 None or str: If successful, this will be the absolute path to the main output file. Otherwise, None
         """
         # Sanity check values
-
         # Parse save_dir, and create the directory if it doesn't exist
         if save_dir is None:
             save_dir = os.path.dirname(os.path.dirname(step_1_output_path))
@@ -154,11 +154,11 @@ class TaskObjectExtraction:
         scene_objects_str = str(set(detected_categories_info["phrases"])).strip('[]')
         # task = "Open the cabinet next to the locker and give me the cup inside"
         # task = "Give me the cup in the cabinet above the microwave"
-        task = "Give me the orange in the cabinet above the microwave"
+        # task = "Give me the orange in the cabinet above the microwave"
 
         nn_selection_payload = gpt.payload_task_object_extraction(
             scene_objects_str,
-            task
+            goal_task=goal_task,
         )
 
         gpt_text_response = gpt(nn_selection_payload)
@@ -179,7 +179,7 @@ class TaskObjectExtraction:
         
 
         task_object_extraction_info = {
-            "task": task,
+            "task": goal_task,
             "objects": gpt_json
         }
         

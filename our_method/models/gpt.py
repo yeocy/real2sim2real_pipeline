@@ -1330,7 +1330,7 @@ class GPT:
             ],
             # TODO
             "temperature": 0,
-            "max_tokens": 50
+            "max_tokens": 1000
         }
         return NN_payload
     

@@ -116,6 +116,7 @@ class ACDC:
             task_object_retrieval_path=None,
             gpt_api_key=None,
             gpt_version=None,
+            goal_task = None
     ):
         """
         Executes ACDC, running the following steps:
@@ -163,7 +164,7 @@ class ACDC:
             config["pipeline"]["TaskObjectExtraction"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectSpatialReasoning"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectMatcher"]["call"]["gpt_version"] = gpt_version
-
+        config["pipeline"]["TaskObjectExtraction"]["call"]["goal_task"] = goal_task
         print(f"""
 
 {"#" * 50}
