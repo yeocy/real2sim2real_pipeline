@@ -13,7 +13,7 @@ from our_method.models.feature_matcher import FeatureMatcher
 from our_method.pipeline.extraction import RealWorldExtractor
 from our_method.pipeline.matching import DigitalCousinMatcher
 from our_method.pipeline.real_scene_generation import RealSceneGenerator
-from our_method.pipeline.task_object_matching import TaskObjectRetrieval
+from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
 from our_method.pipeline.task_object_extraction import TaskObjectExtraction
 from our_method.pipeline.task_object_spatial_reasoning import TaskObjectSpatialReasoning
