@@ -15,6 +15,7 @@ from our_method.pipeline.matching import DigitalCousinMatcher
 from our_method.pipeline.real_scene_generation import RealSceneGenerator
 from our_method.pipeline.task_object_matching import TaskObjectMatcher
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
+from our_method.pipeline.task_object_extraction import TaskObjectExtraction
 import omnigibson as og
 
 class ACDC:
@@ -144,7 +145,7 @@ class ACDC:
         config = deepcopy(self.config)
         save_dir = f"{os.path.dirname(input_path)}/acdc_output"
         # Cfg에 Save dir 설정
-        for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "TaskObjectMatcher", "TaskSceneGenerator"]:
+        for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "TaskObjectExtraction", "TaskObjectSpatialReasoning", "TaskObjectMatcher", "TaskSceneGenerator"]:
             cur_save_dir = config["pipeline"][step]["call"].get("save_dir", None)
             assert cur_save_dir is None, f"save_dir should not be specified in {step} config! Got: {cur_save_dir}"
             config["pipeline"][step]["call"]["save_dir"] = save_dir
@@ -152,10 +153,14 @@ class ACDC:
         if gpt_api_key is not None:
             config["pipeline"]["RealWorldExtractor"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["DigitalCousinMatcher"]["call"]["gpt_api_key"] = gpt_api_key
+            config["pipeline"]["TaskObjectExtraction"]["call"]["gpt_api_key"] = gpt_api_key
+            config["pipeline"]["TaskObjectSpatialReasoning"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectMatcher"]["call"]["gpt_api_key"] = gpt_api_key
         if gpt_version is not None:
             config["pipeline"]["RealWorldExtractor"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["DigitalCousinMatcher"]["call"]["gpt_version"] = gpt_version
+            config["pipeline"]["TaskObjectExtraction"]["call"]["gpt_version"] = gpt_version
+            config["pipeline"]["TaskObjectSpatialReasoning"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectMatcher"]["call"]["gpt_version"] = gpt_version
 
         print(f"""
@@ -251,7 +256,6 @@ class ACDC:
                         """)
 
                 step_4 = TaskObjectExtraction(
-                    feature_matcher=fm,
                     verbose=config["pipeline"]["verbose"],
                 )
                 success, step_4_output_path = step_4(

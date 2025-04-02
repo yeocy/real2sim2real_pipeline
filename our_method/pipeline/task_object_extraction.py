@@ -6,6 +6,7 @@ from groundingdino.util.inference import load_image
 import numpy as np
 from pathlib import Path
 from PIL import Image
+import datetime
 import os
 import copy
 import json
@@ -70,7 +71,6 @@ class TaskObjectExtraction:
             step_1_output_path,
             step_2_output_path,
             step_3_output_path,
-            task_spatial_reasing_output_path,
             gpt_api_key,
             gpt_version="4o",
             top_k_categories=3,
@@ -124,16 +124,14 @@ class TaskObjectExtraction:
                 None or str: If successful, this will be the absolute path to the main output file. Otherwise, None
         """
         # Sanity check values
-        assert n_digital_cousins <= top_k_models, \
-            f"n_digital_cousins ({n_digital_cousins}) cannot be greater than top_k_models ({top_k_models})!"
 
         # Parse save_dir, and create the directory if it doesn't exist
         if save_dir is None:
-            save_dir = os.path.dirname(os.path.dirname(task_spatial_reasing_output_path))
-        save_dir = os.path.join(save_dir, "task_object_retrieval")
+            save_dir = os.path.dirname(os.path.dirname(step_1_output_path))
+        save_dir = os.path.join(save_dir, "task_object_extraction")
         Path(save_dir).mkdir(parents=True, exist_ok=True)
         if self.verbose:
-            print(f"Computing digital cousins given output {task_spatial_reasing_output_path}...")
+            print(f"Computing digital cousins given output {step_1_output_path}...")
 
         if self.verbose:
             print("""
@@ -145,12 +143,60 @@ class TaskObjectExtraction:
             """)
 
         # Load meta info
-        with open(task_spatial_reasing_output_path, "r") as f:
-            task_extraction_output_info = json.load(f)
+        with open(step_1_output_path, "r") as f:
+            step_1_output_info = json.load(f)
+        
+        with open(step_1_output_info["detected_categories"], "r") as f:
+            detected_categories_info = json.load(f)
+        
+        gpt = GPT(api_key=gpt_api_key, version=gpt_version)
 
-        with open(step_3_output_path, "r") as f:
-            step_3_output_info = json.load(f)
+        scene_objects_str = str(set(detected_categories_info["phrases"])).strip('[]')
+        # task = "Open the cabinet next to the locker and give me the cup inside"
+        # task = "Give me the cup in the cabinet above the microwave"
+        task = "Give me the orange in the cabinet above the microwave"
 
+        nn_selection_payload = gpt.payload_task_object_extraction(
+            scene_objects_str,
+            task
+        )
+
+        gpt_text_response = gpt(nn_selection_payload)
+
+        if gpt_text_response is None:
+            # Failed, terminate early
+            return False, None
+        
+        print("GPT Response :")
+        print(f"   {gpt_text_response}")
+
+        topk_object_extraction_path = f"{save_dir}/target_object_extraction.json"
+    
+        with open(topk_object_extraction_path, "w+") as f:
+            json.dump(gpt_text_response, f, indent=4)
+
+
+
+        
+        exit()
+
+
+
+
+        # 숫자 모두 추출
+        matches = re.findall(r'\b\d+\b', gpt_text_response)
+
+        print("Extract number list :")
+        print(f"   {matches}")
+
+        # 최대 top_k개만 선택
+        nn_model_indices = [int(m) for m in matches[:top_k_models]]  # 0-based 인덱스로 변환
+        print("final number list :")
+        print(f"   {nn_model_indices}\n")
+
+
+
+        
         obj_name_list = []
         for obj_name, obj_info in task_extraction_output_info["objects"].items():
             obj_name_list.append(obj_name)
@@ -636,14 +682,63 @@ def write_json_like(data, file, indent=0):
     else:
         file.write(str(data))
 
-def json_safe_repr(x):
-    if isinstance(x, str):
-        return '"' + x.replace('"', '\\"') + '"'
-    elif isinstance(x, (int, float)):
-        return str(x)
-    elif isinstance(x, list):
-        return "[" + ",".join(json_safe_repr(i) for i in x) + "]"
-    elif isinstance(x, dict):
-        return "{" + ",".join(f'"{k}":{json_safe_repr(v)}' for k, v in x.items()) + "}"
+def log_query_contents(request_msg, request_img_path, response, log_dir_base="logs", log_dir_tail=""):
+    """
+    현재 날짜와 시간을 파일명으로 사용하여 메시지를 로깅합니다.
+    
+    Parameters:
+    request_msg (list): 로깅할 request 메시지 콘텐츠
+    request_img_path (str): 로깅할 request 이미지 경로
+    response (ChatCompletion): API 응답 객체
+    log_dir_base (str): 로그 파일이 저장될 base 디렉토리 (기본값: "logs")
+    
+    Returns:
+    str: 생성된 로그 파일의 경로
+    """
+    # 로그 디렉토리가 없으면 생성
+    if not os.path.exists(log_dir_base):
+        os.makedirs(log_dir_base)
+    
+    # 현재 날짜와 시간을 가져와서 파일명 형식으로 변환
+    current_time = datetime.datetime.now()
+    timestamp = current_time.strftime("%Y%m%d_%H%M%S")
+    log_dir = os.path.join(log_dir_base, f"{timestamp}{log_dir_tail}")
+    os.makedirs(log_dir)
+    
+    request_filename = 'query_contents_request.txt'
+    response_filename = 'query_contents_response.txt'
+    
+    # 전체 파일 경로 생성
+    request_file_path = os.path.join(log_dir, request_filename)
+    response_file_path = os.path.join(log_dir, response_filename)
+    
+    # 파일에 request 메시지 작성
+    with open(request_file_path, "w", encoding="utf-8") as f:
+        json.dump(request_msg, f, indent=4)
+
+    # 이미지 저장
+    if request_img_path and os.path.exists(request_img_path):
+        filename = os.path.basename(request_img_path)
+        destination = os.path.join(log_dir, filename)
+
+        # 이미지 복사
+        shutil.copy(request_img_path, destination)
     else:
-        return repr(x)
+        print("이미지 저장 실패 또는 이미지가 없습니다.")
+
+    # ChatCompletion 객체를 직렬화 가능한 딕셔너리로 변환
+    # OpenAI 응답 객체일 경우
+    if hasattr(response, 'model_dump'):
+        response_dict = response.model_dump()
+    # 또는 딕셔너리 속성 접근이 가능한 경우
+    elif hasattr(response, '__dict__'):
+        response_dict = response.__dict__
+    # 다른 방법으로도 안되면 문자열로 저장
+    else:
+        response_dict = {'response_str': str(response)}
+
+    # 파일에 response 메시지 작성
+    with open(response_file_path, "w", encoding="utf-8") as f:
+        json.dump(response_dict, f, indent=4)
+
+    return log_dir

@@ -1150,6 +1150,77 @@ class GPT:
 
         return objects_list
 
+    def payload_task_object_extraction(
+            self,
+            scene_objects,
+            goal_task
+    ):
+        """
+        Given a list of candidate snapshots, return the payload used to find the nearest neighbor
+        to represent the "caption" in original image in simulation
+
+        Args:
+            img_path (str): Absolute path to image to infer object selection from
+            caption (str): Caption associated with the image at @img_path
+            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+            candidates_fpaths (list of str): List of absolute paths to candidate images
+            nonproject_obj_img_path (str): Absolute path to segmented object image
+
+        Returns:
+            dict: Prompt payload
+        """
+        # Getting the base64 string
+
+
+        prompt_text_system = "You are a robot & simulation expert. "
+                        
+        prompt_user =   "Carefully analyze the given scene objects and task to extract the objects needed to simulate the task. "+\
+                        "However, the objects to be extracted must be other than scene objects. " +\
+                        "Your answer should be in JSON format. For example:\n" +\
+                        "Example Output : ['obj_0', 'obj_1']" +\
+                        "Example Output : ['cabinet', 'cup']" +\
+                        "Example Output : ['apple']" +\
+                        "Example Output : ['key', 'locker]" +\
+                        f"Scene objects: {scene_objects}\n" +\
+                        f"Task: {goal_task}"
+                        
+        
+                        # "{{'target_objects': ['obj_0', 'obj_1']}}" +\
+        content = [
+            {
+                "type": "text",
+                "text": prompt_user
+            }
+        ]
+
+
+        text_dict_system = {
+            "type": "text",
+            "text": prompt_text_system
+        }
+        content_system = [text_dict_system]
+
+
+        NN_payload = {
+            "model": self.VERSIONS[self.version],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": content_system
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            # TODO
+            "temperature": 0,
+            "max_tokens": 50
+        }
+        return NN_payload
+    
+
+
     def payload_nearest_neighbor_text_ref_scene(
             self,
             sim_img_path,
