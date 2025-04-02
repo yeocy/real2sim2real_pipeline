@@ -88,6 +88,27 @@ def test_acdc_step_4(args):
     )
     del pipeline
 
+def test_acdc_step_5(args):
+    from our_method.pipeline.acdc import ACDC
+    pipeline = ACDC()
+    pipeline.run(
+        input_path=TEST_IMG_PATH,
+        run_step_1=False,
+        run_step_2=False,
+        run_step_3=False,
+        run_step_4=False,
+        run_step_5=True,
+        run_step_6=False,
+        run_step_7=False,
+        step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
+        step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
+        step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
+        task_object_extraction_output_path=f"{TEST_DIR}/acdc_output/task_object_extraction/target_object_extraction.json",
+        gpt_api_key=args.gpt_api_key,
+        gpt_version=args.gpt_version,
+    )
+    del pipeline
+
 def test_acdc_step_6(args):
     from our_method.pipeline.acdc import ACDC
     pipeline = ACDC()
@@ -160,8 +181,8 @@ def main(args):
     # test_acdc_step_1(args)
     # test_acdc_step_2(args)
     # test_acdc_step_3(args)
-    test_acdc_step_4(args)
-    # test_acdc_step_5(args)
+    # test_acdc_step_4(args)
+    test_acdc_step_5(args)
     # test_acdc_step_6(args)
     # test_acdc_step_7(args)
     # og.shutdown()

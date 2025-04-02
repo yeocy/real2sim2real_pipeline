@@ -1219,6 +1219,121 @@ class GPT:
         }
         return NN_payload
     
+    def payload_task_object_spatial_reasoning(
+            self,
+            annotated_image_path,
+            scene_objects,
+            goal_task,
+            objects_to_be_placed
+    ):
+        """
+        Given a list of candidate snapshots, return the payload used to find the nearest neighbor
+        to represent the "caption" in original image in simulation
+
+        Args:
+            img_path (str): Absolute path to image to infer object selection from
+            caption (str): Caption associated with the image at @img_path
+            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+            candidates_fpaths (list of str): List of absolute paths to candidate images
+            nonproject_obj_img_path (str): Absolute path to segmented object image
+
+        Returns:
+            dict: Prompt payload
+        """
+        # Getting the base64 string
+        annotated_img_base64 = self.encode_image(annotated_image_path)
+
+        prompt_text_system = """
+                            You are a professional simulation designer. The user will provide you with an annotated Scene image, a list of scene objects, objects to be placed, and a task.
+
+                            First, carefully analyze the given task.
+                            Then, understand the spatial relationships between objects through the Scene image and scene objects.
+                            Next, based on your task analysis, determine the spatial relationships between the objects to be placed and the scene objects.
+                            Finally, place the objects that need to be positioned in their optimal locations.
+
+                            The output should be in JSON format.
+                            """
+        
+        step2_text_prompt1 = """
+                            When there are objects to be placed, please tell me the appropriate location for each object based on the given scene and task.
+                            I'll give you information about the scene as an image. The image has annotated scene objects.
+                            The placement position should be determined based on a parent_object, and the parent_object must be chosen from either a scene object or one of the objects to be placed.
+                            The position should be answered as one of ['above', 'below', 'left', 'right', 'front', 'back', 'inside'] relative to the parent_object.
+
+                            Let me give you a concrete example:
+
+                            Example Input:
+                            Scene image: <image>
+                            Scene objects: desk_0, drawer_0, notebook_0, notebook_1, monitor_0
+                            Objects to be placed: ['pencil', 'pencil case']
+                            Task: Take a pencil out of the pencil case on the desk.
+
+                            Example Output:
+                            {
+                                    "objects": {
+                                        "pencil case": {
+                                            "parent_object" : "desk_0",
+                                            "placement" : "above"
+                                        },
+                                        "pencil": {
+                                            "parent_object" : "pencil case",
+                                            "placement" : "inside"
+                                        }
+                                    }
+                            }
+
+                            Now look at the Scene image, Scene objects, Objects to be placed, and the Task to provide the correct answer.
+                            Remember that parent_object can be used from not only scene objects but also from objects to be placed. And make sure the object placements are appropriate and well-aligned with the given task.
+                            Scene image:
+                            """
+        step2_text_prompt2 = f'Scene objects: {scene_objects}' +\
+                            f'Objects to be placed: {objects_to_be_placed}' +\
+                            f'Task: {goal_task}'
+        
+        content = [
+            {
+            "type": "text",
+            "text": step2_text_prompt1
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{annotated_img_base64}"
+                }
+            },
+            {
+            "type": "text",
+            "text": step2_text_prompt2
+            },
+        ]
+
+        text_dict_system = {
+                "type": "text",
+                "text": prompt_text_system
+            }
+        
+
+        content_system = [text_dict_system]
+
+
+        NN_payload = {
+            "model": self.VERSIONS[self.version],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": content_system
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            # TODO
+            "temperature": 0,
+            "max_tokens": 50
+        }
+        return NN_payload
+    
 
 
     def payload_nearest_neighbor_text_ref_scene(

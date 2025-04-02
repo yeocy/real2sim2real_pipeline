@@ -16,6 +16,7 @@ from our_method.pipeline.real_scene_generation import RealSceneGenerator
 from our_method.pipeline.task_object_matching import TaskObjectMatcher
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
 from our_method.pipeline.task_object_extraction import TaskObjectExtraction
+from our_method.pipeline.task_object_spatial_reasoning import TaskObjectSpatialReasoning
 import omnigibson as og
 
 class ACDC:
@@ -278,16 +279,14 @@ class ACDC:
 {"#" * 50}
 
                         """)
-
                 step_5 = TaskObjectSpatialReasoning(
-                    feature_matcher=fm,
                     verbose=config["pipeline"]["verbose"],
                 )
-                success, step_4_output_path = step_5(
+                success, step_5_output_path = step_5(
                     step_1_output_path=step_1_output_path,
                     step_2_output_path=step_2_output_path,
                     step_3_output_path=step_3_output_path,
-                    task_object_extraction_output_path= task_object_extraction_output_path
+                    task_object_extraction_output_path= task_object_extraction_output_path,
                     **config["pipeline"]["TaskObjectSpatialReasoning"]["call"],
                 )
                 if not success:
