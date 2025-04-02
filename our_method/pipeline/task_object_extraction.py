@@ -74,15 +74,7 @@ class TaskObjectExtraction:
             gpt_api_key,
             gpt_version="4o",
             goal_task = None,
-            top_k_categories=3,
-            top_k_models=3,
-            n_digital_cousins=3,
-            n_cousins_reselect_cand=3,
-            remove_background=False,
-            gpt_select_cousins=True,
-            n_cousins_link_count_threshold=3,
-            save_dir=None,
-            start_at_name=None,
+            save_dir=None
     ):
         """
         Runs the digital cousin matcher. This does the following steps for each detected object from Step 1:

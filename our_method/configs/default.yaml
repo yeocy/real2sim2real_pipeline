@@ -51,27 +51,11 @@ pipeline:
     call:
       gpt_api_key: null
       gpt_version: 4o
-      top_k_categories: 5
-      top_k_models: 3
-      n_digital_cousins: 2
-      n_cousins_reselect_cand: 3
-      remove_background: false
-      gpt_select_cousins: true
-      n_cousins_link_count_threshold: 10
-      start_at_name: null
 
   TaskObjectSpatialReasoning:
     call:
       gpt_api_key: null
       gpt_version: 4o
-      top_k_categories: 5
-      top_k_models: 3
-      n_digital_cousins: 2
-      n_cousins_reselect_cand: 3
-      remove_background: false
-      gpt_select_cousins: true
-      n_cousins_link_count_threshold: 10
-      start_at_name: null
 
   TaskObjectMatcher:
     call:
