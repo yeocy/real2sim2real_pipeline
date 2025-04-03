@@ -13,10 +13,12 @@ from our_method.models.feature_matcher import FeatureMatcher
 from our_method.pipeline.extraction import RealWorldExtractor
 from our_method.pipeline.matching import DigitalCousinMatcher
 from our_method.pipeline.real_scene_generation import RealSceneGenerator
-from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
-from our_method.pipeline.task_scene_generation import TaskSceneGenerator
+
+from our_method.pipeline.task_proposals import TaskProposals
 from our_method.pipeline.task_object_extraction import TaskObjectExtraction
 from our_method.pipeline.task_object_spatial_reasoning import TaskObjectSpatialReasoning
+from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
+from our_method.pipeline.task_scene_generation import TaskSceneGenerator
 import omnigibson as og
 
 class ACDC:
@@ -34,80 +36,20 @@ class ACDC:
         with open(config, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
-        """
-        models:
-            FeatureMatcher:
-                # encoder kwargs
-                encoder: DinoV2Encoder
-                encoder_kwargs: null
-
-                # Grounded SAM v2 kwargs
-                gsam_box_threshold: 0.25
-                gsam_text_threshold: 0.25
-
-        pipeline:
-            verbose: true
-
-            RealWorldExtractor:
-                call:
-                gpt_api_key: null
-                gpt_version: 4o
-                captions: null
-                camera_intrinsics_matrix: null
-                depth_max_limit: 20.0
-                filter_backsplash: true
-                infer_aligned_wall: true
-                visualize: false
-
-            DigitalCousinMatcher:
-                call:
-                gpt_api_key: null
-                gpt_version: 4o
-                top_k_categories: 3
-                top_k_models: 6
-                top_k_poses: 3
-                n_digital_cousins: 2
-                n_cousins_reselect_cand: 3
-                remove_background: false
-                gpt_select_cousins: true
-                n_cousins_link_count_threshold: 10
-                start_at_name: null
-
-            RealSceneGenerator:
-                call:
-                n_scenes: 3
-                sampling_method: random
-                resolve_collision: true
-                discard_objs: null
-                visualize_scene: true
-                visualize_scene_tilt_angle: 0
-                visualize_scene_radius: 5
-                save_visualization: true
-            
-            SimulatedSceneVisualize:
-                call:
-                n_scenes: 1
-                sampling_method: random
-                resolve_collision: true
-                discard_objs: null
-                visualize_scene: true
-                visualize_scene_tilt_angle: 0
-                visualize_scene_radius: 5
-                save_visualization: true
-        """
         self.config = config
 
     def run(
             self,
             input_path=None,
             save_dir=None,
-            run_step_1=True,
-            run_step_2=True,
-            run_step_3=True,
+            run_step_1=False,
+            run_step_2=False,
+            run_step_3=False,
             run_step_4=False,
             run_step_5=False,
             run_step_6=False,
             run_step_7=False,
+            task_proposals=False,
             step_1_output_path=None,
             step_2_output_path=None,
             step_3_output_path=None,
@@ -147,7 +89,8 @@ class ACDC:
         config = deepcopy(self.config)
         save_dir = f"{os.path.dirname(input_path)}/acdc_output"
         # Cfg에 Save dir 설정
-        for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "TaskObjectExtraction", "TaskObjectSpatialReasoning", "TaskObjectRetrieval", "TaskSceneGenerator"]:
+        for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "TaskProposals",
+                     "TaskObjectExtraction", "TaskObjectSpatialReasoning", "TaskObjectRetrieval", "TaskSceneGenerator"]:
             cur_save_dir = config["pipeline"][step]["call"].get("save_dir", None)
             assert cur_save_dir is None, f"save_dir should not be specified in {step} config! Got: {cur_save_dir}"
             config["pipeline"][step]["call"]["save_dir"] = save_dir
@@ -158,12 +101,14 @@ class ACDC:
             config["pipeline"]["TaskObjectExtraction"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectSpatialReasoning"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectRetrieval"]["call"]["gpt_api_key"] = gpt_api_key
+            config["pipeline"]["TaskProposals"]["call"]["gpt_api_key"] = gpt_api_key
         if gpt_version is not None:
             config["pipeline"]["RealWorldExtractor"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["DigitalCousinMatcher"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectExtraction"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectSpatialReasoning"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectRetrieval"]["call"]["gpt_version"] = gpt_version
+            config["pipeline"]["TaskProposals"]["call"]["gpt_version"] = gpt_version
         config["pipeline"]["TaskObjectExtraction"]["call"]["goal_task"] = goal_task
         print(f"""
 
@@ -245,13 +190,38 @@ class ACDC:
                 )
                 if not success:
                     raise ValueError("Failed ACDC Step 3!")
+        
+        if task_proposals:  
+
+                print(f"""
+
+{"#" * 50}
+{"#" * 50}
+# Running Task Proposals
+{"#" * 50}
+{"#" * 50}
+
+                        """)
+
+                task_proposal = TaskProposals(
+                    verbose=config["pipeline"]["verbose"],
+                )
+                success, task_proposals_path = task_proposal(
+                    step_1_output_path=step_1_output_path,
+                    step_2_output_path=step_2_output_path,
+                    step_3_output_path=step_3_output_path,
+                    **config["pipeline"]["TaskProposals"]["call"],
+                )
+                if not success:
+                    raise ValueError("Failed TaskProposal")
+
         if run_step_4:
 
                 print(f"""
 
 {"#" * 50}
 {"#" * 50}
-# Running ACDC: Step 4 -- Task Object Extractio & Task Object Spatial Reasoning
+# Running Task Object Extraction
 {"#" * 50}
 {"#" * 50}
 
@@ -275,7 +245,7 @@ class ACDC:
 
 {"#" * 50}
 {"#" * 50}
-# Running ACDC: Step 5 -- Task Object Extractio & Task Object Spatial Reasoning
+# Running Task Object Spatial Reasoning
 {"#" * 50}
 {"#" * 50}
 

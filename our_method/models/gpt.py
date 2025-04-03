@@ -1150,6 +1150,244 @@ class GPT:
 
         return objects_list
 
+
+    def payload_task_proposals(
+            self,
+            annotated_img_path,
+            list_objects
+    ):
+        """
+        Given a list of candidate snapshots, return the payload used to find the nearest neighbor
+        to represent the "caption" in original image in simulation
+
+        Args:
+            img_path (str): Absolute path to image to infer object selection from
+            caption (str): Caption associated with the image at @img_path
+            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+            candidates_fpaths (list of str): List of absolute paths to candidate images
+            nonproject_obj_img_path (str): Absolute path to segmented object image
+
+        Returns:
+            dict: Prompt payload
+        """
+        # Getting the base64 string
+        annotated_scene_img_base64 = self.encode_image(annotated_img_path)
+        
+
+        prompt_text_system =  "You are an expert in task generation for the robot to learn in simulator. " + \
+                              "The user will provide you with a list of objects present in a given scene and Scene Image.\n" + \
+                              "Your task is to imagine a set of realistic, context-aware tasks that a robotic agent could perform in this scene, " + \
+                              "The Tasks you generate should be reasonable in the scene."
+
+        prompt_user_1 = "### Task Generation Overview Instructions ###\n" + \
+                        "I will show you an image of a real-world Scene with annotated objects\n" + \
+                        f"In this scene, have an Object list : {list_objects}.\n" + \
+                        "Your goal is to infer the nature of the space (e.g., kitchen, workshop, office), and generate a diverse set of realistic tasks that could occur in that environment. \n" + \
+                        "Each task should involve manipulation or interaction with one or more of the listed objects, or with logically related objects that fit naturally into the scene context.\n" + \
+                        "Focus on manipulation or interaction with the object itself. Sometimes the object will have functions, e.g., a microwave can be used to heat food."+\
+                        "in these cases, feel free to include other objects that are needed for the task. \n\n"   + \
+                        "For each task you imagined, please write in the following format: \n" + \
+                        "Task name: the name of the task. \n" + \
+                        "Description: some basic descriptions of the tasks. \n" +\
+                        "Additional Objects: Additional objects other than the provided Input Scene Objects. If no extra objects are needed, write 'None'.\n\n" + \
+                        "### Special Requirements ###\n" + \
+                        "1. You can assume that any object, including those not listed in the scene, can be provided as assets in the simulator. So feel free to include additional objects that are logically relevant and contextually appropriate for the task, even if they are not initially present in the scene.\n" +\
+                        "2. Tasks can be complex or multi-step as long as they are feasible given the provided scene and object list.\n" + \
+                        "3. All tasks must be contextually grounded in the scene. That is, they must make logical sense within the space and with the objects shown in the image.\n" + \
+                        "4. Do not propose tasks that involve assembling or disassembling objects, repairing or checking functionality, or cleaning/maintaining the object. These are explicitly excluded.\n" + \
+                        "5. Your focus should be on object manipulation or interaction — tasks where the robot actively uses, moves, adjusts, or places objects based on their affordance.\n" + \
+                        "6. You are encouraged to be creative and propose high-standard tasks that go beyond generic or trivial actions. Avoid redundant or overlapping task ideas.\n" + \
+                        "7. If a task involves logical or scene-fitting additional objects that are not in the provided object list, you may include them — but only if they *make sense* in the current context.\n\n" + \
+                        "### Example Outputs ###\n" + \
+                         "\n" + \
+                        "## First Example Scenario ##\n" + \
+                        "## First Scene ##\n" + \
+                        "Input Scene Object : Cabinet_0, Cabinet_1,  Refrigerator, Microwave, cup, plate\n" + \
+                        "\n" + \
+                        "Task: Place a cup inside the microwave\n" + \
+                        "Description: The robotic arm opens the microwave, places the cup inside, and closes the door.\n" + \
+                        "Additional Objects: None\n" + \
+                        "\n" + \
+                        "Task: Open refrigerator door\n" + \
+                        "Description: The robotic arm will open the refrigerator door to access the items inside.\n" + \
+                        "Additional Objects: None.\n" + \
+                        "\n" + \
+                        "Task: Store a cup in Cabinet\n" + \
+                        "Description: The robotic arm picks up a cup and places it inside Cabinet_1 for storage.\n" + \
+                        "Additional Objects: None\n" + \
+                        "\n" + \
+                        "Task : Heat a hamburger Inside Oven \n" + \
+                        "Description: The robot arm places a hamburger inside the oven, and sets the oven temperature to be appropriate for heating the hamburger.\n" + \
+                        "Additional Objects: hamburger, oven\n" + \
+                        "\n" + \
+                        "Task: Heat food in microwave\n" + \
+                        "Description: The robotic arm will place food inside the microwave and set the timer to heat it.\n" + \
+                        "Additional Objects: food\n" + \
+                        "\n" + \
+                        "Task: Set the table with cup and plate\n" + \
+                        "Description: The robotic arm places a cup and plate on the dining surface for a meal setting.\n" + \
+                        "Additional Objects: dining table\n" + \
+                        "#################################################################################\n" + \
+                        "## Second Example Scenario ##\n" + \
+                        "Input Example : \n" + \
+                        "In Scene: Sofa, Coffee Table, Television, Rug, Picture Frame, Window, Curtain, Chair\n" + \
+                        "\n" + \
+                        "Output Example : \n" + \
+                        "Task: Turn On TV\n" + \
+                        "Description: The robotic arm will turn off the television after a movie or show is finished.\n" + \
+                        "Additional Objects: television remote\n" + \
+                        "\n" + \
+                        "Task: Fold rug\n" + \
+                        "Description: The robotic arm will fold the rug to either store it or clean the floor underneath.\n" + \
+                        "Additional Objects: None\n" + \
+                        "\n" + \
+                        "Task: Set up chair for sitting\n" + \
+                        "Description: The robotic arm will adjust the chair to make it more comfortable for sitting, possibly by aligning it with the table.\n" + \
+                        "Additional Objects: None\n" + \
+                        "\n" + \
+                        "Task: Clean the coffee table\n" + \
+                        "Description: The robotic arm uses a cloth to wipe the surface of the coffee table, removing dust or crumbs.\n" + \
+                        "Additional Objects: cleaning cloth\n" + \
+                        "\n" + \
+                        "Task: Place a cup on the coffee table\n" + \
+                        "Description: The robot arm picks up a cup and places it gently on the coffee table.\n" + \
+                        "Additional Objects: cup\n" + \
+                        "#################################################################################\n" + \
+                        "## Third Example Scenario ##\n" + \
+                        "Input Example:\n" + \
+                        "In Scene: Desk, Computer, Chair, Printer, Books, Notebooks, Pen, Paper, Phone\n" + \
+                        "\n" + \
+                        "Output Example : \n" + \
+                        "Task: Turn on the computer\n" + \
+                        "Description: The robotic arm presses the power button on the computer tower or monitor to start it up.\n" + \
+                        "Additional Objects: None\n" + \
+                        "\n" + \
+                        "Task: Organize books on the desk\n" + \
+                        "Description: The robotic arm arranges the books neatly into a vertical stack or shelf.\n" + \
+                        "Additional Objects: bookshelf\n" + \
+                        "\n" + \
+                        "Task: Write notes in a notebook\n" + \
+                        "Description: The robotic arm picks up a pen and writes on a notebook following a given text or instruction.\n" + \
+                        "Additional Objects: None\n" + \
+                        "\n" + \
+                        "Task: Turn on desk lamp\n" + \
+                        "Description: The robotic arm flips the switch on a desk lamp to illuminate the workspace.\n" + \
+                        "Additional Objects: desk lamp\n" + \
+                        "\n" + \
+                        "Task: Charge the phone\n" + \
+                        "Description: The robotic arm connects the phone to a charging cable to begin charging.\n" + \
+                        "Additional Objects: charging cable\n" + \
+                        "\n" + \
+                        "Task: Place a cup of coffee on the desk\n" + \
+                        "Description: The robotic arm places a hot cup of coffee next to the computer for the user.\n" + \
+                        "Additional Objects: coffee cup, coffee machine\n" + \
+                        "#################################################################################\n" + \
+                        "## Fourth Example Scenario ##\n" + \
+                        "Input Example:\n" + \
+                        "In Scene: Dining Table, Plates, Forks, Knives, Glasses, Napkins, Salt Shaker, Pepper Shaker, Bowl, Wine Glass\n" + \
+                        "\n" + \
+                        "Output Example:\n" + \
+                        "Task: Fold napkins\n" + \
+                        "Description: The robotic arm folds napkins into decorative shapes and places them next to each plate.\n" + \
+                        "Additional Objects: None\n" + \
+                        "\n" + \
+                        "Task: Place a bowl of salad on the table\n" + \
+                        "Description: The robotic arm brings a bowl filled with salad and sets it at the center of the table.\n" + \
+                        "Additional Objects: salad\n" + \
+                        "\n" + \
+                        "Task: Pour wine into wine glasses\n" + \
+                        "Description: The robotic arm carefully pours wine from a bottle into the wine glasses.\n" + \
+                        "Additional Objects: wine bottle\n" + \
+                        "\n" + \
+                        "Task: Light a candle on the dining table\n" + \
+                        "Description: The robotic arm uses a lighter to light a decorative candle to enhance the table ambiance.\n" + \
+                        "Additional Objects: candle, lighter\n" + \
+                        "\n" + \
+                        "Task: Serve bread in a basket\n" + \
+                        "Description: The robotic arm places slices of bread into a basket and puts it on the table.\n" + \
+                        "Additional Objects: bread, bread basket\n" + \
+                        "\n" + \
+                        "Task: Pour juice into glasses\n" + \
+                        "Description: The robotic arm pours juice from a pitcher into the glasses for each guest.\n" + \
+                        "Additional Objects: juice\n"
+
+        prompt_text_user_final = f"The following is an scene with a list of objects: {list_objects}\n" + \
+                                 "Please generate a diverse and realistic set of tasks that a robot could perform in this space.\n" + \
+                                 "Each task should involve manipulation or interaction with one or more of the listed objects, or with logically relevant additional objects that would fit naturally into the scene.\n\n" + \
+                                 "Remember the goal is to reason about what kinds of purposeful, context-aware actions are possible in this scene.\n" + \
+                                 "Make sure each task:\n" + \
+                                 "- Is contextually grounded and plausible for the scene\n" + \
+                                 "- Focuses on manipulation or interaction, not inspection, cleaning, or repair\n" + \
+                                 "- Avoids redundancy or trivial actions\n" + \
+                                 "- Can include additional objects that are relevant, assuming they are available in the simulator\n\n" + \
+                                 "Follow this exact format for each task:\n" + \
+                                 "Task: <the name of the task>\n" + \
+                                 "Description: <a short, clear explanation of what the robot is doing>\n" + \
+                                 "Additional Objects: <additional objects needed for the task, or 'None'>\n\n" + \
+                                 "Now generate high-quality tasks based on the input scene."
+        
+        content = [
+            {
+                "type": "text",
+                "text": prompt_user_1
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{annotated_scene_img_base64}"
+                }
+            },
+            {
+                "type": "text",
+                "text": "The above image shows a scene in the object bounding box annotation real world image. "
+            },
+            {
+                "type": "text",
+                "text": prompt_text_user_final
+            }
+        ]
+        
+        # for i, candidate_fpath in enumerate(candidates_fpaths):
+        #     text_prompt = f"image {i + 1}:\n"
+        #     text_dict = {
+        #         "type": "text",
+        #         "text": text_prompt
+        #     }
+        #     cand_base64 = self.encode_image(candidate_fpath)
+        #     img_dict = {
+        #         "type": "image_url",
+        #         "image_url": {
+        #             "url": f"data:image/png;base64,{cand_base64}"
+        #         }
+        #     }
+        #     content.append(text_dict)
+        #     content.append(img_dict)
+
+        text_dict_system = {
+            "type": "text",
+            "text": prompt_text_system
+        }
+        content_system = [text_dict_system]
+
+
+        NN_payload = {
+            "model": self.VERSIONS[self.version],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": content_system
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            # TODO
+            "temperature": 0.3
+        }
+        return NN_payload
+    
+
     def payload_task_object_extraction(
             self,
             scene_objects,
@@ -1586,4 +1824,6 @@ class GPT:
         }
 
         return object_selection_payload
+    
+    
     

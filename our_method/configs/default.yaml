@@ -47,6 +47,11 @@ pipeline:
       visualize_scene_radius: 5
       save_visualization: true
 
+  TaskProposals:
+    call:
+      gpt_api_key: null
+      gpt_version: 4o
+
   TaskObjectExtraction:
     call:
       gpt_api_key: null
