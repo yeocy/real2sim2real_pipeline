@@ -424,7 +424,7 @@ class TaskSceneGenerator:
                     pose_A_in_B=T.pose2mat(cam_pose),
                 ))
                 obj.set_position_orientation(th.tensor(obj_pos, dtype=th.float), th.tensor(obj_quat, dtype=th.float))
-        
+
         # Initialize all objects by taking one step
         og.sim.step()
         return scene, cam_pose
@@ -487,7 +487,6 @@ class TaskSceneGenerator:
                     scale=obj_info["scale"]
                 )
                 scene.add_object(obj)
-
                 
                 child_obj_name = obj_name
                 # "task_obj_cup"
@@ -666,15 +665,22 @@ class TaskSceneGenerator:
             child_obj.set_position_orientation(th.tensor(child_target_pos, dtype=th.float), th.tensor(child_quat, dtype=th.float))
             child_pos, child_quat = child_obj.get_position_orientation()
 
-            # child 좌표계에서 본 parent의 위치 방향 벡터
-            parent_dir_local = np.linalg.inv(child_rot_mat @ child_re_axis_mat) @ (parent_pos - child_pos).cpu().numpy()
+            # 기존 쿼터니언 → 회전 행렬
+            child_rot_mat = T.quat2mat(child_quat.cpu().numpy())
 
-            # ⬇️ parent_re_axis_mat을 한번 곱해서 정확히 보정하면 끝입니다.
-            parent_dir_local = np.linalg.inv(parent_re_axis_mat) @ parent_dir_local
 
-            parent_dir_corrected_local = child_re_axis_mat @ parent_dir_local
-            clearance_axis = np.argmax(np.abs(parent_dir_corrected_local))
-            clearance_sign = int(np.sign(parent_dir_corrected_local[clearance_axis]))
+            # parent_dir_local = np.linalg.inv(child_rot_mat @ child_re_axis_mat) @ (parent_pos - child_pos).cpu().numpy()
+            parent_dir_local = np.linalg.inv(child_rot_mat) @ (parent_pos - child_pos).cpu().numpy()
+            # print(child_obj_name)
+            # print("parent_dir_local: ", parent_dir_local)
+            # parent_dir_local = np.linalg.inv(parent_re_axis_mat) @ parent_dir_local
+
+            # parent_dir_corrected_local = child_re_axis_mat @ parent_dir_local
+            # print("parent_dir_corrected_local: ", parent_dir_corrected_local)
+            clearance_axis = np.argmax(np.abs(parent_dir_local))
+            clearance_sign = int(np.sign(parent_dir_local[clearance_axis]))
+            # clearance_axis = np.argmax(np.abs(parent_dir_corrected_local))
+            # clearance_sign = int(np.sign(parent_dir_corrected_local[clearance_axis]))
 
             # # 4. clearance axis & sign 계산
             # clearance_axis = np.argmax(np.abs(child_dir))
