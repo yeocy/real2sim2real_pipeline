@@ -196,6 +196,13 @@ class TaskObjectSpatialReasoning:
             "task": target_object_extraction_info["task"],
             "objects": gpt_result["objects"]
         }
+
+        for obj in task_object_spatial_reasoning_info["objects"]:
+            for key in list(obj.keys()):
+                if " " in key:
+                    obj[key.replace(" ", "_")] = obj.pop(key)
+
+
         
         task_object_spatial_reasoning_path = f"{save_dir}/task_obj_output_info.json"
     
