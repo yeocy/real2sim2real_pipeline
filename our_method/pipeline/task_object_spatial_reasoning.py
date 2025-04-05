@@ -197,10 +197,11 @@ class TaskObjectSpatialReasoning:
             "objects": gpt_result["objects"]
         }
 
-        for obj in task_object_spatial_reasoning_info["objects"]:
-            for key in list(obj.keys()):
-                if " " in key:
-                    obj[key.replace(" ", "_")] = obj.pop(key)
+        # convert 'object name' to 'object_name'
+        obj_keys = list(task_object_spatial_reasoning_info["objects"].keys())
+        for obj_key in obj_keys:
+            if " " in obj_key:
+                task_object_spatial_reasoning_info["objects"][obj_key.replace(" ", "_")] = task_object_spatial_reasoning_info["objects"].pop(obj_key)
 
 
         
