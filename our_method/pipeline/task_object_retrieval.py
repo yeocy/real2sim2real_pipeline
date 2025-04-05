@@ -225,8 +225,10 @@ class TaskObjectRetrieval:
         # Create GPT instance
         # assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
         # gpt = GPT(api_key=gpt_api_key, version=gpt_version)
-        input_sim_rgb_path = step_3_output_info["scene_0"]["scene_img"]
-        input_real_rgb_path = step_3_output_info["scene_0"]["scene_img"]
+        # input_sim_rgb_path = step_3_output_info["scene_0"]["scene_img"]
+        # input_real_rgb_path = step_3_output_info["scene_0"]["scene_img"]
+        input_sim_real_rgb_path = os.path.join(os.path.dirname(step_3_output_info["scene_0"]["scene_graph"]), "scene_0_visualization.png")
+
         should_start = start_at_name is None
         n_instances = len(obj_name_list)
 
@@ -273,8 +275,7 @@ class TaskObjectRetrieval:
             
             # TODO
             nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene(
-                                    sim_img_path=input_sim_rgb_path,
-                                    real_img_path=input_real_rgb_path,
+                                    sim_real_img_path=input_sim_real_rgb_path,
                                     parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
                                     goal_task=task_extraction_output_info["task"],
                                     parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],

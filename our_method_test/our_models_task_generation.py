@@ -204,9 +204,9 @@ def main(args):
     # test_task_proposals(args)
     # test_acdc_step_4(args) # Task Object Extraction
     # test_acdc_step_5(args) # Task Object Spatial Reasoning
-    # test_acdc_step_6(args) # Task Object Retrieval
-    test_acdc_step_7(args) # Task following Scene Generation
-    og.shutdown()
+    test_acdc_step_6(args) # Task Object Retrieval
+    # test_acdc_step_7(args) # Task following Scene Generation
+    # og.shutdown()
 
     # Final test -- OG should always come at the end
     # This og test cannot run together with test_acdc_step_3

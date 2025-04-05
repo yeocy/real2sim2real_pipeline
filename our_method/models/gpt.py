@@ -1576,8 +1576,7 @@ class GPT:
 
     def payload_nearest_neighbor_text_ref_scene(
             self,
-            sim_img_path,
-            real_img_path,
+            sim_real_img_path,
             parent_obj_bbox_img_path,
             goal_task,
             parent_obj_name,
@@ -1601,8 +1600,7 @@ class GPT:
             dict: Prompt payload
         """
         # Getting the base64 string
-        simul_scene_img_base64 = self.encode_image(sim_img_path)
-        real_scene_img_base64 = self.encode_image(real_img_path)
+        sim_real_scene_img_base64 = self.encode_image(sim_real_img_path)
         parent_obj_bbox_img_base64 = self.encode_image(parent_obj_bbox_img_path)
         candidate_obj_img_base64 = self.encode_image(candidates_path)
 
@@ -1654,19 +1652,13 @@ class GPT:
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:image/png;base64,{real_scene_img_base64}"
+                    "url": f"data:image/png;base64,{sim_real_scene_img_base64}"
                 }
             },
             {
                 "type": "text",
-                "text": "The above image shows a scene in the real world. " + \
-                        f"The following image shows the simulation scene that is similar to the real-world scene."
-            },
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{simul_scene_img_base64}"
-                }
+                "text": "The above image left side shows a scene in the real world. " + \
+                        f"and right side shows the simulation scene that is similar to the real-world scene."
             },
             {
                 "type": "text",
