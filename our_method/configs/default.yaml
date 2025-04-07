@@ -75,6 +75,11 @@ pipeline:
       n_cousins_link_count_threshold: 10
       start_at_name: null
   
+  TaskObjectResizing:
+    call:
+      gpt_api_key: null
+      gpt_version: 4o
+
   TaskSceneGenerator:
     call:
       n_scenes: 1

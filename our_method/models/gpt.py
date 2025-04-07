@@ -1,6 +1,10 @@
 import requests
 import base64
 import time
+import os
+import datetime
+import json
+import shutil
 
 class GPT:
     """
@@ -17,6 +21,7 @@ class GPT:
             api_key,
             version="4o",
             max_retries=3,
+            log_dir_tail="",
     ):
         """
         Args:
@@ -28,6 +33,7 @@ class GPT:
         assert version in self.VERSIONS, f"Got invalid GPT version! Valid options are: {self.VERSIONS}, got: {version}"
         self.version = version
         self.max_retries = max_retries
+        self.log_dir_tail = log_dir_tail
 
     def __call__(self, payload, verbose=False):
         """
@@ -55,9 +61,11 @@ class GPT:
                 if "choices" not in response_data.keys():
                     raise ValueError(f"Got error while querying GPT-{self.version} API! Response:\n\n{response.json()}")
 
+                log_path = self.log_query_contents(request_msg=payload, request_img_path="", response=response_data, log_dir_tail=self.log_dir_tail)
                 if verbose:
                     print(f"Finished querying GPT-{self.version}.")
-                
+                    print(f"GPT Query & Response Saved at {log_path}.")
+
                 return response_data["choices"][0]["message"]["content"]
             
             except Exception as e:
@@ -93,6 +101,68 @@ class GPT:
         """
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
+
+    def log_query_contents(self, request_msg, request_img_path, response, log_dir_base="logs", log_dir_tail=""):
+        """
+        현재 날짜와 시간을 파일명으로 사용하여 메시지를 로깅합니다.
+        
+        Parameters:
+        request_msg (list): 로깅할 request 메시지 콘텐츠
+        request_img_path (str): 로깅할 request 이미지 경로
+        response (ChatCompletion): API 응답 객체
+        log_dir_base (str): 로그 파일이 저장될 base 디렉토리 (기본값: "logs")
+        
+        Returns:
+        str: 생성된 로그 파일의 경로
+        """
+        # 로그 디렉토리가 없으면 생성
+        if not os.path.exists(log_dir_base):
+            os.makedirs(log_dir_base)
+        
+        # 현재 날짜와 시간을 가져와서 파일명 형식으로 변환
+        current_time = datetime.datetime.now()
+        timestamp = current_time.strftime("%Y%m%d_%H%M%S")
+        log_dir = os.path.join(log_dir_base, f"{timestamp}{log_dir_tail}")
+        os.makedirs(log_dir)
+        
+        request_filename = 'query_contents_request.txt'
+        response_filename = 'query_contents_response.txt'
+        
+        # 전체 파일 경로 생성
+        request_file_path = os.path.join(log_dir, request_filename)
+        response_file_path = os.path.join(log_dir, response_filename)
+        
+        # 파일에 request 메시지 작성
+        with open(request_file_path, "w", encoding="utf-8") as f:
+            json.dump(request_msg, f, indent=4)
+
+        # 이미지 저장
+        if request_img_path and os.path.exists(request_img_path):
+            filename = os.path.basename(request_img_path)
+            destination = os.path.join(log_dir, filename)
+
+            # 이미지 복사
+            shutil.copy(request_img_path, destination)
+        else:
+            print("이미지 저장 실패 또는 이미지가 없습니다.")
+
+        # ChatCompletion 객체를 직렬화 가능한 딕셔너리로 변환
+        # OpenAI 응답 객체일 경우
+        if hasattr(response, 'model_dump'):
+            response_dict = response.model_dump()
+        # 또는 딕셔너리 속성 접근이 가능한 경우
+        elif hasattr(response, '__dict__'):
+            response_dict = response.__dict__
+        elif type(response) == dict:
+            response_dict = response
+        # 다른 방법으로도 안되면 문자열로 저장
+        else:
+            response_dict = {'response_str': str(response)}
+        # 파일에 response 메시지 작성
+        with open(response_file_path, "w", encoding="utf-8") as f:
+            json.dump(response_dict, f, indent=4)
+
+        return log_dir
 
     def payload_get_object_caption(self, img_path):
         """
@@ -1572,8 +1642,83 @@ class GPT:
         }
         return NN_payload
     
+    def payload_task_object_resizing(
+            self,
+            object_size_info,
+            goal_task
+    ):
+        """
+        
+        """
+
+        prompt_text_system = """You are an expert in robotics, object modeling, and real-world dimensions. Your role is to determine appropriate sizes for objects used in robotic tasks.
+
+The user will provide:
+- A task description that explains what the robot is doing.
+- A list of objects, each with a name and its size (longest dimension) in meters.
+- User input will be the following format:
+
+Task: [task description]
+[object_1_name] ([current_size])
+[object_2_name] ([current_size])
+...
+
+Your job is to:
+1. Use real-world knowledge to identify the typical or appropriate size (longest dimension) for each object in the given task context.
+2. Output your answer strictly in the following format:
+
+[One-sentence reasoning about the task and object sizing]
+object_1 (appropriate_size_in_meters)
+object_2 (appropriate_size_in_meters)
+...
+
+Only respond using this format. Do not include any additional explanation or text outside the required structure.
+"""
+
+        prompt_user =   """Task: {}
+{}
+"""
+        obj_info_str = ""
+        for obj_name, obj_dims in object_size_info.items():
+            obj_info_str_ = "{} ({:.4f})\n".format(obj_name, max(obj_dims))
+            obj_info_str += (obj_info_str_)
+        obj_info_str += ("\nWhat is the appropriate real-world size (longest dimension) of each object for this task?")
+
+        prompt_user_filled = prompt_user.format(goal_task, obj_info_str)
+
+        content = [
+            {
+                "type": "text",
+                "text": prompt_user_filled
+            }
+        ]
 
 
+        text_dict_system = {
+            "type": "text",
+            "text": prompt_text_system
+        }
+        content_system = [text_dict_system]
+
+
+        NN_payload = {
+            "model": self.VERSIONS[self.version],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": content_system
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            # TODO
+            "temperature": 0,
+            "max_tokens": 50
+        }
+        return NN_payload
+    
     def payload_nearest_neighbor_text_ref_scene(
             self,
             sim_real_img_path,

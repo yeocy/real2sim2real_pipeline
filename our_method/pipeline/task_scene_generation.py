@@ -162,20 +162,28 @@ class TaskSceneGenerator:
             task_obj_output_info = json.load(f)
 
         scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, cam_pose=cam_pose, obj_info_json=task_obj_output_info, visual_only=True)
-        scene_rgb = self.take_photo(n_render_steps=1000000)
-        exit(())
+        # scene_rgb = self.take_photo(n_render_steps=1000000)
+        scene_rgb = self.take_photo(n_render_steps=5)
+        # exit(())
         
 
 
 
         # Object BBox 정보 저장
+        if self.verbose:
+            print("Object BBox 정보 저장")
         all_obj_bbox_info = dict()
         for obj_name, obj_info in scene_info["objects"].items():
             if discard_objs and obj_name in discard_objs:
                 continue
+            if self.verbose:
+                print(f"obj_name: {obj_name}")
+                print(f"obj_info: {obj_info}")
             # Grab object and relevant info
             obj = scene.object_registry("name", obj_name)
             obj_bbox_info = compute_obj_bbox_info(obj=obj)
+            if self.verbose:
+                print(f"obj_bbox_info: {obj_bbox_info}")
             # obj_bbox_info["articulated"] = step_2_output_info["objects"][obj_name]["articulated"]
             obj_bbox_info["mount"] = obj_info["mount"]
             all_obj_bbox_info[obj_name] = obj_bbox_info
@@ -484,7 +492,7 @@ class TaskSceneGenerator:
                     category=obj_info["category"],
                     model=obj_info["model"],
                     visual_only=visual_only,
-                    scale=obj_info["scale"]
+                    scale=np.array(obj_info["scale"]) * float(obj_info["scale_factor"])
                 )
                 scene.add_object(obj)
                 

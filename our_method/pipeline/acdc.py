@@ -19,6 +19,7 @@ from our_method.pipeline.task_object_extraction import TaskObjectExtraction
 from our_method.pipeline.task_object_spatial_reasoning import TaskObjectSpatialReasoning
 from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
+from our_method.pipeline.task_object_resizing import TaskObjectResizing
 import omnigibson as og
 
 class ACDC:
@@ -49,6 +50,7 @@ class ACDC:
             run_step_5=False,
             run_step_6=False,
             run_step_7=False,
+            run_task_object_resizing=False,
             task_proposals=False,
             step_1_output_path=None,
             step_2_output_path=None,
@@ -56,6 +58,7 @@ class ACDC:
             task_object_extraction_output_path=None,
             task_spatial_reasing_output_path=None,
             task_object_retrieval_path=None,
+            task_object_resizing_path=None,
             gpt_api_key=None,
             gpt_version=None,
             goal_task = None
@@ -90,7 +93,7 @@ class ACDC:
         save_dir = f"{os.path.dirname(input_path)}/acdc_output"
         # Cfg에 Save dir 설정
         for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "TaskProposals",
-                     "TaskObjectExtraction", "TaskObjectSpatialReasoning", "TaskObjectRetrieval", "TaskSceneGenerator"]:
+                     "TaskObjectExtraction", "TaskObjectSpatialReasoning", "TaskObjectRetrieval", "TaskObjectResizing", "TaskSceneGenerator"]:
             cur_save_dir = config["pipeline"][step]["call"].get("save_dir", None)
             assert cur_save_dir is None, f"save_dir should not be specified in {step} config! Got: {cur_save_dir}"
             config["pipeline"][step]["call"]["save_dir"] = save_dir
@@ -101,6 +104,7 @@ class ACDC:
             config["pipeline"]["TaskObjectExtraction"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectSpatialReasoning"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectRetrieval"]["call"]["gpt_api_key"] = gpt_api_key
+            config["pipeline"]["TaskObjectResizing"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskProposals"]["call"]["gpt_api_key"] = gpt_api_key
         if gpt_version is not None:
             config["pipeline"]["RealWorldExtractor"]["call"]["gpt_version"] = gpt_version
@@ -108,6 +112,7 @@ class ACDC:
             config["pipeline"]["TaskObjectExtraction"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectSpatialReasoning"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectRetrieval"]["call"]["gpt_version"] = gpt_version
+            config["pipeline"]["TaskObjectResizing"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskProposals"]["call"]["gpt_version"] = gpt_version
         config["pipeline"]["TaskObjectExtraction"]["call"]["goal_task"] = goal_task
         print(f"""
@@ -290,6 +295,28 @@ class ACDC:
                 if not success:
                     raise ValueError("Failed ACDC Step 6!")
                 
+        if run_task_object_resizing:
+             
+                print(f"""
+
+{"#" * 50}
+{"#" * 50}
+# Running SATELLITE: Resizing the Task Objects
+{"#" * 50}
+{"#" * 50}
+
+                        """)
+
+                obj_resizing = TaskObjectResizing(
+                    verbose=config["pipeline"]["verbose"],
+                )
+                success, obj_resizing_output_path = obj_resizing(
+                    task_feature_matching_path = task_object_retrieval_path,
+                    **config["pipeline"]["TaskObjectResizing"]["call"],
+                )
+                if not success:
+                    raise ValueError("Failed SATELLITE Task Object Resizing!")
+
         if run_step_7:
 
                 print(f"""
@@ -309,7 +336,8 @@ class ACDC:
                     step_1_output_path=step_1_output_path,
                     step_2_output_path=step_2_output_path,
                     step_3_output_path=step_3_output_path,
-                    task_feature_matching_path = task_object_retrieval_path,
+                    task_feature_matching_path = task_object_resizing_path,
+                    # task_feature_matching_path = task_object_retrieval_path,
                     **config["pipeline"]["RealSceneGenerator"]["call"],
                 )
                 if not success:
