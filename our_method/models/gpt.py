@@ -1609,49 +1609,169 @@ Task: {}
         # Getting the base64 string
         annotated_img_base64 = self.encode_image(annotated_image_path)
 
-        prompt_text_system = """
-                            You are a professional simulation designer. The user will provide you with an annotated Scene image, a list of scene objects, objects to be placed, and a task.
+        prompt_text_system = """You are a professional simulation designer. The user will provide you with an annotated Scene image, a list of scene objects, objects to be placed, and a task.
 
-                            First, carefully analyze the given task.
-                            Then, understand the spatial relationships between objects through the Scene image and scene objects.
-                            Next, based on your task analysis, determine the spatial relationships between the objects to be placed and the scene objects.
-                            Finally, place the objects that need to be positioned in their optimal locations.
+First, carefully analyze the given task.
+Then, understand the spatial relationships between objects through the Scene image and scene objects.
+Next, based on your task analysis, determine the spatial relationships between the objects to be placed and the scene objects.
+Finally, place the objects that need to be positioned in their optimal locations.
 
-                            The output should be in JSON format.
-                            """
-        
-        step2_text_prompt1 = """
-                            When there are objects to be placed, please tell me the appropriate location for each object based on the given scene and task.
-                            I'll give you information about the scene as an image. The image has annotated scene objects.
-                            The placement position should be determined based on a parent_object, and the parent_object must be chosen from either a scene object or one of the objects to be placed.
-                            The position should be answered as one of ['above', 'below', 'left', 'right', 'front', 'back', 'inside'] relative to the parent_object.
+The output should be in JSON format.
+"""
 
-                            Let me give you a concrete example:
+        step2_text_prompt1 = """When there are objects to be placed, please tell me the appropriate position of the object for the given scene and task.
+I'll provide scene information as an image. The image will have annotated scene objects.
+The placement position should be based on a parent_object, and the parent_object should be chosen from either a scene object or one of the objects to be placed.
+Position should be answered as one of ['above', 'below', 'left', 'right', 'front', 'back', 'inside'] relative to the parent_object.
+Think through various perspectives, derive results for all possible scenarios, and explain your reasoning in one sentence.
 
-                            Example Input:
-                            Scene image: <image>
-                            Scene objects: desk_0, drawer_0, notebook_0, notebook_1, monitor_0
-                            Objects to be placed: ['pencil', 'pencil case']
-                            Task: Take a pencil out of the pencil case on the desk.
+Let me give you some examples
 
-                            Example Output:
-                            {
-                                    "objects": {
-                                        "pencil case": {
-                                            "parent_object" : "desk_0",
-                                            "placement" : "above"
-                                        },
-                                        "pencil": {
-                                            "parent_object" : "pencil case",
-                                            "placement" : "inside"
-                                        }
-                                    }
-                            }
+### Example 1 ###
+Example Input:
+Scene image: <image>
+Scene objects: desk_0, drawer_0, notebook_0, notebook_1, monitor_0
+Objects to be placed: ['pencil', 'pencil case']
+Task: Take a pencil out of the pencil case on the desk.
 
-                            Now look at the Scene image, Scene objects, Objects to be placed, and the Task to provide the correct answer.
-                            Remember that parent_object can be used from not only scene objects but also from objects to be placed. And make sure the object placements are appropriate and well-aligned with the given task.
-                            Scene image:
-                            """
+Example Output:
+Since there is only one possible position for the pencil and pencil case, there is only one possible scenario, which is as follows.
+{
+	"scenario_0": {
+		"objects": {
+		    "pencil case": {
+				"parent_object" : "desk_0",
+				"placement" : "above"
+		    },
+			"pencil": {
+				"parent_object" : "pencil case",
+				"placement" : "inside"
+			}
+		}
+	}
+}
+
+### Example 2 ###
+Example Input:
+Scene image: <image>
+Scene objects: refrigerator_0, microwave_0, oven_0, cabinet_0, cabinet_1, cabinet_2, cabinet_3
+Objects to be placed: ['dish']
+Task: Give me a dish in the cabinet above the microwave
+
+Example Output:
+Since the cabinets above the microwave are cabinet_0, cabinet_2 and cabinet_3, there are three possible scenarios for the given task.
+{
+	"scenario_0": {
+		"objects": {
+		    "dish": {
+				"parent_object" : "cabinet_0",
+				"placement" : "inside"
+		    }
+		}
+	},
+	"scenario_1": {
+		"objects": {
+		    "dish": {
+				"parent_object" : "cabinet_2",
+				"placement" : "inside"
+		    }
+		}
+	},
+	"scenario_2": {
+		"objects": {
+		    "dish": {
+				"parent_object" : "cabinet_3",
+				"placement" : "inside"
+		    }
+		}
+	}
+}
+
+### Example 3 ###
+Example Input:
+Scene image: <image>
+Scene objects: table_0, bookshelf_0, bookshelf_1, bookshelf_2, bookshelf_3, bookshelf_4, bookshelf_5, computer_0, keyboard_0
+Objects to be placed: ['book']
+Task: Put the book on the bookshelf next to the computer.
+
+Example Output:
+Since bookshelf_0 and bookshelf_1 are to the left of the computer, and bookshelf_4 and bookshelf_5 are to the right of the computer, there are 4 possible scenarios.
+{
+	"scenario_0": {
+		"objects": {
+		    "book": {
+				"parent_object" : "bookshelf_0",
+				"placement" : "inside"
+		    }
+		}
+	},
+	"scenario_1": {
+		"objects": {
+		    "book": {
+				"parent_object" : "bookshelf_1",
+				"placement" : "inside"
+		    }
+		}
+	},
+	"scenario_2": {
+		"objects": {
+		    "book": {
+				"parent_object" : "bookshelf_4",
+				"placement" : "inside"
+		    }
+		}
+	},
+	"scenario_0": {
+		"objects": {
+		    "book": {
+				"parent_object" : "bookshelf_5",
+				"placement" : "inside"
+		    }
+		}
+	}
+}
+
+### Example 4 ###
+Example Input:
+Scene image: <image>
+Scene objects: 'table_0', 'chair_0', 'coffee_machine_0', 'box_0', 'vacuum_cleaner_0'
+Objects to be placed: ['coffee capsule', 'drawer]
+Task: Take a coffee capsule out of the drawer next to the coffee machine.
+
+Example Output:
+Since the drawer can be located both to the left and right of the coffee machine, there are 2 possible scenarios.
+{
+	"scenario_0": {
+		"objects": {
+		    "drawer": {
+				"parent_object" : "coffee_machine_0",
+				"placement" : "left"
+		    },
+			"coffee capsule": {
+				"parent_object" : "drawer",
+				"placement" : "inside"
+			}
+		}
+	},
+	"scenario_1": {
+		"objects": {
+		    "drawer": {
+				"parent_object" : "coffee_machine_0",
+				"placement" : "right"
+		    },
+			"coffee capsule": {
+				"parent_object" : "drawer",
+				"placement" : "inside"
+			}
+		}
+	}
+}
+
+Now look at the Scene image, Scene objects, Objects to be placed, and the Task to provide the correct answer.
+Remember that parent_object can be used from not only scene objects but also from objects to be placed. And make sure the object placements are appropriate and well-aligned with the given task.
+Scene image:
+"""
+
         step2_text_prompt2 = f'Scene objects: {scene_objects}' +\
                             f'Objects to be placed: {objects_to_be_placed}' +\
                             f'Task: {goal_task}'

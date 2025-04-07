@@ -166,27 +166,31 @@ class TaskObjectSpatialReasoning:
 
             """)
         
-        gpt = GPT(api_key=gpt_api_key, version=gpt_version)
+        gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="_TaskObjSpatialReasoning")
         
-        nn_selection_payload = gpt.payload_task_object_spatial_reasoning(
+        task_object_spatial_reasoning_payload = gpt.payload_task_object_spatial_reasoning(
             scene_objects = detected_categories_info["names"],
             goal_task = target_object_extraction_info["task"],
             objects_to_be_placed = target_object_extraction_info["objects"],
             annotated_image_path = annotated_image_path
         )
 
-        gpt_text_response = gpt(nn_selection_payload)
+        gpt_text_response = gpt(task_object_spatial_reasoning_payload)
         print("GPT Response:", gpt_text_response)
         if gpt_text_response is None:
             # Failed, terminate early
             return False, None
-        if "json" in gpt_text_response.lower() and "```" in gpt_text_response:
-            # ```json 또는 ```으로 감싸진 블록 제거
-            gpt_text_response = re.sub(r"^```[a-z]*\n|\n```$", "", gpt_text_response.strip(), flags=re.IGNORECASE)
 
-        print("GPT Response:", gpt_text_response)
+        # Parse GPT response
+        gpt_text_response_filtered = gpt_text_response[gpt_text_response.find('\n'):]  # filter explanation
+        if "json" in gpt_text_response_filtered.lower() and "```" in gpt_text_response_filtered:
+            # ```json 또는 ```으로 감싸진 블록 제거
+            gpt_text_response_parsed = re.sub(r"^```[a-z]*\n|\n```$", "", gpt_text_response_filtered.strip(), flags=re.IGNORECASE)
+        if self.verbose:
+            print(f"gpt_text_response_parsed: {gpt_text_response_parsed}")
+
         try:
-            gpt_result = json.loads(gpt_text_response)
+            gpt_result = json.loads(gpt_text_response_parsed)
         except json.JSONDecodeError as e:
             print("❌ JSON Parsing Fail", e)
             return False, None
@@ -194,21 +198,34 @@ class TaskObjectSpatialReasoning:
         
         task_object_spatial_reasoning_info = {
             "task": target_object_extraction_info["task"],
-            "objects": gpt_result["objects"]
+            "scenarios": gpt_result
         }
 
+        task_object_spatial_reasoning_info_list = []
         # convert 'object name' to 'object_name'
-        obj_keys = list(task_object_spatial_reasoning_info["objects"].keys())
-        for obj_key in obj_keys:
-            if " " in obj_key:
-                task_object_spatial_reasoning_info["objects"][obj_key.replace(" ", "_")] = task_object_spatial_reasoning_info["objects"].pop(obj_key)
+        for scenario_num, scenario_info in task_object_spatial_reasoning_info["scenarios"].items():
+            # print(f"scenario_num: {scenario_num}")
+            # print(f"scenario_info: {scenario_info}")
+            task_object_spatial_reasoning_info_scenario = {
+                "task": target_object_extraction_info["task"],
+                "objects": {}
+            }
 
+            obj_keys = list(scenario_info["objects"].keys())
+            for obj_key in obj_keys:
+                if " " in obj_key:
+                    task_object_spatial_reasoning_info_scenario["objects"][obj_key.replace(" ", "_")] = scenario_info["objects"][obj_key]
+                else:
+                    task_object_spatial_reasoning_info_scenario["objects"][obj_key] = scenario_info["objects"][obj_key]
 
-        
-        task_object_spatial_reasoning_path = f"{save_dir}/task_obj_output_info.json"
-    
-        with open(task_object_spatial_reasoning_path, "w+") as f:
-            json.dump(task_object_spatial_reasoning_info, f, indent=4)
+            # print(f"task_object_spatial_reasoning_info_scenario: {task_object_spatial_reasoning_info_scenario}")
+            task_object_spatial_reasoning_info_list.append(task_object_spatial_reasoning_info_scenario)
+
+        for i, task_object_spatial_reasoning_info in enumerate(task_object_spatial_reasoning_info_list):
+            task_object_spatial_reasoning_path = f"{save_dir}/task_obj_output_info_scenario_{i}.json"
+
+            with open(task_object_spatial_reasoning_path, "w+") as f:
+                json.dump(task_object_spatial_reasoning_info, f, indent=4)
 
         print("""
 
