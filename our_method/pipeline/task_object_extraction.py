@@ -148,12 +148,13 @@ class TaskObjectExtraction:
         # task = "Give me the cup in the cabinet above the microwave"
         # task = "Give me the orange in the cabinet above the microwave"
 
-        nn_selection_payload = gpt.payload_task_object_extraction(
+        task_object_extraction_payload = gpt.payload_task_object_extraction(
             scene_objects_str,
             goal_task=goal_task,
         )
+        # print(f"task_object_extraction_payload: {task_object_extraction_payload}")
 
-        gpt_text_response = gpt(nn_selection_payload)
+        gpt_text_response = gpt(task_object_extraction_payload)
 
         if gpt_text_response is None:
             # Failed, terminate early
@@ -169,6 +170,7 @@ class TaskObjectExtraction:
             print("❌ JSON 파싱 실패:", e)
             return False, None
         
+        print(f"gpt_json: {gpt_json}")
 
         task_object_extraction_info = {
             "task": goal_task,

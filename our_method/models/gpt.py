@@ -1481,23 +1481,81 @@ class GPT:
 
 
         prompt_text_system = "You are a robot & simulation expert. "
-                        
-        prompt_user =   "Carefully analyze the given scene objects and task to extract the objects needed to simulate the task. "+\
-                        "However, the objects to be extracted must be other than scene objects. " +\
-                        "Your answer should be in JSON format. For example:\n" +\
-                        "Example Output : ['obj_0', 'obj_1']" +\
-                        "Example Output : ['cabinet', 'cup']" +\
-                        "Example Output : ['apple']" +\
-                        "Example Output : ['key', 'locker]" +\
-                        f"Scene objects: {scene_objects}\n" +\
-                        f"Task: {goal_task}"
-                        
-        
-                        # "{{'target_objects': ['obj_0', 'obj_1']}}" +\
+
+        prompt_user = """Carefully analyze the given scene objects and task to extract the objects needed to simulate the task.
+However, the objects to be extracted must be other than scene objects.
+Your answer should be in JSON format. For example:
+{{"target_objects": ["obj_0", "obj_1"]}}
+
+I will give you some examples
+
+### Example 1 ###
+Example Input:
+Scene objects: 'cup', 'microwave', 'refrigerator', 'cabinet'
+Task: Give me the bottle in the refrigerator
+
+Example Output:
+{{"target_objects": ["bottle"]}}
+
+### Example 2 ###
+Example Input:
+Scene objects: 'monitor', 'notebook', 'pen', 'cup', 'keyboard', 'mouse', 'toy', 'snack', 'storage unit'
+Task: Put the wipes in front of the keyboard
+
+Example Output:
+{{"target_objects": ["wipes"]}}
+
+### Example 3 ###
+Example Input:
+Scene objects: 'table', 'chair', 'coffee machine', 'box', 'vacuum cleaner'
+Task: Get me the box on the chair.
+
+Example Output:
+{{"target_objects": ["box"]}}
+
+### Example 4 ###
+Example Input:
+Scene objects: 'sign', 'glass door', 'wall'
+Task: Open the cabinet in front of the wall
+
+Example Output:
+{{"target_objects": ["cabinet"]}}
+
+### Example 5 ###
+Example Input:
+Scene objects: 'cup', 'microwave', 'refrigerator', 'cabinet'
+Task: Give me a dish in the cabinet above the microwave
+
+Example Output:
+{{"target_objects": ["dish"]}}
+
+### Example 6 ###
+Example Input:
+Scene objects: 'locker'
+Task: Open the cabinet next to the locker and give me the cup inside
+
+Exmaple Output:
+{{"target_objects": ["cabinet", "cup"]}}
+
+### Example 7 ###
+Example Input:
+Scene objects: 'cup', 'microwave', 'cabinet'
+Task: Give me the water bottle next to the microwave
+
+Exmaple Output:
+{{"target_objects": ["water bottle"]}}
+
+
+Now, based on the provided scene objects, please identify which objects are necessary to execute the task.
+Scene objects: {}
+Task: {}
+"""
+
+        prompt_user_filled = prompt_user.format(scene_objects, goal_task)
         content = [
             {
                 "type": "text",
-                "text": prompt_user
+                "text": prompt_user_filled
             }
         ]
 
