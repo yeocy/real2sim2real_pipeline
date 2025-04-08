@@ -143,8 +143,7 @@ class GPT:
 
             # 이미지 복사
             shutil.copy(request_img_path, destination)
-        else:
-            print("이미지 저장 실패 또는 이미지가 없습니다.")
+            print(f"이미지 저장 완료 ({destination})")
 
         # ChatCompletion 객체를 직렬화 가능한 딕셔너리로 변환
         # OpenAI 응답 객체일 경우
