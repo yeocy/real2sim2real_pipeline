@@ -21,9 +21,9 @@ from omnigibson.sensors import VisionSensor
 from omnigibson.controllers import OperationalSpaceController, InverseKinematicsController
 import omnigibson.utils.transform_utils as OT
 
-import digital_cousins
-from digital_cousins.utils.processing_utils import NumpyTorchEncoder, process_depth_linear, compute_point_cloud_from_depth, shrink_mask
-import digital_cousins.utils.transform_utils as NT
+import our_method
+from our_method.utils.processing_utils import NumpyTorchEncoder, process_depth_linear, compute_point_cloud_from_depth, shrink_mask
+import our_method.utils.transform_utils as NT
 
 
 def get_env_class(env_meta=None, env_type=None, env=None):
@@ -373,10 +373,10 @@ class EnvOmniGibson(EB.EnvBase):
             assert isinstance(robot, FrankaMounted), "Only FrankaMounted robot is supported for @include_eef_pc!"
             for link in robot.finger_links[robot.default_arm]:
                 link_name = link.body_name
-                pc = th.tensor(np.load(f"{digital_cousins.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/finray_finger.npy"), dtype=th.float)
+                pc = th.tensor(np.load(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/finray_finger.npy"), dtype=th.float)
                 self.finger_pcs[link.visual_meshes["visuals"]] = pc
 
-            with open(f"{digital_cousins.ASSET_DIR}/robots/{robot.__class__.__name__}/tfs/eef2finger_tfs.json", "r") as f:
+            with open(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/tfs/eef2finger_tfs.json", "r") as f:
                 eef2finger_tfs = json.load(f)
 
             for name, tf in eef2finger_tfs.items():

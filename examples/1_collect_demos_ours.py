@@ -170,8 +170,11 @@ def main(args):
             },
         },
     }]
+    # AssertionError: Invalid wrapper type received! 
+    # Valid options are: dict_keys(['DataWrapper', 'DataCollectionWrapper', 'DataPlaybackWrapper', 'SkillWrapper', 'OpenCabinetWrapper', 'SkillCollectionWrapper']), got: CabinetPickAndPlaceWrapper
+
     cfg["wrapper"] = {
-        "type": "OpenCabinetWrapper",
+        "type": "PickAndPlaceWrapper",
         "eef_z_offset": robot_params["eef_z_offset"],
         "cab_categories": cousin_category_names,
         "cab_models": cousin_model_names,
@@ -202,7 +205,6 @@ def main(args):
         "scene_target_obj_name": args.target_obj,
     }
 
-
     # Create the robomimic-compatible environment
     # ACDC Scene 생성
     env = EnvOmniGibson(
@@ -232,7 +234,7 @@ def main(args):
     )
 
     og.sim.viewer_camera.set_position_orientation(*scene_info["cam_pose"])
-
+    
     # Wrap with skill data collection
     env = SkillCollectionWrapper(
         env=env,
@@ -258,6 +260,7 @@ def main(args):
             env.env.env.set_cabinet_idx(idx=i)
             env.reset()
             env.collect_demo()
+            exit()
             if env.env.is_success()["task"]:
                 n_cab_successes += 1
                 buffer_traj_count += 1

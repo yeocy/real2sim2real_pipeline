@@ -51,9 +51,68 @@ class SkillCollectionWrapper(DataCollectionWrapper):
         arm_name = f"arm_{robot.default_arm}"
         eef_name = f"gripper_{robot.default_arm}"
 
+        # === 로봇 정보 ===
+        # robot: <omnigibson.robots.franka_mounted.FrankaMounted object at 0x7fb502c4cc10>
+        # arm_name: arm_0
+        # eef_name: gripper_0
+        # robot action_dim: 7
+        # default_arm: 0
+        # controller_action_idx: {'arm_0': tensor([0, 1, 2, 3, 4, 5]), 'gripper_0': tensor([6])}
+
         # Iterate through all solve steps
         for solve_step in self.env.env.solve_steps:
+            print(f"\n--- Solve Step: {solve_step} ---")
+
             skill, skill_step, skill_kwargs, is_valid = self.env.env.get_skill_and_kwargs_at_step(solve_step=solve_step)
+
+            print(f"skill object: {skill}")
+            print(f"skill class: {skill.__class__.__name__}")
+            print(f"skill_step: {skill_step}")
+            print(f"skill_kwargs: {skill_kwargs}")
+            print(f"is_valid: {is_valid}")
+
+            # --- Solve Step: 0 ---
+            # skill object: <digital_cousins.skills.open_or_close_skill.OpenOrCloseSkill object at 0x7fb5452258a0>
+            # skill class: OpenOrCloseSkill
+            # skill_step: 0
+            # skill_kwargs: {'should_open': True, 'joint_limits': (0.0, 0.7853981633974483), 'n_approach_steps': 15, 'n_converge_steps': 15, 'n_grasp_steps': 1, 'n_articulate_steps': 25, 'n_buffer_steps': 1}
+            # is_valid: True
+            # Executing solve_step: 0 [skill OpenOrCloseSkill step: 0]...
+            # UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.clone().detach() or sourceTensor.clone().detach().requires_grad_(True), rather than torch.tensor(sourceTensor).
+
+            # --- Solve Step: 1 ---
+            # skill object: <digital_cousins.skills.open_or_close_skill.OpenOrCloseSkill object at 0x7f0831254670>
+            # skill class: OpenOrCloseSkill
+            # skill_step: 1
+            # skill_kwargs: {'should_open': True, 'joint_limits': (0.0, 0.7853981633974483), 'n_approach_steps': 15, 'n_converge_steps': 15, 'n_grasp_steps': 1, 'n_articulate_steps': 25, 'n_buffer_steps': 1}
+            # is_valid: True
+            # Executing solve_step: 1 [skill OpenOrCloseSkill step: 1]...
+
+            # --- Solve Step: 2 ---
+            # skill object: <digital_cousins.skills.open_or_close_skill.OpenOrCloseSkill object at 0x7f0831254670>
+            # skill class: OpenOrCloseSkill
+            # skill_step: 2
+            # skill_kwargs: {'should_open': True, 'joint_limits': (0.0, 0.7853981633974483), 'n_approach_steps': 15, 'n_converge_steps': 15, 'n_grasp_steps': 1, 'n_articulate_steps': 25, 'n_buffer_steps': 1}
+            # is_valid: True
+            # Executing solve_step: 2 [skill OpenOrCloseSkill step: 2]...
+
+            # --- Solve Step: 3 ---
+            # skill object: <digital_cousins.skills.open_or_close_skill.OpenOrCloseSkill object at 0x7f0831254670>
+            # skill class: OpenOrCloseSkill
+            # skill_step: 3
+            # skill_kwargs: {'should_open': True, 'joint_limits': (0.0, 0.7853981633974483), 'n_approach_steps': 15, 'n_converge_steps': 15, 'n_grasp_steps': 1, 'n_articulate_steps': 25, 'n_buffer_steps': 1}
+            # is_valid: True
+            # Executing solve_step: 3 [skill OpenOrCloseSkill step: 3]...
+            # UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.clone().detach() or sourceTensor.clone().detach().requires_grad_(True), rather than torch.tensor(sourceTensor).
+
+            # --- Solve Step: 4 ---
+            # skill object: <digital_cousins.skills.open_or_close_skill.OpenOrCloseSkill object at 0x7f0831254670>
+            # skill class: OpenOrCloseSkill
+            # skill_step: 4
+            # skill_kwargs: {'should_open': True, 'joint_limits': (0.0, 0.7853981633974483), 'n_approach_steps': 15, 'n_converge_steps': 15, 'n_grasp_steps': 1, 'n_articulate_steps': 25, 'n_buffer_steps': 1}
+            # is_valid: True
+            # Executing solve_step: 4 [skill OpenOrCloseSkill step: 4]...
+
 
             if not is_valid:
                 print(f"Skill {skill.__class__.__name__} not valid at current sim state, terminating early")

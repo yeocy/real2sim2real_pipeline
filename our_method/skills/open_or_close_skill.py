@@ -4,7 +4,7 @@ from omnigibson.objects import PrimitiveObject
 import omnigibson.utils.transform_utils as OT
 from omnigibson.utils.sampling_utils import raytest_batch
 import omnigibson.lazy as lazy
-from digital_cousins.skills.skill_base import ManipulationSkill
+from our_method.skills.skill_base import ManipulationSkill
 import torch as th
 from enum import IntEnum
 
@@ -290,15 +290,19 @@ class OpenOrCloseSkill(ManipulationSkill):
                 - torch.tensor: (x,y,z,w) global handle grasping quaternion or (3,3)-shaped orientation matrix
         """
         # Compute relevant state
+        # 현재 link pos, quat 받아옴
         link_pos, link_quat = self._target_link.get_position_orientation()
         link_mat = OT.quat2mat(link_quat)
 
         # Assume x points out from the cabinet, y points right, z points up
         # Then transform (in the drawer's local frame) to have robot gripper point towards it is to rotate it -90 degrees wrt
         # to the Y-axis, and then optionally 90 deg wrt the X axis depending on if the drawer is horizontal or not
+        # 문 손잡이가 수직이면 self._is_vertical_handle = True  회전 X
+        # 문 손잡이가 수평이면 self._is_vertical_handle = False 회전 O
         gripper_yaw = 0.0 if self._is_vertical_handle else th.pi / 2
         grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float))
 
+        # Revolute vs Prismatic
         if self._target_joint.is_revolute:
             # Joint angle corresponds to angle, so convert into modified pose in the global frame
             jnt_vec = th.zeros(3)
@@ -312,7 +316,10 @@ class OpenOrCloseSkill(ManipulationSkill):
             jnt_delta[self._joint_axis_idx] = delta_jnt_val
             new_grasp_pos_parent_frame = self._joint_rel_mat @ (joint_to_grasp_pos + jnt_delta)
             new_grasp_mat_global_frame = grasp_mat
+        # new_grasp_mat_global_frame : 로봇이 도착해야하는 손목의 matrix
+        # new_grasp_pos_parent_frame : 타겟 link의 local 좌표계 기준에서의 grasp 위치
 
+        # grasp 위치(포지션)를 global 좌표계로 변환
         new_grasp_pos_global_frame = OT.quat2mat(link_quat) @ new_grasp_pos_parent_frame + link_pos
 
         return new_grasp_pos_global_frame, (new_grasp_mat_global_frame if return_mat else OT.mat2quat(new_grasp_mat_global_frame))
@@ -407,6 +414,18 @@ class OpenOrCloseSkill(ManipulationSkill):
                     subtrajectory action sequence to deploy in an environment
                 - torch.tensor: (T, D)-shaped array where D-length actions are stacked to form an T-length
                     subtrajectory nullspace action sequence to deploy in an environment
+        
+        
+        step	수행할 스킬 단계 (APPROACH, CONVERGE, GRASP 등)
+        should_open	문을 여는 동작인지 (True) 닫는 동작인지 (False) 
+        joint_limits	관절의 허용된 값 범위 (기본은 해당 링크의 설정 값)    (0.0, 0.7853981633974483)
+        n_*_steps	각 동작 단계에서 몇 스텝 동안 수행할지 (e.g., approach, articulate 등)    (15, 15, 1, 25, 1)
+        max_open_val	문을 열 때 최대 열림 값 (없으면 joint limit 사용)       None
+        grasp_override_val	그립 값을 강제로 지정할지 여부      None
+        maintain_current_orientation	기존 EEF 자세를 유지할지 여부       False
+        enable_finetune_trajopt	(사용되지 않음) 시간 최적화 여부 (현재는 트라젝토리 생성 후 재보정 미사용)      True
+
+        
         """
         # 5 steps:
         # (1) Move to approach pose
@@ -417,7 +436,6 @@ class OpenOrCloseSkill(ManipulationSkill):
 
         # Update grasp poses
         self._update_grasp_pose()
-
         # If visualize, set camera to visualize:
         if self._visualize:
             self.set_camera_to_visualize()
@@ -426,6 +444,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         joint_to_grasp_pos = None
         delta_jnt_vals = None
 
+        
         # (1) Move to approach pose
         if step == OpenOrCloseStep.APPROACH:
             n_steps = n_approach_steps
@@ -453,7 +472,9 @@ class OpenOrCloseSkill(ManipulationSkill):
             lower_limit, upper_limit = max(joint_limits[0], self._target_joint.lower_limit), min(joint_limits[1], self._target_joint.upper_limit)
             end_limit = (upper_limit if max_open_val is None else max_open_val) if should_open else lower_limit
             # Should be normalized to 0 as the starting point
+            # joint값의 변화량
             delta_jnt_vals = th.tensor([cur_jnt_val + (end_limit - cur_jnt_val) * i / n_steps for i in range(n_steps)], dtype=th.float) - cur_jnt_val
+
             grasp = True
 
         # (5) Release grasp
@@ -470,6 +491,9 @@ class OpenOrCloseSkill(ManipulationSkill):
 
         else:
             raise ValueError(f"Got unknown OpenOrCloseStep: {step}")
+        
+        print(f"step: {step}")
+        print(f"joint_to_grasp_pos (raw tensor): {joint_to_grasp_pos}")
 
         # Possibly override grasp value
         if grasp_override_val is not None:
@@ -479,12 +503,13 @@ class OpenOrCloseSkill(ManipulationSkill):
         null_cmds = None
         # If we're doing a no_op, don't move the EEF
         if no_op:
-            cmds = self.generate_no_ops(n_steps=n_steps, return_aa=True)
-            cmds = th.concatenate([cmds, th.ones((n_steps, 1)) * grasp_val], dim=-1)
-
+            # 움직이지 않고 고정된 pose에서만 grasp만 수행
+            cmds = self.generate_no_ops(n_steps=n_steps, return_aa=True)        # 6개는 고정된 값 생성
+            cmds = th.concatenate([cmds, th.ones((n_steps, 1)) * grasp_val], dim=-1)        # 마지막 1개는 open : 1, close : -1
         # else if delta joint vals is None, then we assume we want to converge to a static set point -- so we generate a
         # linearly-interpolated trajectory to the desired waypoint
         elif delta_jnt_vals is None:
+            # 특정 위치로 이동만 할 때 
             target_pos, target_mat = self.compute_grasp_pose(
                 joint_to_grasp_pos=joint_to_grasp_pos,
                 delta_jnt_val=0.0,
@@ -511,6 +536,8 @@ class OpenOrCloseSkill(ManipulationSkill):
 
         # Otherwise, generate the trajectory directly from the joint vals requested
         else:
+            # delta_jnt_vals : Cabinet과 같은 관절의 변화량
+            # Grasp을 하면서 움직일 때
             cmds = th.zeros((n_steps, 7))
             for i, delta_jnt_val in enumerate(delta_jnt_vals):
                 target_pos, target_mat = self.compute_grasp_pose(

@@ -1,2 +1,3 @@
-from digital_cousins.envs.omnigibson.cabinet_open_wrapper import OpenCabinetWrapper
-from digital_cousins.envs.robomimic.env_og import EnvOmniGibson
+from our_method.envs.omnigibson.cabinet_open_wrapper import OpenCabinetWrapper
+from our_method.envs.omnigibson.pick_cup_in_the_cabinet import PickCupInTheCabinetWrapper
+from our_method.envs.robomimic.env_og import EnvOmniGibson
