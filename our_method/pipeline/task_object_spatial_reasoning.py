@@ -176,18 +176,19 @@ class TaskObjectSpatialReasoning:
         )
 
         gpt_text_response = gpt(task_object_spatial_reasoning_payload)
-        print("GPT Response:", gpt_text_response)
+        print("GPT Response:\n", gpt_text_response)
         if gpt_text_response is None:
             # Failed, terminate early
             return False, None
 
         # Parse GPT response
-        gpt_text_response_filtered = gpt_text_response[gpt_text_response.find('\n'):]  # filter explanation
-        if "json" in gpt_text_response_filtered.lower() and "```" in gpt_text_response_filtered:
+        if not gpt_text_response.startswith("```json"):
+            gpt_text_response = gpt_text_response[gpt_text_response.find('\n'):]  # filter explanation
+        if "json" in gpt_text_response.lower() and "```" in gpt_text_response:
             # ```json 또는 ```으로 감싸진 블록 제거
-            gpt_text_response_parsed = re.sub(r"^```[a-z]*\n|\n```$", "", gpt_text_response_filtered.strip(), flags=re.IGNORECASE)
+            gpt_text_response_parsed = re.sub(r"^```[a-z]*\n|\n```$", "", gpt_text_response.strip(), flags=re.IGNORECASE)
         if self.verbose:
-            print(f"gpt_text_response_parsed: {gpt_text_response_parsed}")
+            print("gpt_text_response_parsed:\n", gpt_text_response_parsed)
 
         try:
             gpt_result = json.loads(gpt_text_response_parsed)
