@@ -1,4 +1,6 @@
+assets
 assets/
+checkpoints
 checkpoints/
 deps/
 training_results/
@@ -10,3 +12,6 @@ chatgpt_api_key
 execute
 tamp/
 *.hdf5
+
+logs/
+test_chan_house
