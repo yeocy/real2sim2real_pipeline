@@ -210,6 +210,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         pruned_positions = th.stack(pruned_positions, dim=0)
         grasp_pos_canonical_rotated = pruned_positions.mean(dim=0)
 
+        # 기본 스케일 기준의 grasp 위치 저장
         # Compute default values, storing them for later dynamic re-scaling computations
         self._default_scale = self._target_obj.scale
         self._default_obj_to_grasp_pos = grasp_pos_canonical_rotated - obj_pos_offset
@@ -217,6 +218,8 @@ class OpenOrCloseSkill(ManipulationSkill):
         # Reset the cabinet to be "normal" facing, and visualize the cabinet again
         self._target_obj.set_position_orientation(orientation=th.tensor([0, 0, 0, 1.0], dtype=th.float))
 
+        # 부모 링크 기준에서 joint의 상대 pose를 계산
+        # joint가 움직이는 방향 인덱스(X/Y/Z)를 저장
         # Compute the pose of the joint in the cabinet base frame
         parent_link = self._target_obj.links[joint.body0.split("/")[-1]]
         joint_rel_pos = th.tensor(joint.get_attribute("physics:localPos0"), dtype=th.float) * parent_link.scale
@@ -224,6 +227,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         joint_axis_to_idx = {num: i for i, num in enumerate("XYZ")}
         self._joint_axis_idx = joint_axis_to_idx[joint.axis]
 
+        # Grasp Offset 계산
         # Create a grasp offset to move the grasp marker into the actual handle
         self._approach_idx = 0 if self._is_x_oriented else 1
         self._approach_sign = 1 if self._is_x_oriented else -1  # Because object rotated 90 deg will have Y pointing away from front
@@ -237,6 +241,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         approach_offset = initial_offset.clone()
         approach_offset[self._approach_idx] += self._approach_dist * self._approach_sign
 
+        # Grasp Pose 계산 함수 정의 및 실행
         # Define lambda function for updating grasp pose based on internal scale
         # TODO: Parent link pos itself might need to be scaled accordingly if it's not the root link frame
         parent_link_pos, parent_link_ori = parent_link.get_position_orientation()
@@ -253,11 +258,13 @@ class OpenOrCloseSkill(ManipulationSkill):
             self._joint_to_approach_pos = self._joint_rel_mat.T @ OT.quat2mat(parent_link_ori).T @ (
                         grasp_pos_canonical - joint_world_pos + approach_offset)
 
+        # grasp pose 계산 함수 정의 및 실행
         self._update_grasp_pose = pose_updater
         self._update_grasp_pose()
 
         # Determine whether this handle is horizontal or vertical based on the positions
         # (len(z) > (y) --> vertical, otherwise horizontal)
+        # 핸들이 수직인지 수평인지 판단
         handle_extent = pruned_positions.max(dim=0)[0] - pruned_positions.min(dim=0)[0]
         self._is_vertical_handle = handle_extent[2] > handle_extent[1]
 

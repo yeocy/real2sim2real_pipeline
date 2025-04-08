@@ -83,7 +83,7 @@ class TaskObjectRetrieval:
             step_1_output_path,
             step_2_output_path,
             step_3_output_path,
-            task_spatial_reasing_output_path,
+            task_spatial_reasoning_output_path,
             gpt_api_key,
             gpt_version="4o",
             top_k_categories=3,
@@ -142,11 +142,13 @@ class TaskObjectRetrieval:
 
         # Parse save_dir, and create the directory if it doesn't exist
         if save_dir is None:
-            save_dir = os.path.dirname(os.path.dirname(task_spatial_reasing_output_path))
+            save_dir = os.path.dirname(os.path.dirname(task_spatial_reasoning_output_path))
         save_dir = os.path.join(save_dir, "task_object_retrieval")
         Path(save_dir).mkdir(parents=True, exist_ok=True)
+
+
         if self.verbose:
-            print(f"Computing digital cousins given output {task_spatial_reasing_output_path}...")
+            print(f"Computing digital cousins given output {task_spatial_reasoning_output_path}...")
 
         if self.verbose:
             print("""
@@ -158,389 +160,406 @@ class TaskObjectRetrieval:
             """)
 
         # Load meta info
-        with open(task_spatial_reasing_output_path, "r") as f:
-            task_extraction_output_info = json.load(f)
+        with open(task_spatial_reasoning_output_path, "r") as f:
+            task_spatial_reasoning_output_info = json.load(f)              
 
         with open(step_3_output_path, "r") as f:
             step_3_output_info = json.load(f)
 
-        obj_name_list = []
-        for obj_name, obj_info in task_extraction_output_info["objects"].items():
-            obj_name_list.append(obj_name)
-            # print(obj_name)
-            # print(obj_info)
+        json_list = []
+        # print(f"task_spatial_reasoning_output_info : {task_spatial_reasoning_output_info}")
+        # print(f"task_spatial_reasoning_output_info : {type(task_spatial_reasoning_output_info)}")
+        for scenario_json_path in task_spatial_reasoning_output_info:
+            with open(scenario_json_path, "r") as f:
+                task_extraction_output_info = json.load(f)
 
-        all_categories = list(get_all_dataset_categories(do_not_include_categories=DO_NOT_MATCH_CATEGORIES, replace_underscores=True))
-        
+            obj_name_list = []
+            for obj_name, obj_info in task_extraction_output_info["objects"].items():
+                obj_name_list.append(obj_name)
+                # print(obj_name)
+                # print(obj_info)
 
-        clip = CLIPEncoder(backbone_name="ViT-B/32", device=self.device)
-        res = faiss.StandardGpuResources()
-        index_flat = faiss.IndexFlatL2(clip.embedding_dim)
-        gpu_index_flat = faiss.index_cpu_to_gpu(res, 0, index_flat)
-        selected_categories = dict()
-
-        # TODO
-        obj_phrases = [i for i in obj_name_list]
-
-        if len(obj_phrases) > 0:
-            if self.verbose:
-                print(f"Computing top-{top_k_categories} for phrases using CLIP...")
+            all_categories = list(get_all_dataset_categories(do_not_include_categories=DO_NOT_MATCH_CATEGORIES, replace_underscores=True))
             
-            # CLIP 임베딩 계산
-            text_features = clip.get_text_features(text=all_categories)
-            cand_text_features = clip.get_text_features(text=obj_name_list) # 1800개
 
-            # FAISS를 이용한 최근접 이웃 탐색
-            gpu_index_flat.reset()
-            gpu_index_flat.add(text_features)
-            dists, idxs = gpu_index_flat.search(cand_text_features, top_k_categories)
+            clip = CLIPEncoder(backbone_name="ViT-B/32", device=self.device)
+            res = faiss.StandardGpuResources()
+            index_flat = faiss.IndexFlatL2(clip.embedding_dim)
+            gpu_index_flat = faiss.index_cpu_to_gpu(res, 0, index_flat)
+            selected_categories = dict()
 
-            # 결과 매핑
-            for obj_idx, topk_idxs in zip(range(len(obj_phrases)), idxs):
-                top_k_cat_names = [all_categories[topk_idx] for topk_idx in topk_idxs]
-                selected_categories[obj_name_list[obj_idx]] = top_k_cat_names
-        
-        # Store these results
-        topk_categories_info = {
-            "topk_categories": selected_categories,
-        }
-        
-        topk_categories_path = f"{save_dir}/task_topk_categories.json"
-        
-        with open(topk_categories_path, "w+") as f:
-            json.dump(topk_categories_info, f, indent=4)
+            # TODO
+            obj_phrases = [i for i in obj_name_list]
 
-        # Clean up resources to avoid OOM error
-        del res
-        del clip
+            if len(obj_phrases) > 0:
+                if self.verbose:
+                    print(f"Computing top-{top_k_categories} for phrases using CLIP...")
+                
+                # CLIP 임베딩 계산
+                text_features = clip.get_text_features(text=all_categories)
+                cand_text_features = clip.get_text_features(text=obj_name_list) # 1800개
 
-        if self.verbose:
-            print("""
+                # FAISS를 이용한 최근접 이웃 탐색
+                gpu_index_flat.reset()
+                gpu_index_flat.add(text_features)
+                dists, idxs = gpu_index_flat.search(cand_text_features, top_k_categories)
+
+                # 결과 매핑
+                for obj_idx, topk_idxs in zip(range(len(obj_phrases)), idxs):
+                    top_k_cat_names = [all_categories[topk_idx] for topk_idx in topk_idxs]
+                    selected_categories[obj_name_list[obj_idx]] = top_k_cat_names
+            
+            # Store these results
+            topk_categories_info = {
+                "topk_categories": selected_categories,
+            }
+            
+            topk_categories_path = f"{save_dir}/task_topk_categories.json"
+            
+            with open(topk_categories_path, "w+") as f:
+                json.dump(topk_categories_info, f, indent=4)
+
+            # Clean up resources to avoid OOM error
+            del res
+            del clip
+            del gpu_index_flat
+
+            if self.verbose:
+                print("""
 
 ##############################################################
 ### 2. Select Task Object using GPT ###
 ##############################################################
 
-            """)
-        # Create GPT instance
-        # assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
-        # gpt = GPT(api_key=gpt_api_key, version=gpt_version)
-        # input_sim_rgb_path = step_3_output_info["scene_0"]["scene_img"]
-        # input_real_rgb_path = step_3_output_info["scene_0"]["scene_img"]
-        input_sim_real_rgb_path = os.path.join(os.path.dirname(step_3_output_info["scene_0"]["scene_graph"]), "scene_0_visualization.png")
+                """)
+            # Create GPT instance
+            # assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
+            # gpt = GPT(api_key=gpt_api_key, version=gpt_version)
+            # input_sim_rgb_path = step_3_output_info["scene_0"]["scene_img"]
+            # input_real_rgb_path = step_3_output_info["scene_0"]["scene_img"]
+            input_sim_real_rgb_path = os.path.join(os.path.dirname(step_3_output_info["scene_0"]["scene_graph"]), "scene_0_visualization.png")
 
-        should_start = start_at_name is None
-        n_instances = len(obj_name_list)
+            should_start = start_at_name is None
+            n_instances = len(obj_name_list)
 
-        # Create GPT instance
-        assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
-        gpt = GPT(api_key=gpt_api_key, version=gpt_version)
+            # Create GPT instance
+            assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
+            gpt = GPT(api_key=gpt_api_key, version=gpt_version)
 
-        
-        for instance_idx, name in enumerate(obj_name_list):
-            # Skip if starting at name has not been reached yet
-            if not should_start:
-                if start_at_name == name:
-                    should_start = True
-                else:
-                    # Immediately keep looping
-                    continue
             
-            og_categories = selected_categories[name]
-            obj_save_dir = f"{save_dir}/{name}"
-            topk_model_candidates_dir = f"{obj_save_dir}/top_k_model_candidates"
-            Path(topk_model_candidates_dir).mkdir(parents=True, exist_ok=True)
-            
-            category_list = []
-            model_list =[]
-            
-            selected_models = set()
+            for instance_idx, name in enumerate(obj_name_list):
+                # Skip if starting at name has not been reached yet
+                if not should_start:
+                    if start_at_name == name:
+                        should_start = True
+                    else:
+                        # Immediately keep looping
+                        continue
+                
+                og_categories = selected_categories[name]
+                obj_save_dir = f"{save_dir}/{name}"
+                topk_model_candidates_dir = f"{obj_save_dir}/top_k_model_candidates"
+                Path(topk_model_candidates_dir).mkdir(parents=True, exist_ok=True)
+                
+                category_list = []
+                model_list =[]
+                
+                selected_models = set()
 
 
-            # Find Top-K candidates
-            candidate_imgs_fdirs = [f"{digital_cousins.ASSET_DIR}/objects/{og_category.replace(' ', '_')}/snapshot" for og_category in og_categories]
-            
-            candidate_imgs = list(sorted(f"{candidate_imgs_fdir}/{model}"
-                            for candidate_imgs_fdir in candidate_imgs_fdirs
-                            for model in os.listdir(candidate_imgs_fdir)
-                            if model not in selected_models))
+                # Find Top-K candidates
+                candidate_imgs_fdirs = [f"{digital_cousins.ASSET_DIR}/objects/{og_category.replace(' ', '_')}/snapshot" for og_category in og_categories]
+                
+                candidate_imgs = list(sorted(f"{candidate_imgs_fdir}/{model}"
+                                for candidate_imgs_fdir in candidate_imgs_fdirs
+                                for model in os.listdir(candidate_imgs_fdir)
+                                if model not in selected_models))
 
-            concat_img_save_dir = os.path.join(topk_model_candidates_dir, f'{name}_candidate_input_visualization.png')
-            concat_img = self.make_concat_images(
-                snapshot_imgs_path=candidate_imgs,
-                visualize_resolution=(640, 480),  # 해상도 조절 가능
-                images_per_row=10,
-                save_path=concat_img_save_dir
-            )
-            
-            # TODO
-            nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene(
-                                    sim_real_img_path=input_sim_real_rgb_path,
-                                    parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
-                                    goal_task=task_extraction_output_info["task"],
-                                    parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
-                                    placement=task_extraction_output_info["objects"][name]["placement"],
-                                    caption=obj_phrases[instance_idx],
-                                    candidates_path=concat_img_save_dir,
-                                    top_k=top_k_models)
-            
-            gpt_text_response = gpt(nn_selection_payload)
+                concat_img_save_dir = os.path.join(topk_model_candidates_dir, f'{name}_candidate_input_visualization.png')
+                concat_img = self.make_concat_images(
+                    snapshot_imgs_path=candidate_imgs,
+                    visualize_resolution=(640, 480),  # 해상도 조절 가능
+                    images_per_row=10,
+                    save_path=concat_img_save_dir
+                )
+                
+                # TODO
+                # nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene(
+                #                         sim_real_img_path=input_sim_real_rgb_path,
+                #                         parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
+                #                         goal_task=task_extraction_output_info["task"],
+                #                         parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
+                #                         placement=task_extraction_output_info["objects"][name]["placement"],
+                #                         caption=obj_phrases[instance_idx],
+                #                         candidates_path=concat_img_save_dir,
+                #                         top_k=top_k_models)
+                
+                # gpt_text_response = gpt(nn_selection_payload)
 
-            print("GPT Response :")
-            print(f"   {gpt_text_response}")
+                # print("GPT Response :")
+                # print(f"   {gpt_text_response}")
 
-            if gpt_text_response is None:
-                # Failed, terminate early
-                return False, None
-            # 숫자 모두 추출
-            matches = re.findall(r'\b\d+\b', gpt_text_response)
+                # if gpt_text_response is None:
+                #     # Failed, terminate early
+                #     return False, None
+                # # 숫자 모두 추출
+                # matches = re.findall(r'\b\d+\b', gpt_text_response)
 
-            print("Extract number list :")
-            print(f"   {matches}")
+                # print("Extract number list :")
+                # print(f"   {matches}")
 
-            # 최대 top_k개만 선택
-            nn_model_indices = [int(m) for m in matches[:top_k_models]]  # 0-based 인덱스로 변환
-            print("final number list :")
-            print(f"   {nn_model_indices}\n")
-
-
-            # # # 숫자가 하나도 없을 경우 → 실패 처리
-            # # if not matches:
-            # #     return False, None
-            # if name == "cup":
-            #     nn_model_indices = [18, 6, 27]
-            # else : 
-            #     nn_model_indices = [1, 2, 3]
-            
-            # 후보 이미지 리스트에서 선택된 인덱스만 추출
-            n_candidates = [candidate_imgs[i-1] for i in nn_model_indices]
-            
-            results = {
-                "k": top_k_models,
-                "candidates": n_candidates,
-            }
-
-            with open(f"{topk_model_candidates_dir}/{name}_feature_matcher_results.json", "w+") as f:
-                json.dump(results, f)
-
-            concat_img_save_dir = os.path.join(topk_model_candidates_dir, f'{name}_candidate_gpt_results_visualization.png')
-            concat_img = self.make_concat_images(
-                snapshot_imgs_path=n_candidates,
-                visualize_resolution=(640, 480),  # 해상도 조절 가능
-                images_per_row=10,
-                save_path=concat_img_save_dir,
-                fontscale = 0
-            )
-
-            for path in n_candidates:
-                category = path.split("/")[-3]  # snapshot 바로 앞 폴더
-                model = path.split("/")[-1].split(".")[0].split("_")[-1]  # 파일 이름에서 모델명만
-                category_list.append(category)
-                model_list.append(model)
-
-            task_extraction_output_info["objects"][name]["category"] = category_list
-            task_extraction_output_info["objects"][name]["model"] = model_list
+                # # 최대 top_k개만 선택
+                # nn_model_indices = [int(m) for m in matches[:top_k_models]]  # 0-based 인덱스로 변환
+                # print("final number list :")
+                # print(f"   {nn_model_indices}\n")
 
 
-            # 정면 포즈 찾기
+                # # 숫자가 하나도 없을 경우 → 실패 처리
+                # if not matches:
+                #     return False, None
+                if name == "cup":
+                    nn_model_indices = [18, 6, 27]
+                else : 
+                    nn_model_indices = [1, 2, 3]
+                
+                # 후보 이미지 리스트에서 선택된 인덱스만 추출
+                n_candidates = [candidate_imgs[i-1] for i in nn_model_indices]
+                
+                results = {
+                    "k": top_k_models,
+                    "candidates": n_candidates,
+                }
+
+                with open(f"{topk_model_candidates_dir}/{name}_feature_matcher_results.json", "w+") as f:
+                    json.dump(results, f)
+
+                concat_img_save_dir = os.path.join(topk_model_candidates_dir, f'{name}_candidate_gpt_results_visualization.png')
+                concat_img = self.make_concat_images(
+                    snapshot_imgs_path=n_candidates,
+                    visualize_resolution=(640, 480),  # 해상도 조절 가능
+                    images_per_row=10,
+                    save_path=concat_img_save_dir,
+                    fontscale = 0
+                )
+
+                for path in n_candidates:
+                    category = path.split("/")[-3]  # snapshot 바로 앞 폴더
+                    model = path.split("/")[-1].split(".")[0].split("_")[-1]  # 파일 이름에서 모델명만
+                    category_list.append(category)
+                    model_list.append(model)
+
+                task_extraction_output_info["objects"][name]["category"] = category_list
+                task_extraction_output_info["objects"][name]["model"] = model_list
 
 
-        if self.verbose:
-            print("""
+                # 정면 포즈 찾기
+
+
+            if self.verbose:
+                print("""
 
 ##############################################################
 ### 3. Select Task Object Front Position using GPT ###
 ##############################################################
 
-            """)
+                """)
 
-        for instance_idx, name in enumerate(obj_name_list):
-            category_list = task_extraction_output_info["objects"][name]["category"]
-            model_list = task_extraction_output_info["objects"][name]["model"]
-            re_axis_mat_list = []
-            obj_save_dir = f"{save_dir}/{name}"
-            front_pose_select_dir = f"{obj_save_dir}/task_object_front_pose_select"
-            Path(front_pose_select_dir).mkdir(parents=True, exist_ok=True)
+            for instance_idx, name in enumerate(obj_name_list):
+                category_list = task_extraction_output_info["objects"][name]["category"]
+                model_list = task_extraction_output_info["objects"][name]["model"]
+                re_axis_mat_list = []
+                obj_save_dir = f"{save_dir}/{name}"
+                front_pose_select_dir = f"{obj_save_dir}/task_object_front_pose_select"
+                Path(front_pose_select_dir).mkdir(parents=True, exist_ok=True)
 
-            results = {}
+                results = {}
 
-            for model_idx, model_name in enumerate(model_list):
+                for model_idx, model_name in enumerate(model_list):
+                    
+                    # Find Top-K candidates
+                    candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{category_list[model_idx]}/model/{model_list[model_idx]}" 
+
+                    candidate_model_view_imgs = sorted(
+                        os.path.join(candidate_model_view_fdirs, fname)
+                        for fname in os.listdir(candidate_model_view_fdirs)
+                        if fname.endswith('.png') and int(fname.rstrip('.png').split('_')[-1]) % 25 == 0
+                    )
+
+                    concat_img_save_dir = os.path.join(front_pose_select_dir, f'{name}_{model_name}_candidate_view_input_visualization.png')
+
+                    concat_img = self.make_concat_images(
+                        snapshot_imgs_path=candidate_model_view_imgs,
+                        visualize_resolution=(640, 480),  # 해상도 조절 가능
+                        images_per_row=4,
+                        save_path=concat_img_save_dir
+                    ) 
+
+                    # nn_selection_payload = gpt.payload_front_view_image(
+                    #         candidate_view_path=concat_img_save_dir,
+                    #         goal_task=task_extraction_output_info["task"],
+                    #         parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
+                    #         placement=task_extraction_output_info["objects"][name]["placement"],
+                    #         caption=obj_phrases[instance_idx]
+                    #         )
+                    
+                    # gpt_text_response = gpt(nn_selection_payload)
+                    # if gpt_text_response is None:
+                    #     # Failed, terminate early
+                    #     return False, None
+
+                    # # Extract the first non-negative integer from the response
+                    # match = re.search(r'\b\d+\b', gpt_text_response)
+
+                    # if match:
+                    #     nn_model_index = int(match.group()) - 1
+                    # else:
+                    #     # No valid integer found, handle this case
+                    #     return False, None
+                    
+                    nn_model_index = 1
+                    
+                    results[model_name] = {
+                        "view_path": candidate_model_view_imgs[nn_model_index],
+                        "re_axis_mat": RE_AXIS_MAT[model_idx],
+                    }
+                    
+                    re_axis_mat_list.append(RE_AXIS_MAT[model_idx])
+                    
+                    shutil.copy(candidate_model_view_imgs[nn_model_index], 
+                                os.path.join(front_pose_select_dir, os.path.basename(candidate_model_view_imgs[nn_model_index])))
+                    
+                with open(f"{front_pose_select_dir}/model_pose_selection_results.json", "w+") as f:
+                    json.dump(results, f)
                 
-                # Find Top-K candidates
-                candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{category_list[model_idx]}/model/{model_list[model_idx]}" 
-
-                candidate_model_view_imgs = sorted(
-                    os.path.join(candidate_model_view_fdirs, fname)
-                    for fname in os.listdir(candidate_model_view_fdirs)
-                    if fname.endswith('.png') and int(fname.rstrip('.png').split('_')[-1]) % 25 == 0
-                )
-
-                concat_img_save_dir = os.path.join(front_pose_select_dir, f'{name}_{model_name}_candidate_view_input_visualization.png')
-
-                concat_img = self.make_concat_images(
-                    snapshot_imgs_path=candidate_model_view_imgs,
-                    visualize_resolution=(640, 480),  # 해상도 조절 가능
-                    images_per_row=4,
-                    save_path=concat_img_save_dir
-                ) 
-
-                nn_selection_payload = gpt.payload_front_view_image(
-                        candidate_view_path=concat_img_save_dir,
-                        goal_task=task_extraction_output_info["task"],
-                        parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
-                        placement=task_extraction_output_info["objects"][name]["placement"],
-                        caption=obj_phrases[instance_idx]
-                        )
-                
-                gpt_text_response = gpt(nn_selection_payload)
-                if gpt_text_response is None:
-                    # Failed, terminate early
-                    return False, None
-
-                # Extract the first non-negative integer from the response
-                match = re.search(r'\b\d+\b', gpt_text_response)
-
-                if match:
-                    nn_model_index = int(match.group()) - 1
-                else:
-                    # No valid integer found, handle this case
-                    return False, None
-                
-                # nn_model_index = 1
-                
-                results[model_name] = {
-                    "view_path": candidate_model_view_imgs[nn_model_index],
-                    "re_axis_mat": RE_AXIS_MAT[model_idx],
-                }
-                
-                re_axis_mat_list.append(RE_AXIS_MAT[model_idx])
-                
-                shutil.copy(candidate_model_view_imgs[nn_model_index], 
-                            os.path.join(front_pose_select_dir, os.path.basename(candidate_model_view_imgs[nn_model_index])))
-                
-            with open(f"{front_pose_select_dir}/model_pose_selection_results.json", "w+") as f:
-                json.dump(results, f)
-            
-            task_extraction_output_info["objects"][name]["re_axis_mat"] = re_axis_mat_list
+                task_extraction_output_info["objects"][name]["re_axis_mat"] = re_axis_mat_list
 
 
-        if self.verbose:
-            print("""
+            if self.verbose:
+                print("""
 
 ##############################################################
 ### 4. Select Parent Object Front Position using GPT ###
 ##############################################################
 
-            """)
-        for instance_idx, name in enumerate(obj_name_list):
-            # category_list = task_extraction_output_info["objects"][name]["category"]
-            # model_list = task_extraction_output_info["objects"][name]["model"]
-            # re_axis_mat_list = []
-            # print(task_extraction_output_info)
-            parent_object_name = task_extraction_output_info["objects"][name]["parent_object"]
-            parent_object_category = step_3_output_info["scene_0"]["objects"][parent_object_name]["category"]
-            parent_object_model = step_3_output_info["scene_0"]["objects"][parent_object_name]["model"]
-            obj_save_dir = f"{save_dir}/{name}"
-            parent_front_pose_select_dir = f"{obj_save_dir}/parent_object_front_pose_select"
-            Path(parent_front_pose_select_dir).mkdir(parents=True, exist_ok=True)
+                """)
+            for instance_idx, name in enumerate(obj_name_list):
+                # category_list = task_extraction_output_info["objects"][name]["category"]
+                # model_list = task_extraction_output_info["objects"][name]["model"]
+                # re_axis_mat_list = []
+                # print(task_extraction_output_info)
+                parent_object_name = task_extraction_output_info["objects"][name]["parent_object"]
+                parent_object_category = step_3_output_info["scene_0"]["objects"][parent_object_name]["category"]
+                parent_object_model = step_3_output_info["scene_0"]["objects"][parent_object_name]["model"]
+                obj_save_dir = f"{save_dir}/{name}"
+                parent_front_pose_select_dir = f"{obj_save_dir}/parent_object_front_pose_select"
+                Path(parent_front_pose_select_dir).mkdir(parents=True, exist_ok=True)
 
-            results = {}
-            parent_candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{parent_object_category}/model/{parent_object_model}" 
-            parent_candidate_model_view_imgs = sorted(
-                    os.path.join(parent_candidate_model_view_fdirs, fname)
-                    for fname in os.listdir(parent_candidate_model_view_fdirs)
-                    if fname.endswith('.png') and int(fname.rstrip('.png').split('_')[-1]) % 25 == 0
-                )
-            
-            concat_img_save_dir = os.path.join(parent_front_pose_select_dir, f'{name}_parent_object_{model_name}_candidate_view_input_visualization.png')
-            concat_img = self.make_concat_images(
-                    snapshot_imgs_path=parent_candidate_model_view_imgs,
-                    visualize_resolution=(640, 480),  # 해상도 조절 가능
-                    images_per_row=4,
-                    save_path=concat_img_save_dir
-                )
-            
-            nn_selection_payload = gpt.payload_front_view_image(
-                        candidate_view_path=concat_img_save_dir,
-                        goal_task=task_extraction_output_info["task"],
-                        parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
-                        placement=task_extraction_output_info["objects"][name]["placement"],
-                        caption=obj_phrases[instance_idx]
-                        )
+                results = {}
+                parent_candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{parent_object_category}/model/{parent_object_model}" 
+                parent_candidate_model_view_imgs = sorted(
+                        os.path.join(parent_candidate_model_view_fdirs, fname)
+                        for fname in os.listdir(parent_candidate_model_view_fdirs)
+                        if fname.endswith('.png') and int(fname.rstrip('.png').split('_')[-1]) % 25 == 0
+                    )
                 
-            gpt_text_response = gpt(nn_selection_payload)
-            if gpt_text_response is None:
-                # Failed, terminate early
-                return False, None
+                concat_img_save_dir = os.path.join(parent_front_pose_select_dir, f'{name}_parent_object_{model_name}_candidate_view_input_visualization.png')
+                concat_img = self.make_concat_images(
+                        snapshot_imgs_path=parent_candidate_model_view_imgs,
+                        visualize_resolution=(640, 480),  # 해상도 조절 가능
+                        images_per_row=4,
+                        save_path=concat_img_save_dir
+                    )
+                
+                # nn_selection_payload = gpt.payload_front_view_image(
+                #             candidate_view_path=concat_img_save_dir,
+                #             goal_task=task_extraction_output_info["task"],
+                #             parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
+                #             placement=task_extraction_output_info["objects"][name]["placement"],
+                #             caption=obj_phrases[instance_idx]
+                #             )
+                    
+                # gpt_text_response = gpt(nn_selection_payload)
+                # if gpt_text_response is None:
+                #     # Failed, terminate early
+                #     return False, None
 
-            # Extract the first non-negative integer from the response
-            match = re.search(r'\b\d+\b', gpt_text_response)
+                # # Extract the first non-negative integer from the response
+                # match = re.search(r'\b\d+\b', gpt_text_response)
 
-            if match:
-                nn_model_index = int(match.group()) - 1
-            else:
-                # No valid integer found, handle this case
-                return False, None
+                # if match:
+                #     nn_model_index = int(match.group()) - 1
+                # else:
+                #     # No valid integer found, handle this case
+                #     return False, None
+                
+                nn_model_index = 1
+                
+                results[model_name] = {
+                    "view_path": parent_candidate_model_view_imgs[nn_model_index],
+                    "re_axis_mat": RE_AXIS_MAT[model_idx],
+                }
+                
+                shutil.copy(parent_candidate_model_view_imgs[nn_model_index], 
+                            os.path.join(parent_front_pose_select_dir, os.path.basename(parent_candidate_model_view_imgs[nn_model_index])))
+                
+                with open(f"{parent_front_pose_select_dir}/parent_model_pose_selection_results.json", "w+") as f:
+                    json.dump(results, f)
+                
+                task_extraction_output_info["objects"][name]["parent_re_axis_mat"] = RE_AXIS_MAT[model_idx]
+
+            step_5_output_path = f"{save_dir}/step_5_output_info.json"
             
-            # nn_model_index = 1
             
-            results[model_name] = {
-                "view_path": parent_candidate_model_view_imgs[nn_model_index],
-                "re_axis_mat": RE_AXIS_MAT[model_idx],
-            }
-            
-            shutil.copy(parent_candidate_model_view_imgs[nn_model_index], 
-                        os.path.join(parent_front_pose_select_dir, os.path.basename(parent_candidate_model_view_imgs[nn_model_index])))
-            
-            with open(f"{parent_front_pose_select_dir}/parent_model_pose_selection_results.json", "w+") as f:
-                json.dump(results, f)
-            
-            task_extraction_output_info["objects"][name]["parent_re_axis_mat"] = RE_AXIS_MAT[model_idx]
+            index_lists = [
+                range(len(task_extraction_output_info["objects"][obj]["model"]))
+                for obj in obj_name_list
+            ]
 
-        step_5_output_path = f"{save_dir}/step_5_output_info.json"
-        
-        
-        index_lists = [
-            range(len(task_extraction_output_info["objects"][obj]["model"]))
-            for obj in obj_name_list
-        ]
+            # 모든 조합 만들기
+            for num, idxs in enumerate(product(*index_lists)):
+                combo_obj_data = {}
 
-        # 모든 조합 만들기
-        for num, idxs in enumerate(product(*index_lists)):
-            combo_obj_data = {}
+                for i, obj_name in enumerate(obj_name_list):
+                    idx = idxs[i]
+                    obj = task_extraction_output_info["objects"][obj_name]
 
-            for i, obj_name in enumerate(obj_name_list):
-                idx = idxs[i]
-                obj = task_extraction_output_info["objects"][obj_name]
+                    # 전체 복사해서 변경하는 방식 (원본 유지)
+                    new_obj = copy.deepcopy(obj)
 
-                # 전체 복사해서 변경하는 방식 (원본 유지)
-                new_obj = copy.deepcopy(obj)
+                    # 동적으로 바꾸는 항목만 교체
+                    new_obj["model"] = obj["model"][idx]
+                    new_obj["category"] = obj["category"][idx]
+                    new_obj["re_axis_mat"] = obj["re_axis_mat"][idx]
 
-                # 동적으로 바꾸는 항목만 교체
-                new_obj["model"] = obj["model"][idx]
-                new_obj["category"] = obj["category"][idx]
-                new_obj["re_axis_mat"] = obj["re_axis_mat"][idx]
+                    combo_obj_data[obj_name] = new_obj
 
-                combo_obj_data[obj_name] = new_obj
+                output_json = {
+                    "task": task_extraction_output_info["task"],
+                    "objects": combo_obj_data
+                }
 
-            output_json = {
-                "task": task_extraction_output_info["task"],
-                "objects": combo_obj_data
-            }
-
-            with open(f"{save_dir}/step_5_output_info_{num}.json", "w+") as f:
-            # json.dump(task_extraction_output_info, f, indent=4, 
-            #           cls=OneLineListEncoder)
-                write_json_like(output_json, f, indent=0)
+                scenario_num = os.path.basename(scenario_json_path).replace("task_obj_output_info_", "").replace(".json", "")
+                json_path = f"{save_dir}/step_5_output_info_{scenario_num}_{num}.json"
+                json_list.append(json_path)
+                with open(json_path, "w+") as f:
+                # json.dump(task_extraction_output_info, f, indent=4, 
+                #           cls=OneLineListEncoder)
+                    write_json_like(output_json, f, indent=0)
 
 
-        print("""
+            print("""
 
 ##########################################
 ### Completed Task Object Matching! ###
 ##########################################
 
-        """)
+            """)
+        
+        with open(f"{save_dir}/task_obj_output_info.json", "w+") as f:
+        # json.dump(task_extraction_output_info, f, indent=4, 
+        #           cls=OneLineListEncoder)
+            json.dump(json_list, f, indent=4)
+
         return True, step_2_output_path
 
 

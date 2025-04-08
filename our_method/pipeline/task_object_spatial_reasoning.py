@@ -222,12 +222,17 @@ class TaskObjectSpatialReasoning:
             # print(f"task_object_spatial_reasoning_info_scenario: {task_object_spatial_reasoning_info_scenario}")
             task_object_spatial_reasoning_info_list.append(task_object_spatial_reasoning_info_scenario)
 
+        task_output_info_path = []
         for i, task_object_spatial_reasoning_info in enumerate(task_object_spatial_reasoning_info_list):
             task_object_spatial_reasoning_path = f"{save_dir}/task_obj_output_info_scenario_{i}.json"
-
+            task_output_info_path.append(task_object_spatial_reasoning_path)
             with open(task_object_spatial_reasoning_path, "w+") as f:
                 json.dump(task_object_spatial_reasoning_info, f, indent=4)
 
+        with open(f"{save_dir}/task_obj_output_info.json", "w+") as f:
+        # json.dump(task_extraction_output_info, f, indent=4, 
+        #           cls=OneLineListEncoder)
+            json.dump(task_output_info_path, f, indent=4)
         print("""
 
 ##########################################

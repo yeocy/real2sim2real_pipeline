@@ -56,7 +56,7 @@ class ACDC:
             step_2_output_path=None,
             step_3_output_path=None,
             task_object_extraction_output_path=None,
-            task_spatial_reasing_output_path=None,
+            task_spatial_reasoning_output_path=None,
             task_object_retrieval_path=None,
             task_object_resizing_path=None,
             gpt_api_key=None,
@@ -289,7 +289,7 @@ class ACDC:
                     step_1_output_path=step_1_output_path,
                     step_2_output_path=step_2_output_path,
                     step_3_output_path=step_3_output_path,
-                    task_spatial_reasing_output_path = task_spatial_reasing_output_path,
+                    task_spatial_reasoning_output_path = task_spatial_reasoning_output_path,
                     **config["pipeline"]["TaskObjectRetrieval"]["call"],
                 )
                 if not success:
