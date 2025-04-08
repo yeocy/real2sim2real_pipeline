@@ -66,6 +66,10 @@ class TaskObjectResizing:
             save_dir = os.path.dirname(os.path.dirname(task_feature_matching_path))
         save_dir = os.path.join(save_dir, "task_object_resizing")
         Path(save_dir).mkdir(parents=True, exist_ok=True)
+        # Load meta info
+        with open(task_feature_matching_path, "r") as f:
+            task_object_retrieval_output_info = json.load(f)
+
 
         # Launch omnigibson
         og.launch()
@@ -75,68 +79,82 @@ class TaskObjectResizing:
         og.sim.import_scene(scene)
         og.sim.play()
 
-        # Load meta info
-        with open(task_feature_matching_path, "r") as f:
-            task_obj_output_info = json.load(f)
+
 
         gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="_TaskObjResizing")
+        json_list = []
+        for scenario_obj_num_json_path in task_object_retrieval_output_info:
+            with open(scenario_obj_num_json_path, "r") as f:
+                task_obj_output_info = json.load(f)
 
-        # Get current object size
-        obj_size_info = {}
-        for obj_name, obj_info in task_obj_output_info["objects"].items():
-            obj = DatasetObject(
-                    name=obj_name,
-                    category=obj_info["category"],
-                    model=obj_info["model"],
-                    visual_only=True,
-                    scale=[1,1,1]
-                )
-            scene.add_object(obj)  # Add the object in the scene
+            # Get current object size
+            obj_size_info = {}
+            for obj_name, obj_info in task_obj_output_info["objects"].items():
+                obj = DatasetObject(
+                        name=obj_name,
+                        category=obj_info["category"],
+                        model=obj_info["model"],
+                        visual_only=True,
+                        scale=[1,1,1]
+                    )
+                scene.add_object(obj)  # Add the object in the scene
+                og.sim.step()
 
-            # Get Object Bounding Box
-            obj_bbox_info = compute_obj_bbox_info(obj=obj)
-            bbox_bottom_in_desired_frame = obj_bbox_info['bbox_bottom_in_desired_frame']
-            bbox_top_in_desired_frame = obj_bbox_info['bbox_top_in_desired_frame']
+                # Get Object Bounding Box
+                obj_bbox_info = compute_obj_bbox_info(obj=obj)
+                bbox_bottom_in_desired_frame = obj_bbox_info['bbox_bottom_in_desired_frame']
+                bbox_top_in_desired_frame = obj_bbox_info['bbox_top_in_desired_frame']
 
-            # Calculate dimensions of the object
-            x_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_bottom_in_desired_frame[1])
-            y_dim = np.linalg.norm(bbox_bottom_in_desired_frame[3] - bbox_bottom_in_desired_frame[0])
-            z_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_top_in_desired_frame[0])
-            # print(f"[{x_dim}, {y_dim}, {z_dim}]")
+                # Calculate dimensions of the object
+                x_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_bottom_in_desired_frame[1])
+                y_dim = np.linalg.norm(bbox_bottom_in_desired_frame[3] - bbox_bottom_in_desired_frame[0])
+                z_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_top_in_desired_frame[0])
+                # print(f"[{x_dim}, {y_dim}, {z_dim}]")
 
-            obj_size_info[obj_name] = [x_dim, y_dim, z_dim]
+                obj_size_info[obj_name] = [x_dim, y_dim, z_dim]
 
-        # # Setup GPT prompt
-        # task_object_resizing_payload = gpt.payload_task_object_resizing(
-        #     object_size_info=obj_size_info,
-        #     goal_task=task_obj_output_info['task'],
-        # )
+                scene.remove_object(obj)
 
-        # # Query GPT
-        # gpt_text_response = gpt(task_object_resizing_payload, verbose=self.verbose)
+            # Setup GPT prompt
+            task_object_resizing_payload = gpt.payload_task_object_resizing(
+                object_size_info=obj_size_info,
+                goal_task=task_obj_output_info['task'],
+            )
 
-        # if gpt_text_response is None:
-        #     # Failed, terminate early
-        #     return False, None
+            # Query GPT
+            gpt_text_response = gpt(task_object_resizing_payload, verbose=self.verbose)
 
-        # # Parse GPT result
-        # gpt_task_obj_resize_result = self.parse_string(input_str=gpt_text_response)
-        gpt_task_obj_resize_result = {"food": 0.3}
+            if gpt_text_response is None:
+                # Failed, terminate early
+                return False, None
 
-        task_obj_resize_info = copy.deepcopy(task_obj_output_info)
-        for obj_name, obj_info in task_obj_resize_info['objects'].items():
-            # calculate scale factor
-            scale_factor = gpt_task_obj_resize_result[obj_name] / max(obj_size_info[obj_name])
+            # Parse GPT result
+            gpt_task_obj_resize_result = self.parse_string(input_str=gpt_text_response)
+            # gpt_task_obj_resize_result = {"food": 0.3}
 
-            obj_info['scale'] = [1, 1, 1]
-            obj_info['scale_factor'] = scale_factor
+            task_obj_resize_info = copy.deepcopy(task_obj_output_info)
+            for obj_name, obj_info in task_obj_resize_info['objects'].items():
+                # calculate scale factor
+                scale_factor = gpt_task_obj_resize_result[obj_name] / max(obj_size_info[obj_name])
 
-        print(f"task_obj_resize_info: {task_obj_resize_info}")
-        task_object_resizing_path = f"{save_dir}/target_object_resizing.json"
+                obj_info['scale'] = [1 * scale_factor for _ in range(3)]
+                # obj_info['scale_factor'] = scale_factor
 
-        with open(task_object_resizing_path, "w+") as f:
-            json.dump(task_obj_resize_info, f, indent=4)
+            print(f"task_obj_resize_info: {task_obj_resize_info}")
+            scenario_obj_num = os.path.basename(scenario_obj_num_json_path).replace("step_5_output_info_", "").replace(".json", "")
+            task_object_resizing_path = f"{save_dir}/target_object_resizing_output_info_{scenario_obj_num}.json"
+            json_list.append(task_object_resizing_path)
 
+            with open(task_object_resizing_path, "w+") as f:
+                # json.dump(task_obj_resize_info, f, indent=4)
+                write_json_like(task_obj_resize_info, f, indent=0)
+            
+
+
+        with open(f"{save_dir}/task_obj_output_info.json", "w+") as f:
+        # json.dump(task_extraction_output_info, f, indent=4, 
+        #           cls=OneLineListEncoder)
+            json.dump(json_list, f, indent=4)
         print("""
 
 ##########################################
@@ -184,3 +202,56 @@ class TaskObjectResizing:
                 continue
         
         return result
+    
+def write_json_like(data, file, indent=0):
+    spacing = " " * indent
+
+    if isinstance(data, dict):
+        file.write("{\n")
+        items = list(data.items())
+        for i, (key, value) in enumerate(items):
+            file.write(" " * (indent + 4) + f'"{key}": ')
+            write_json_like(value, file, indent + 4)
+            if i < len(items) - 1:
+                file.write(",")
+            file.write("\n")
+        file.write(spacing + "}")
+
+    elif isinstance(data, list):
+        if all(isinstance(i, (int, float, str, bool, type(None))) for i in data):
+            # 1D list → 한 줄
+            file.write("[" + ",".join(json_safe_repr(i) for i in data) + "]")
+        else:
+            # 2D or 3D list → 줄바꿈 + 들여쓰기
+            file.write("[\n")
+            for i, item in enumerate(data):
+                file.write(" " * (indent + 4))
+                write_json_like(item, file, indent + 4)
+                if i < len(data) - 1:
+                    file.write(",")
+                file.write("\n")
+            file.write(spacing + "]")
+
+    elif isinstance(data, str):
+        file.write(f'"{data}"')
+
+    elif data is None:
+        file.write("null")
+
+    elif isinstance(data, bool):
+        file.write("true" if data else "false")
+
+    else:
+        file.write(str(data))
+
+def json_safe_repr(x):
+    if isinstance(x, str):
+        return '"' + x.replace('"', '\\"') + '"'
+    elif isinstance(x, (int, float)):
+        return str(x)
+    elif isinstance(x, list):
+        return "[" + ",".join(json_safe_repr(i) for i in x) + "]"
+    elif isinstance(x, dict):
+        return "{" + ",".join(f'"{k}":{json_safe_repr(v)}' for k, v in x.items()) + "}"
+    else:
+        return repr(x)

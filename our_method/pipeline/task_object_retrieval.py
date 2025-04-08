@@ -284,43 +284,43 @@ class TaskObjectRetrieval:
                 )
                 
                 # TODO
-                # nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene(
-                #                         sim_real_img_path=input_sim_real_rgb_path,
-                #                         parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
-                #                         goal_task=task_extraction_output_info["task"],
-                #                         parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
-                #                         placement=task_extraction_output_info["objects"][name]["placement"],
-                #                         caption=obj_phrases[instance_idx],
-                #                         candidates_path=concat_img_save_dir,
-                #                         top_k=top_k_models)
+                nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene(
+                                        sim_real_img_path=input_sim_real_rgb_path,
+                                        parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
+                                        goal_task=task_extraction_output_info["task"],
+                                        parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
+                                        placement=task_extraction_output_info["objects"][name]["placement"],
+                                        caption=obj_phrases[instance_idx],
+                                        candidates_path=concat_img_save_dir,
+                                        top_k=top_k_models)
                 
-                # gpt_text_response = gpt(nn_selection_payload)
+                gpt_text_response = gpt(nn_selection_payload)
 
-                # print("GPT Response :")
-                # print(f"   {gpt_text_response}")
+                print("GPT Response :")
+                print(f"   {gpt_text_response}")
 
-                # if gpt_text_response is None:
-                #     # Failed, terminate early
-                #     return False, None
-                # # 숫자 모두 추출
-                # matches = re.findall(r'\b\d+\b', gpt_text_response)
+                if gpt_text_response is None:
+                    # Failed, terminate early
+                    return False, None
+                # 숫자 모두 추출
+                matches = re.findall(r'\b\d+\b', gpt_text_response)
 
-                # print("Extract number list :")
-                # print(f"   {matches}")
+                print("Extract number list :")
+                print(f"   {matches}")
 
-                # # 최대 top_k개만 선택
-                # nn_model_indices = [int(m) for m in matches[:top_k_models]]  # 0-based 인덱스로 변환
-                # print("final number list :")
-                # print(f"   {nn_model_indices}\n")
+                # 최대 top_k개만 선택
+                nn_model_indices = [int(m) for m in matches[:top_k_models]]  # 0-based 인덱스로 변환
+                print("final number list :")
+                print(f"   {nn_model_indices}\n")
 
 
-                # # 숫자가 하나도 없을 경우 → 실패 처리
-                # if not matches:
-                #     return False, None
-                if name == "cup":
-                    nn_model_indices = [18, 6, 27]
-                else : 
-                    nn_model_indices = [1, 2, 3]
+                # # # 숫자가 하나도 없을 경우 → 실패 처리
+                # # if not matches:
+                # #     return False, None
+                # if name == "cup":
+                #     nn_model_indices = [18, 6, 27]
+                # else : 
+                #     nn_model_indices = [1, 2, 3]
                 
                 # 후보 이미지 리스트에서 선택된 인덱스만 추출
                 n_candidates = [candidate_imgs[i-1] for i in nn_model_indices]
@@ -394,29 +394,29 @@ class TaskObjectRetrieval:
                         save_path=concat_img_save_dir
                     ) 
 
-                    # nn_selection_payload = gpt.payload_front_view_image(
-                    #         candidate_view_path=concat_img_save_dir,
-                    #         goal_task=task_extraction_output_info["task"],
-                    #         parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
-                    #         placement=task_extraction_output_info["objects"][name]["placement"],
-                    #         caption=obj_phrases[instance_idx]
-                    #         )
+                    nn_selection_payload = gpt.payload_front_view_image(
+                            candidate_view_path=concat_img_save_dir,
+                            goal_task=task_extraction_output_info["task"],
+                            parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
+                            placement=task_extraction_output_info["objects"][name]["placement"],
+                            caption=obj_phrases[instance_idx]
+                            )
                     
-                    # gpt_text_response = gpt(nn_selection_payload)
-                    # if gpt_text_response is None:
-                    #     # Failed, terminate early
-                    #     return False, None
+                    gpt_text_response = gpt(nn_selection_payload)
+                    if gpt_text_response is None:
+                        # Failed, terminate early
+                        return False, None
 
-                    # # Extract the first non-negative integer from the response
-                    # match = re.search(r'\b\d+\b', gpt_text_response)
+                    # Extract the first non-negative integer from the response
+                    match = re.search(r'\b\d+\b', gpt_text_response)
 
-                    # if match:
-                    #     nn_model_index = int(match.group()) - 1
-                    # else:
-                    #     # No valid integer found, handle this case
-                    #     return False, None
+                    if match:
+                        nn_model_index = int(match.group()) - 1
+                    else:
+                        # No valid integer found, handle this case
+                        return False, None
                     
-                    nn_model_index = 1
+                    # nn_model_index = 1
                     
                     results[model_name] = {
                         "view_path": candidate_model_view_imgs[nn_model_index],
@@ -470,29 +470,29 @@ class TaskObjectRetrieval:
                         save_path=concat_img_save_dir
                     )
                 
-                # nn_selection_payload = gpt.payload_front_view_image(
-                #             candidate_view_path=concat_img_save_dir,
-                #             goal_task=task_extraction_output_info["task"],
-                #             parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
-                #             placement=task_extraction_output_info["objects"][name]["placement"],
-                #             caption=obj_phrases[instance_idx]
-                #             )
+                nn_selection_payload = gpt.payload_front_view_image(
+                            candidate_view_path=concat_img_save_dir,
+                            goal_task=task_extraction_output_info["task"],
+                            parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
+                            placement=task_extraction_output_info["objects"][name]["placement"],
+                            caption=obj_phrases[instance_idx]
+                            )
                     
-                # gpt_text_response = gpt(nn_selection_payload)
-                # if gpt_text_response is None:
-                #     # Failed, terminate early
-                #     return False, None
+                gpt_text_response = gpt(nn_selection_payload)
+                if gpt_text_response is None:
+                    # Failed, terminate early
+                    return False, None
 
-                # # Extract the first non-negative integer from the response
-                # match = re.search(r'\b\d+\b', gpt_text_response)
+                # Extract the first non-negative integer from the response
+                match = re.search(r'\b\d+\b', gpt_text_response)
 
-                # if match:
-                #     nn_model_index = int(match.group()) - 1
-                # else:
-                #     # No valid integer found, handle this case
-                #     return False, None
+                if match:
+                    nn_model_index = int(match.group()) - 1
+                else:
+                    # No valid integer found, handle this case
+                    return False, None
                 
-                nn_model_index = 1
+                # nn_model_index = 1
                 
                 results[model_name] = {
                     "view_path": parent_candidate_model_view_imgs[nn_model_index],
@@ -547,13 +547,13 @@ class TaskObjectRetrieval:
                     write_json_like(output_json, f, indent=0)
 
 
-            print("""
+        print("""
 
 ##########################################
 ### Completed Task Object Matching! ###
 ##########################################
 
-            """)
+        """)
         
         with open(f"{save_dir}/task_obj_output_info.json", "w+") as f:
         # json.dump(task_extraction_output_info, f, indent=4, 
