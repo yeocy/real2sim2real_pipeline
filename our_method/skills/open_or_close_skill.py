@@ -114,6 +114,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         # (front corresponds to X-axis), or Y-oriented (front corresponds to Y-axis)
         # We infer by setting all joints to slightly non-zero values and measuring the change in AABB.
         # If X changes, then it is likely X-facing. If Y changes, then it is likely Y-facing
+        # Object가 X축 기준인지 Y축 기준인지 확인
         self._target_obj.set_position_orientation(th.ones(3) * -100.0, th.tensor([0, 0, 0, 1.0], dtype=th.float))
         self._target_obj.set_joint_positions(th.zeros(self._target_obj.n_joints), drive=False)
         self._target_obj.keep_still()
@@ -125,7 +126,9 @@ class OpenOrCloseSkill(ManipulationSkill):
         new_aabb_extent = self._target_obj.aabb_extent
         aabb_extent_diff = new_aabb_extent - original_aabb_extent
         self._is_x_oriented = aabb_extent_diff[0] > aabb_extent_diff[1]
+        ##################################################################################################
 
+        # XY 비율 보정
         if not self._is_x_oriented and self._flip_xy_scale_if_not_x_oriented:
             # Flip xy scale
             with og.sim.stopped():
@@ -133,10 +136,12 @@ class OpenOrCloseSkill(ManipulationSkill):
                 obj_scale = self._target_obj.scale
                 self._target_obj.scale = obj_scale * th.tensor([xy_extent_ratio, 1 / xy_extent_ratio, 1.0], dtype=th.float)
 
+        # Z축 회전 보정 행렬
         # If Y-oriented, we rotate the cabinet by 90 deg wrt the Z-axis
         self._obj_z_rot_offset = OT.quat2mat(th.tensor([0, 0, 0, 1.0], dtype=th.float) if self._is_x_oriented else th.tensor([0, 0, 0.707, 0.707], dtype=th.float))
 
         # Get the corresponding parent joint
+        # 조인트 연결 정보 찾기
         joint = None
         for jnt in self._target_obj.joints.values():
             if jnt.body1 == self._target_link.prim_path:
@@ -148,6 +153,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         with og.sim.stopped():
             self._target_obj.disable_gravity()
 
+        # 캐비닛을 공중으로 옮기고 link AABB 계산
         # Store the pose, move target obj into space,
         # get the aligned AABB of the link, then move it back
         obj_pos_offset = th.ones(3) * 200.0
@@ -181,6 +187,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         starts[:, 0] += sampling_offset
         ends = starts - th.tensor([sampling_offset + link_extent[0], 0, 0], dtype=th.float)
 
+        #  Ray를 쏴서 핸들 위치 탐색
         results = raytest_batch(
             start_points=starts,
             end_points=ends,
