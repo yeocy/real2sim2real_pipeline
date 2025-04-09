@@ -1615,7 +1615,7 @@ Then, understand the spatial relationships between objects through the Scene ima
 Next, based on your task analysis, determine the spatial relationships between the objects to be placed and the scene objects.
 Finally, place the objects that need to be positioned in their optimal locations.
 
-The output should be in JSON format.
+Please provide your answer as a single sentence of reasoning followed by a JSON format response.
 """
 
         step2_text_prompt1 = """When there are objects to be placed, please tell me the appropriate position of the object for the given scene and task.
