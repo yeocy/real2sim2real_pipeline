@@ -1766,7 +1766,7 @@ Objects to be placed: ['dish', 'food']
 Task: Grab a food on the plate and put into the refrigerator.
 
 Example Output:
-After analyzing the task of grabbing food from a plate and transferring it to the refrigerator, the food should initially be positioned on the dish which is placed on a table, while the final state shows the food inside the refrigerator.
+After analyzing the task of grabbing food from a plate and transferring it to the refrigerator, the food should initially be positioned on the dish which is placed on a table.
 {
 	"scenario_0": {
 		"objects": {
@@ -1797,49 +1797,25 @@ After analyzing the task of grabbing food from a plate and transferring it to th
 ### Example 6 ###
 Example Input:
 Scene image: <image>
-Scene objects: 'desk_0', 'cabinet_0', 'drawer_0', 'monitor_0', 'computer_0', 'keyboard_0', 'notebook_0', 'notebook_1', 'tumbler_0'
-Objects to be placed: ['drawer', 'book']
-Task: Take a book out of the drawer and put it on the desk.
+Scene objects: 'desk_0', 'cabinet_0', 'monitor_0', 'computer_0', 'keyboard_0', 'notebook_0', 'notebook_1', 'tumbler_0'
+Objects to be placed: ['cabinet', 'book']
+Task: Take a book out of the cabinet and put it on the desk.
 
 Example Output:
-After analyzing the task of taking a book out of a drawer and putting it on the desk, I need to place the drawer in an accessible location near the desk and position the book to show it being moved from inside the drawer to on top of the desk.
+After analyzing the task of taking a book out of a cabinet and putting it on the desk, I need to place the cabinet in an accessible location near the desk and position the book inside the cabinet.
 {
 	"scenario_0": {
 		"objects": {
-		    "drawer": {
-				"parent_object" : "desk_0",
-				"placement" : "above"
-		    },
-			"book": {
-				"parent_object" : "drawer",
-				"placement" : "inside"
-			}
-		}
-	},
-	"scenario_1": {
-		"objects": {
-		    "drawer": {
+		    "cabinet": {
 				"parent_object" : "desk_0",
 				"placement" : "below"
-		    },
-			"book": {
-				"parent_object" : "drawer_0",
-				"placement" : "inside"
-			}
-		}
-	},
-	"scenario_1": {
-		"objects": {
-		    "drawer": {
-				"parent_object" : "desk_0",
-				"placement" : "above"
 		    },
 			"book": {
 				"parent_object" : "cabinet_0",
 				"placement" : "inside"
 			}
 		}
-	},
+	}
 }
 
 
