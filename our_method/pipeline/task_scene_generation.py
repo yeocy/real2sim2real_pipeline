@@ -137,6 +137,11 @@ class TaskSceneGenerator:
                 None or str: If successful, this will be the absolute path to the main output file. Otherwise, None
         """
         ###### Step 2 결과 로드 ######
+        if save_dir is None:
+            save_dir = os.path.dirname(os.path.dirname(task_feature_matching_path))
+        save_dir = os.path.join(save_dir, "task_scene_generation")
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
+
         # Load step 2 info
         with open(step_3_output_path, "r") as f:
             step_3_output_info = json.load(f)
@@ -159,13 +164,27 @@ class TaskSceneGenerator:
         # scene_rgb = self.joint_test(scene, n_render_steps=10)
 
         with open(task_feature_matching_path, "r") as f:
+            task_obj_output_info_path_list = json.load(f)
+        print(f"task_obj_output_info_path_list: {task_obj_output_info_path_list}")
+        task_obj_info_path = task_obj_output_info_path_list[0]  # TODO path 전체적으로 scene 생성
+
+        with open(task_obj_info_path, "r") as f:
             task_obj_output_info = json.load(f)
+        print(f"task_obj_output_info: {task_obj_output_info}")
 
         scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, cam_pose=cam_pose, obj_info_json=task_obj_output_info, visual_only=True)
-        # scene_rgb = self.take_photo(n_render_steps=1000000)
-        scene_rgb = self.take_photo(n_render_steps=5)
+        scene_rgb = self.take_photo(n_render_steps=100)
+        # scene_rgb = self.take_photo(n_render_steps=5)
         # exit(())
         
+        final_scene_info = deepcopy(scene_info)
+
+        # Save final info
+        with open(f"{save_dir}/scene_info.json", "w+") as f:
+            json.dump(final_scene_info, f, indent=4, cls=NumpyTorchEncoder)
+        print(final_scene_info)
+        exit()
+
 
 
 
@@ -188,7 +207,10 @@ class TaskSceneGenerator:
             obj_bbox_info["mount"] = obj_info["mount"]
             all_obj_bbox_info[obj_name] = obj_bbox_info
         sorted_z_obj_bbox_info = dict(sorted(all_obj_bbox_info.items(), key=lambda x: x[1]['lower'][2]))  # sort by lower corner's height (z)
-        
+        print("##############################################")
+        print(sorted_z_obj_bbox_info)
+        exit()
+
         scene_graph_info = {
             "floor": {
                 "objOnTop": [],
@@ -492,7 +514,8 @@ class TaskSceneGenerator:
                     category=obj_info["category"],
                     model=obj_info["model"],
                     visual_only=visual_only,
-                    scale=np.array(obj_info["scale"]) * float(obj_info["scale_factor"])
+                    scale=np.array(obj_info["scale"])
+                    # scale=np.array(obj_info["scale"]) * float(obj_info["scale_factor"])
                 )
                 scene.add_object(obj)
                 
@@ -534,28 +557,33 @@ class TaskSceneGenerator:
                                             parent_obj_name=obj_info["parent_object"],
                                             placement=obj_info["placement"])
             
+            obj = scene.object_registry("name", obj_name)
             # TaskSceneGenerator.align_object_z_axis(scene, 
             #                                 obj_info,
             #                                 cam_pose=cam_pose,
             #                                 child_obj_name=obj_name)
-                                            
-            
+            # 현재 child의 중심 위치
+            obj_pos, obj_quat = obj.get_position_orientation()
 
-        # 추가된 오브젝트 Scene Info 추가
-        obj_scene_info = {
-            "category": obj.category,
-            "model": obj.model,
-            "scale": obj.scale,
-            "bbox_extent": obj.aabb_extent.cpu().detach().numpy(),
-            "tf_from_cam": T.pose2mat(T.relative_pose_transform(        
-                obj_pos,
-                obj_quat,
-                cam_pose[0],
-                cam_pose[1],
-        )),
-            "mount": obj_info["mount"],
-        }
-        
+            # 추가된 오브젝트 Scene Info 추가
+            obj_scene_info = {
+                "category": obj.category,
+                "model": obj.model,
+                "scale": obj.scale,
+                "bbox_extent": obj.aabb_extent.cpu().detach().numpy(),
+                "tf_from_cam": T.pose2mat(T.relative_pose_transform(        
+                    obj_pos,
+                    obj_quat,
+                    cam_pose[0],
+                    cam_pose[1],
+            )),
+                # "mount": obj_info["mount"],
+                "mount": {
+                    "floor": False,
+                    "wall": False,
+                },
+            }
+            
         scene_info["objects"][obj_name] = obj_scene_info
         
         # Initialize all objects by taking one step
