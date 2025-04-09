@@ -141,7 +141,7 @@ class TaskObjectExtraction:
         with open(step_1_output_info["detected_categories"], "r") as f:
             detected_categories_info = json.load(f)
         
-        gpt = GPT(api_key=gpt_api_key, version=gpt_version)
+        gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="_TaskObjExtraction")
 
         scene_objects_str = str(set(detected_categories_info["phrases"])).strip('[]')
         # task = "Open the cabinet next to the locker and give me the cup inside"
@@ -174,7 +174,7 @@ class TaskObjectExtraction:
 
         task_object_extraction_info = {
             "task": goal_task,
-            "objects": gpt_json
+            "objects": gpt_json['target_objects']
         }
         
         task_object_extraction_path = f"{save_dir}/target_object_extraction.json"
