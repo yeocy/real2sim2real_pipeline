@@ -48,7 +48,7 @@ def test_acdc_step_2(args):
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
     )
-    del pipelin
+    del pipeline
 
 def test_acdc_step_3(args):
     from our_method.pipeline.acdc import ACDC
@@ -234,8 +234,8 @@ def main(args):
     # test_acdc_step_4(args) # Task Object Extraction
     # test_acdc_step_5(args) # Task Object Spatial Reasoning
     # test_acdc_step_6(args) # Task Object Retrieval
-    test_object_resizing(args) # Task Object Resizing
-    # test_acdc_step_7(args) # Task following Scene Generation
+    # test_object_resizing(args) # Task Object Resizing
+    test_acdc_step_7(args) # Task following Scene Generation
     # og.shutdown()
 
     # Final test -- OG should always come at the end

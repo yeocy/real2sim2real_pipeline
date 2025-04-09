@@ -174,7 +174,8 @@ def main(args):
     # Valid options are: dict_keys(['DataWrapper', 'DataCollectionWrapper', 'DataPlaybackWrapper', 'SkillWrapper', 'OpenCabinetWrapper', 'SkillCollectionWrapper']), got: CabinetPickAndPlaceWrapper
 
     cfg["wrapper"] = {
-        "type": "PickCupInTheCabinetWrapper",
+        "type": "OpenCabinetWrapper",
+        # "type": "PickCupInTheCabinetWrapper",
         "eef_z_offset": robot_params["eef_z_offset"],
         "cab_categories": cousin_category_names,
         "cab_models": cousin_model_names,
@@ -260,7 +261,6 @@ def main(args):
             env.env.env.set_cabinet_idx(idx=i)
             env.reset()
             env.collect_demo()
-            exit()
             if env.env.is_success()["task"]:
                 n_cab_successes += 1
                 buffer_traj_count += 1

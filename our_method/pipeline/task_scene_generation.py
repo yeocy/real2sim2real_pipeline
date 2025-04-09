@@ -1,3 +1,4 @@
+from threading import local
 from robomimic.utils.log_utils import PrintLogger
 import torch as th
 import numpy as np
@@ -146,6 +147,8 @@ class TaskSceneGenerator:
         with open(step_3_output_path, "r") as f:
             step_3_output_info = json.load(f)
         
+
+
         # Launch omnigibson
         og.launch()
         
@@ -173,19 +176,16 @@ class TaskSceneGenerator:
         print(f"task_obj_output_info: {task_obj_output_info}")
 
         scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, cam_pose=cam_pose, obj_info_json=task_obj_output_info, visual_only=True)
-        scene_rgb = self.take_photo(n_render_steps=100)
-        # scene_rgb = self.take_photo(n_render_steps=5)
+        # scene_rgb = self.take_photo(n_render_steps=1000000)
+        scene_rgb = self.take_photo(n_render_steps=5)
         # exit(())
         
-        final_scene_info = deepcopy(scene_info)
 
         # Save final info
         with open(f"{save_dir}/scene_info.json", "w+") as f:
             json.dump(final_scene_info, f, indent=4, cls=NumpyTorchEncoder)
         print(final_scene_info)
         exit()
-
-
 
 
         # Object BBox 정보 저장
@@ -514,8 +514,7 @@ class TaskSceneGenerator:
                     category=obj_info["category"],
                     model=obj_info["model"],
                     visual_only=visual_only,
-                    scale=np.array(obj_info["scale"])
-                    # scale=np.array(obj_info["scale"]) * float(obj_info["scale_factor"])
+                    scale=np.array(obj_info["scale"]) * float(obj_info["scale_factor"])
                 )
                 scene.add_object(obj)
                 
@@ -544,6 +543,7 @@ class TaskSceneGenerator:
 
                 # rel_tf = T.relative_pose_transform(obj_pos, obj_quat, cam_pose[0], cam_pose[1])
                 # print(T.pose2mat(rel_tf))
+                
                 obj.set_position_orientation(th.tensor(obj_pos, dtype=th.float), th.tensor(obj_quat, dtype=th.float))
         
 
@@ -562,28 +562,24 @@ class TaskSceneGenerator:
             #                                 obj_info,
             #                                 cam_pose=cam_pose,
             #                                 child_obj_name=obj_name)
-            # 현재 child의 중심 위치
-            obj_pos, obj_quat = obj.get_position_orientation()
-
-            # 추가된 오브젝트 Scene Info 추가
-            obj_scene_info = {
-                "category": obj.category,
-                "model": obj.model,
-                "scale": obj.scale,
-                "bbox_extent": obj.aabb_extent.cpu().detach().numpy(),
-                "tf_from_cam": T.pose2mat(T.relative_pose_transform(        
-                    obj_pos,
-                    obj_quat,
-                    cam_pose[0],
-                    cam_pose[1],
-            )),
-                # "mount": obj_info["mount"],
-                "mount": {
-                    "floor": False,
-                    "wall": False,
-                },
-            }
+                                            
             
+
+        # 추가된 오브젝트 Scene Info 추가
+        obj_scene_info = {
+            "category": obj.category,
+            "model": obj.model,
+            "scale": obj.scale,
+            "bbox_extent": obj.aabb_extent.cpu().detach().numpy(),
+            "tf_from_cam": T.pose2mat(T.relative_pose_transform(        
+                obj_pos,
+                obj_quat,
+                cam_pose[0],
+                cam_pose[1],
+        )),
+            "mount": obj_info["mount"],
+        }
+        
         scene_info["objects"][obj_name] = obj_scene_info
         
         # Initialize all objects by taking one step

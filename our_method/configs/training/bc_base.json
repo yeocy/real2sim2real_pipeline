@@ -2,7 +2,7 @@
     "algo_name": "bc",
     "experiment": {
         "name": "default_run",
-        "validate": true,
+        "validate": false,
         "logging": {
             "terminal_output_to_txt": true,
             "log_tb": true,
@@ -12,7 +12,7 @@
         "save": {
             "enabled": true,
             "every_n_seconds": null,
-            "every_n_epochs": 2,
+            "every_n_epochs": 500,
             "epochs": [],
             "on_best_validation": false,
             "on_best_rollout_return": false,
@@ -44,7 +44,6 @@
         "hdf5_load_next_obs": false,
         "hdf5_normalize_obs": false,
         "hdf5_filter_key": "train",
-        "hdf5_validation_filter_key": "valid",
         "seq_length": 10,
         "pad_seq_length": true,
         "frame_stack": 1,
@@ -88,7 +87,7 @@
         "goal_mode": null,
         "cuda": true,
         "batch_size": 32,
-        "num_epochs": 3000,
+        "num_epochs": 30000,
         "seed": 1
     },
     "algo": {

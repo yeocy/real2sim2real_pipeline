@@ -632,65 +632,67 @@ class RealSceneGenerator:
             scene_rgb = self.take_photo(n_render_steps=10)
             H, W, _ = scene_rgb.shape
             resized_rgb = resize_image(rgb, height=H)
-            concat_scene_rgb = np.concatenate([resized_rgb, scene_rgb], axis=1)
+            print(resized_rgb.shape)
+            print(scene_rgb.shape)
+            concat_scene_rgb = np.concatenate([scene_rgb[:, :, :3], scene_rgb[:,:,:3]], axis=1)
             Image.fromarray(concat_scene_rgb).save(f"{scene_save_dir}/scene_{scene_count}_visualization.png")
 
             # Save final info
             with open(f"{scene_save_dir}/scene_{scene_count}_info.json", "w+") as f:
                 json.dump(final_scene_info, f, indent=4, cls=NumpyTorchEncoder)
 
-            # if visualize_scene:
-            #     og.sim.viewer_camera.add_modality('seg_semantic')
-            #     aabb_points = []
-            #     for obj in scene.objects:
-            #         p1, p2 = obj.aabb
-            #         aabb_points.append(p1)
-            #         aabb_points.append(p2)
-            #         if ToggledOn in obj.states:
-            #             obj.states[ToggledOn].link.visible = False
+            if visualize_scene:
+                og.sim.viewer_camera.add_modality('seg_semantic')
+                aabb_points = []
+                for obj in scene.objects:
+                    p1, p2 = obj.aabb
+                    aabb_points.append(p1)
+                    aabb_points.append(p2)
+                    if ToggledOn in obj.states:
+                        obj.states[ToggledOn].link.visible = False
 
-            #     min_x = min([p[0] for p in aabb_points])
-            #     min_y = min([p[1] for p in aabb_points])
-            #     max_x = max([p[0] for p in aabb_points])
-            #     max_y = max([p[1] for p in aabb_points])
+                min_x = min([p[0] for p in aabb_points])
+                min_y = min([p[1] for p in aabb_points])
+                max_x = max([p[0] for p in aabb_points])
+                max_y = max([p[1] for p in aabb_points])
             
-            #     # Get camera trajectory
-            #     vis_cam_pos, vis_cam_ori = og.sim.viewer_camera.get_position_orientation()
-            #     vis_center = ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0, vis_cam_pos[-1])
-            #     cam_commands = get_vis_cam_trajectory(center_pos=vis_center, cam_pos=vis_cam_pos, cam_quat=vis_cam_ori, \
-            #                                         d_tilt=visualize_scene_tilt_angle, radius=visualize_scene_radius, n_steps=100)
+                # Get camera trajectory
+                vis_cam_pos, vis_cam_ori = og.sim.viewer_camera.get_position_orientation()
+                vis_center = ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0, vis_cam_pos[-1])
+                cam_commands = get_vis_cam_trajectory(center_pos=vis_center, cam_pos=vis_cam_pos, cam_quat=vis_cam_ori, \
+                                                    d_tilt=visualize_scene_tilt_angle, radius=visualize_scene_radius, n_steps=100)
 
-            #     for _ in range(50):
-            #         og.sim.render()
+                for _ in range(50):
+                    og.sim.render()
 
-            #     # Visualize and record video
-            #     if save_visualization:
-            #         video_path = f"{scene_save_dir}/visualization_video.mp4"
-            #         img_dir = f"{scene_save_dir}/scene_visualization"
-            #         Path(img_dir).mkdir(parents=True, exist_ok=True)
-            #         video_writer = imageio.get_writer(video_path, fps=20)
-            #     for i, (pos, quat) in enumerate(cam_commands):
-            #         og.sim.viewer_camera.set_position_orientation(pos, quat)
-            #         og.sim.render()
-            #         if save_visualization:
-            #             obs, obs_info = og.sim.viewer_camera.get_obs()
-            #             vis_rgb = obs["rgb"].cpu().detach().numpy()
-            #             seg_semantic = obs["seg_semantic"].cpu().detach().numpy()
+                # Visualize and record video
+                if save_visualization:
+                    video_path = f"{scene_save_dir}/visualization_video.mp4"
+                    img_dir = f"{scene_save_dir}/scene_visualization"
+                    Path(img_dir).mkdir(parents=True, exist_ok=True)
+                    video_writer = imageio.get_writer(video_path, fps=20)
+                for i, (pos, quat) in enumerate(cam_commands):
+                    og.sim.viewer_camera.set_position_orientation(pos, quat)
+                    og.sim.render()
+                    if save_visualization:
+                        obs, obs_info = og.sim.viewer_camera.get_obs()
+                        vis_rgb = obs["rgb"].cpu().detach().numpy()
+                        seg_semantic = obs["seg_semantic"].cpu().detach().numpy()
 
-            #             # Filter out floors
-            #             filter_names = {"floors", "background"}
-            #             filter_ids = {idn for idn, name in obs_info["seg_semantic"].items() if name in filter_names}
-            #             seg_mask = np.ones_like(seg_semantic).astype(np.uint8) * 255
-            #             for filter_id in filter_ids:
-            #                 seg_mask[np.where(seg_semantic == filter_id)] = 0
-            #             masked_vis_rgb = vis_rgb.astype(np.uint8)
-            #             masked_vis_rgb[seg_mask == 0] = [0, 0, 0, 1]
-            #             video_writer.append_data(masked_vis_rgb)
+                        # Filter out floors
+                        filter_names = {"floors", "background"}
+                        filter_ids = {idn for idn, name in obs_info["seg_semantic"].items() if name in filter_names}
+                        seg_mask = np.ones_like(seg_semantic).astype(np.uint8) * 255
+                        for filter_id in filter_ids:
+                            seg_mask[np.where(seg_semantic == filter_id)] = 0
+                        masked_vis_rgb = vis_rgb.astype(np.uint8)
+                        masked_vis_rgb[seg_mask == 0] = [0, 0, 0, 1]
+                        video_writer.append_data(masked_vis_rgb)
                         
-            #             vis_rgb[:, :, 3] = seg_mask
-            #             Image.fromarray(vis_rgb).save(f"{img_dir}/vis_frame_{i}.png")
-            #     if save_visualization:
-            #         video_writer.close()
+                        vis_rgb[:, :, 3] = seg_mask
+                        Image.fromarray(vis_rgb).save(f"{img_dir}/vis_frame_{i}.png")
+                if save_visualization:
+                    video_writer.close()
 
         # Compile final results across all scenes
         step_3_output_info = dict()

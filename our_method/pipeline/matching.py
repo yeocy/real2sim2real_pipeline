@@ -263,7 +263,7 @@ class DigitalCousinMatcher:
                         print(f"Reselecting candidates using {self.fm.encoder_name}...")
 
                     # Find Top-K candidates
-                    candidate_imgs_fdirs = [f"{digital_cousins.ASSET_DIR}/objects/{og_category.replace(' ', '_')}/snapshot" for og_category in og_categories]
+                    candidate_imgs_fdirs = [f"{our_method.ASSET_DIR}/objects/{og_category.replace(' ', '_')}/snapshot" for og_category in og_categories]
 
                     # Possibly filter based on articulated models
                     if is_articulated:
@@ -407,7 +407,7 @@ class DigitalCousinMatcher:
                 # Articulated objects have link count > 0, which indicate that the frontal face can be seen,
                 # so we only search best pose among orientations where the frontal face can be seen
                 start_idx, end_idx = ARTICULATION_VALID_ANGLES.get(og_category, {}).get(og_model, [0, 99])
-                candidate_imgs = [f"{digital_cousins.ASSET_DIR}/objects/{og_category}/model/{og_model}/{og_model}_{rot_idx}.png" for rot_idx in range(start_idx, end_idx + 1)]
+                candidate_imgs = [f"{our_method.ASSET_DIR}/objects/{og_category}/model/{og_model}/{og_model}_{rot_idx}.png" for rot_idx in range(start_idx, end_idx + 1)]
 
                 pose_results = self.fm.find_nearest_neighbor_candidates(
                     input_category=category,

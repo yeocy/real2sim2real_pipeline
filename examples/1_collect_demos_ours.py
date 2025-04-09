@@ -174,7 +174,7 @@ def main(args):
     # Valid options are: dict_keys(['DataWrapper', 'DataCollectionWrapper', 'DataPlaybackWrapper', 'SkillWrapper', 'OpenCabinetWrapper', 'SkillCollectionWrapper']), got: CabinetPickAndPlaceWrapper
 
     cfg["wrapper"] = {
-        "type": "PickAndPlaceWrapper",
+        "type": "OpenCabinetWrapper",
         "eef_z_offset": robot_params["eef_z_offset"],
         "cab_categories": cousin_category_names,
         "cab_models": cousin_model_names,

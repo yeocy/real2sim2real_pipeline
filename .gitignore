@@ -6,12 +6,8 @@ deps/
 training_results/
 *.egg-info/
 __pycache__/
-tests/acdc_output/
 our_method_test/acdc_output/
 our_method_test/acdc_output_orig/
-our_method_test/test_office/
-our_method_test/test_chan_house
-
 logs/
 
 chatgpt_api_key
