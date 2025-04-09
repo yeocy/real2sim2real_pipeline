@@ -1634,7 +1634,7 @@ Objects to be placed: ['pencil', 'pencil case']
 Task: Take a pencil out of the pencil case on the desk.
 
 Example Output:
-Since there is only one possible position for the pencil and pencil case, there is only one possible scenario, which is as follows.
+After considering the task and spatial relationships, I need to place the pencil case on the desk and show the pencil being taken out from inside the pencil case.
 {
 	"scenario_0": {
 		"objects": {
@@ -1658,7 +1658,7 @@ Objects to be placed: ['dish']
 Task: Give me a dish in the cabinet above the microwave
 
 Example Output:
-Since the cabinets above the microwave are cabinet_0, cabinet_2 and cabinet_3, there are three possible scenarios for the given task.
+Based on the scene image analysis, cabinets above the microwave are cabinet_0 and cabinet_4.
 {
 	"scenario_0": {
 		"objects": {
@@ -1671,15 +1671,7 @@ Since the cabinets above the microwave are cabinet_0, cabinet_2 and cabinet_3, t
 	"scenario_1": {
 		"objects": {
 		    "dish": {
-				"parent_object" : "cabinet_2",
-				"placement" : "inside"
-		    }
-		}
-	},
-	"scenario_2": {
-		"objects": {
-		    "dish": {
-				"parent_object" : "cabinet_3",
+				"parent_object" : "cabinet_4",
 				"placement" : "inside"
 		    }
 		}
@@ -1694,7 +1686,7 @@ Objects to be placed: ['book']
 Task: Put the book on the bookshelf next to the computer.
 
 Example Output:
-Since bookshelf_0 and bookshelf_1 are to the left of the computer, and bookshelf_4 and bookshelf_5 are to the right of the computer, there are 4 possible scenarios.
+After analyzing the task and spatial relationships in the scene, I can determine that the book should be placed on a bookshelf adjacent to the computer.
 {
 	"scenario_0": {
 		"objects": {
@@ -1734,11 +1726,11 @@ Since bookshelf_0 and bookshelf_1 are to the left of the computer, and bookshelf
 Example Input:
 Scene image: <image>
 Scene objects: 'table_0', 'chair_0', 'coffee_machine_0', 'box_0', 'vacuum_cleaner_0'
-Objects to be placed: ['coffee capsule', 'drawer]
+Objects to be placed: ['coffee capsule', 'drawer']
 Task: Take a coffee capsule out of the drawer next to the coffee machine.
 
 Example Output:
-Since the drawer can be located both to the left and right of the coffee machine, there are 2 possible scenarios.
+After analyzing the task and spatial relationships, I need to place a drawer next to the coffee machine and position the coffee capsule inside the drawer to simulate taking it out.
 {
 	"scenario_0": {
 		"objects": {
@@ -1765,6 +1757,91 @@ Since the drawer can be located both to the left and right of the coffee machine
 		}
 	}
 }
+
+### Example 5 ###
+Example Input:
+Scene image: <image>
+Scene objects: 'microwave_0', 'table_0', 'table_1', 'cabinet_0', 'cabinet_1', 'cabinet_2', 'cabinet_3' 'oven_0', 'knife_0', 'refrigerator_0'
+Objects to be placed: ['dish', 'food']
+Task: Grab a food on the plate and put into the refrigerator.
+
+Example Output:
+After analyzing the task of grabbing food from a plate and transferring it to the refrigerator, the food should initially be positioned on the dish which is placed on a table, while the final state shows the food inside the refrigerator.
+{
+	"scenario_0": {
+		"objects": {
+		    "dish": {
+				"parent_object" : "table_0",
+				"placement" : "above"
+		    },
+			"food": {
+				"parent_object" : "dish",
+				"placement" : "above"
+			}
+		}
+	},
+	"scenario_1": {
+		"objects": {
+		    "dish": {
+				"parent_object" : "table_1",
+				"placement" : "above"
+		    },
+			"food": {
+				"parent_object" : "dish",
+				"placement" : "above"
+			}
+		}
+	},
+}
+
+### Example 6 ###
+Example Input:
+Scene image: <image>
+Scene objects: 'desk_0', 'cabinet_0', 'drawer_0', 'monitor_0', 'computer_0', 'keyboard_0', 'notebook_0', 'notebook_1', 'tumbler_0'
+Objects to be placed: ['drawer', 'book']
+Task: Take a book out of the drawer and put it on the desk.
+
+Example Output:
+After analyzing the task of taking a book out of a drawer and putting it on the desk, I need to place the drawer in an accessible location near the desk and position the book to show it being moved from inside the drawer to on top of the desk.
+{
+	"scenario_0": {
+		"objects": {
+		    "drawer": {
+				"parent_object" : "desk_0",
+				"placement" : "above"
+		    },
+			"book": {
+				"parent_object" : "drawer",
+				"placement" : "inside"
+			}
+		}
+	},
+	"scenario_1": {
+		"objects": {
+		    "drawer": {
+				"parent_object" : "desk_0",
+				"placement" : "below"
+		    },
+			"book": {
+				"parent_object" : "drawer_0",
+				"placement" : "inside"
+			}
+		}
+	},
+	"scenario_1": {
+		"objects": {
+		    "drawer": {
+				"parent_object" : "desk_0",
+				"placement" : "above"
+		    },
+			"book": {
+				"parent_object" : "cabinet_0",
+				"placement" : "inside"
+			}
+		}
+	},
+}
+
 
 Now look at the Scene image, Scene objects, Objects to be placed, and the Task to provide the correct answer.
 Remember that parent_object can be used from not only scene objects but also from objects to be placed. And make sure the object placements are appropriate and well-aligned with the given task.
