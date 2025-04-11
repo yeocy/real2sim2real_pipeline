@@ -49,7 +49,7 @@ def main(args):
 
     # Aggregate cousins
     eval_cousin_id = args.eval_cousin_id
-    obj_info = scene_info["objects"][args.target_obj]
+    obj_info = scene_info["objects"][args.target_parent_obj]
     cousin_category_names, cousin_model_names, cousin_link_names = [obj_info["category"]], [obj_info["model"]], [args.target_link]
     if args.cousins is not None:
         for cousin_str in args.cousins:
@@ -174,8 +174,8 @@ def main(args):
     # Valid options are: dict_keys(['DataWrapper', 'DataCollectionWrapper', 'DataPlaybackWrapper', 'SkillWrapper', 'OpenCabinetWrapper', 'SkillCollectionWrapper']), got: CabinetPickAndPlaceWrapper
 
     cfg["wrapper"] = {
-        "type": "OpenCabinetWrapper",
-        # "type": "PickCupInTheCabinetWrapper",
+        # "type": "OpenCabinetWrapper",
+        "type": "PickCupInTheCabinetWrapper",
         "eef_z_offset": robot_params["eef_z_offset"],
         "cab_categories": cousin_category_names,
         "cab_models": cousin_model_names,
@@ -203,7 +203,8 @@ def main(args):
         "custom_bddl": None,
         "task_activity_name": "open_cabinet",
         "scene_info": scene_info,
-        "scene_target_obj_name": args.target_obj,
+        "scene_target_parent_obj_name": args.target_parent_obj,
+        "scene_target_child_obj_name": args.target_child_obj,
     }
 
     # Create the robomimic-compatible environment
@@ -281,7 +282,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--scene_path", type=str, required=True,
                         help="Absolute path to input cousin scene .json file to use")
-    parser.add_argument("--target_obj", type=str, required=True,
+    parser.add_argument("--target_parent_obj", type=str, required=True,
+                        help="Name of the object to articulate")
+    parser.add_argument("--target_child_obj", type=str, required=True,
                         help="Name of the object to articulate")
     parser.add_argument("--target_link", type=str, required=True,
                         help="Name of @target_obj's link to articulate")

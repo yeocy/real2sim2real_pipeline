@@ -3,9 +3,11 @@ from collections.abc import Iterable
 import random
 import json
 
+from huggingface_hub import Padding
+
 import torch as th
 from our_method.envs.omnigibson.skill_wrapper import SkillWrapper
-from our_method.skills.open_or_close_skill import OpenOrCloseSkill
+from our_method.skills.open_and_grab import OpenandGrabSkill
 import omnigibson as og
 from omnigibson.objects import DatasetObject
 from omnigibson.prims.material_prim import MaterialPrim
@@ -84,7 +86,9 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
             visualize_cam_pose=None,
             visualize_skill=False,
             scene_info=None,
-            scene_target_obj_name=None,
+            # scene_target_obj_name=None,
+            scene_target_parent_obj_name=None,
+            scene_target_child_obj_name=None,
             non_target_objs_visual_only=True,
     ):  
         # [OpenCabinetWrapper.__init__] Init parameters:
@@ -138,7 +142,8 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
 
         # Values used to randomize other objects
         self.scene_info = scene_info
-        self.scene_target_obj_name = scene_target_obj_name
+        self.scene_target_parent_obj_name = scene_target_parent_obj_name
+        self.scene_target_child_obj_name = scene_target_child_obj_name
         self.non_target_objs_visual_only = non_target_objs_visual_only
         self.scene_graph = None
         # Scene Graph json load
@@ -151,8 +156,8 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
         # This is the name of lowest object (on the floor) in the subgraph where cabinets are located
         self.obj_root_in_cab_subgraph = None
         if self.scene_info is not None:
-            obj_root_in_cab_subgraph = self.scene_graph[self.scene_target_obj_name]["objBeneath"]
-            if "wall" in self.scene_graph[self.scene_target_obj_name]["mount"] and "floor" not in self.scene_graph[self.scene_target_obj_name]["mount"]:
+            obj_root_in_cab_subgraph = self.scene_graph[self.scene_target_parent_obj_name]["objBeneath"]
+            if "wall" in self.scene_graph[self.scene_target_parent_obj_name]["mount"] and "floor" not in self.scene_graph[self.scene_target_parent_obj_name]["mount"]:
                 self.obj_root_in_cab_subgraph = None
             elif obj_root_in_cab_subgraph == "floor":
                 self.obj_root_in_cab_subgraph = None
@@ -162,13 +167,13 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                 self.obj_root_in_cab_subgraph = obj_root_in_cab_subgraph
 
             for other_obj_name, _ in self.scene_info["objects"].items():
-                if other_obj_name == self.scene_target_obj_name:
+                if other_obj_name == self.scene_target_parent_obj_name:
                     continue
                 self.active_other_obj[other_obj_name] = None
 
         # Store position and orientation of the target object after real2sim
-        self.target_obj_position = None
-        self.target_obj_orientation = None
+        self.target_parent_obj_position = None
+        self.target_parent_obj_orientation = None
 
         # Whether robot base calculation is wrt handle
         self.dist_use_from_handle = dist_use_from_handle
@@ -224,11 +229,14 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
         super().__init__(env=env, use_delta_commands=use_delta_commands)
 
         self.cabs = []
+        self.target_objs = []
         self.skills = []
         self._default_cab_scales = []
+        self._default_target_scales = []
         self._default_cab_poses = []
+        self._default_target_poses = []
         self._default_robot_poses = []
-        target_obj_bbox_pos, target_obj_bbox_quat = None, None
+        target_parent_obj_bbox_pos, target_parent_obj_bbox_quat = None, None
         if self.scene_info is not None:
             # Assume target object is cab
             og.sim.viewer_camera.set_position_orientation(*self.scene_info["cam_pose"])
@@ -238,14 +246,17 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
             cam_pose_mat = OT.pose2mat((th.tensor(cam_pose[0], dtype=th.float), th.tensor(cam_pose[1], dtype=th.float)))
             with og.sim.stopped():
                 for obj_name, obj_info in self.scene_info["objects"].items():
+                    # print(obj_name, not obj_info["mount"]["floor"])
                     obj = DatasetObject(
                         name=obj_name,
                         category=obj_info["category"],
                         model=obj_info["model"],
-                        visual_only=obj_name == self.scene_target_obj_name or self.non_target_objs_visual_only,
+                        visual_only=obj_name == self.scene_target_parent_obj_name or self.non_target_objs_visual_only,
+                        # visual_only= not (obj_name == self.scene_target_child_obj_name or obj_name == self.scene_target_parent_obj_name),
                         fixed_base=not obj_info["mount"]["floor"],
                         scale=obj_info["scale"]
                     )
+                    
                     env.scene.add_object(obj)
                     obj_pos, obj_quat = OT.mat2pose(OT.pose_in_A_to_pose_in_B(
                         pose_A=th.tensor(obj_info["tf_from_cam"], dtype=th.float),
@@ -254,17 +265,22 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                     obj.set_position_orientation(th.tensor(obj_pos, dtype=th.float), th.tensor(obj_quat, dtype=th.float))
 
                     # If this is the scene target object, make invisible
-                    if obj_name == self.scene_target_obj_name:
+                    if (obj_name == self.scene_target_parent_obj_name or obj_name == self.scene_target_child_obj_name):
+                    # if obj_name == self.scene_target_parent_obj_name :
                         obj.visible = False
                 og.sim.step()
 
             # Record cousin bbox center from cam
-            target_obj = env.scene.object_registry("name", self.scene_target_obj_name)
-            target_obj_bbox_pos = target_obj.aabb_center
-            target_obj_bbox_quat = target_obj.get_position_orientation()[1]
+            target_parent_obj = env.scene.object_registry("name", self.scene_target_parent_obj_name)
+            target_parent_obj_bbox_pos = target_parent_obj.aabb_center
+            target_parent_obj_bbox_quat = target_parent_obj.get_position_orientation()[1]
+
+            target_child_obj = env.scene.object_registry("name", self.scene_target_child_obj_name)
+            target_child_obj_bbox_pos = target_child_obj.aabb_center
+            target_child_obj_bbox_quat = target_child_obj.get_position_orientation()[1]
 
             # Set this object to be very far away
-            target_obj.set_position_orientation(position=th.ones(3) * -300.0)
+            target_parent_obj.set_position_orientation(position=th.ones(3) * -300.0)
 
         for i, (cab_category, cab_model, cab_link, cab_bbox, randomize_tex) in \
                 enumerate(zip(cab_categories, cab_models, cab_links, self._default_cab_bboxs, self._randomize_textures)):
@@ -280,18 +296,32 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                     bounding_box=cab_bbox,
                     fixed_base=True,
                 )
+
+                target_obj = DatasetObject(
+                    name=f"coffe_box{i}",
+                    category=self.scene_info["objects"][self.scene_target_child_obj_name]["category"],
+                    model=self.scene_info["objects"][self.scene_target_child_obj_name]["model"],
+                    # visual_only=obj_name == self.scene_target_parent_obj_name or self.scene_target_child_obj_name or self.non_target_objs_visual_only,
+                    bounding_box=self.scene_info["objects"][self.scene_target_child_obj_name]["bbox_extent"],
+                    fixed_base=not self.scene_info["objects"][self.scene_target_child_obj_name]["mount"]["floor"],
+                )
                 env.scene.add_object(cab)
+                env.scene.add_object(target_obj)
 
                 # Move the cabinet to collision-free space, and make it invisible
 
                 # If we're loading a cousin scene, make sure to set the pose to the correct location relative to the
                 # original target object
                 if self.scene_info is not None:
-                    cab.set_position_orientation(target_obj_bbox_pos, target_obj_bbox_quat)
+                    cab.set_position_orientation(target_parent_obj_bbox_pos, target_parent_obj_bbox_quat)
+                    target_obj.set_position_orientation(target_child_obj_bbox_pos, target_child_obj_bbox_quat)
                     og.sim.step_physics()
                     self._default_cab_poses.append(cab.get_position_orientation())
+                    self._default_target_poses.append(target_obj.get_position_orientation())
 
                 cab.visible = False
+                target_obj.visible = False
+
 
                 # If we're randomizing the texture, load in per-link materials and bind them
                 if randomize_tex:
@@ -302,6 +332,15 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                         )
                         mat.load(scene=env.scene)
                         link.material = mat
+                
+                    for link_name, link in target_obj.links.items():
+                        mat = MaterialPrim(
+                            relative_prim_path=f"{target_obj._relative_prim_path}/Looks/random_{link_name}_material",
+                            name=f"random_material:{link.name}",
+                        )
+                        mat.load(scene=env.scene)
+                        link.material = mat
+
 
                     # Render, then force populate all shaders
                     og.sim.render()
@@ -310,18 +349,31 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                     for link in cab.links.values():
                         link.material.shader_force_populate(render=False)
 
+                    for link in target_obj.links.values():
+                        link.material.shader_force_populate(render=False)
+
+
             # Get the cabinet joint and link we want to articulate
             if cab_link is None:
                 valid_child_link_names = [jnt.child_name for jnt in cab.joints.values()]
                 cab_link = random.choice(valid_child_link_names)
 
-            link = cab.links[cab_link]
+            
 
             # Apply the gripper material so it's extra grippy
             for msh in link.collision_meshes.values():
                 msh.apply_physics_material(gripper_mat)
 
+            # 💥 Coffee box (target_obj) 전체 링크에 적용
+            for link in target_obj.links.values():
+                for msh in link.collision_meshes.values():
+                    msh.apply_physics_material(gripper_mat)
+
+            link = cab.links[cab_link]
+
             default_cab_pose = cab.get_position_orientation()
+            default_target_obj_pose = target_obj.get_position_orientation()
+
             og.sim.play()
 
             self.standardize_density_and_friction(obj=cab)
@@ -331,10 +383,11 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                     joint.friction = 10.0   # Usually < 0.1
 
             # Create the skill
-            skill = OpenOrCloseSkill(
+            skill = OpenandGrabSkill(
                 robot=self.robot,
                 eef_z_offset=eef_z_offset,
                 target_obj=cab,
+                target_child_obj=target_obj,
                 target_link=link,
                 handle_dist=handle_dist,
                 approach_dist=approach_dist,
@@ -363,10 +416,12 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
 
             # Store this cabinet's info
             self.cabs.append(cab)
+            self.target_objs.append(target_obj)
             self.skills.append(skill)
             if self.scene_info is None:
                 self._default_cab_poses.append(default_cab_pose)
             self._default_cab_scales.append(cab.scale)
+            self._default_target_scales.append(target_obj.scale)
 
             # If not x-oriented, we update the bbox randomization and default bbox values
             if not skill._is_x_oriented:
@@ -382,6 +437,7 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
         self.robot.reset()
         env.scene.update_initial_state()
 
+        # TODO
         # Override the task
         task_config = deepcopy(env.task_config)
         task_config["type"] = "BehaviorTask"
@@ -413,9 +469,20 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
         self.cabs[self._current_idx].visible = False
         self._current_idx = th.randint(self._n_models, (1,)).item() if self.eval_idx is None else self.eval_idx
         self.cabs[self._current_idx].visible = True
+        # self.cabs[self._current_idx].visible = False
+        
+        self.target_objs[self._current_idx].set_position_orientation(
+            position=th.ones(3) * (100 + self._current_idx * 5.0),
+            orientation=th.tensor([0, 0, 0, 1.0], dtype=th.float),
+        )
+        self.target_objs[self._current_idx].visible = False
+        self._current_idx = th.randint(self._n_models, (1,)).item() if self.eval_idx is None else self.eval_idx
+        self.target_objs[self._current_idx].visible = True
 
+        # TODO
         # Update the task BDDLEntity
         self.env.task.object_scope[self.task_obj_bddl_name].wrapped_obj = self.cabs[self._current_idx]
+        # self.env.task.object_scope[self.task_obj_bddl_name].wrapped_obj = self.target_objs[self._current_idx]
 
         # If we're randomizing bbox, sample new bbox size
         default_bbox = self._default_cab_bboxs[self._current_idx]
@@ -425,8 +492,10 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
             default_scale = self._default_cab_scales[self._current_idx]
             scale_frac = (default_bbox + bbox_delta) / default_bbox
             new_scale = default_scale * scale_frac
+
             with og.sim.stopped():
                 self.cabs[self._current_idx].scale = new_scale
+                self.target_objs[self._current_idx].scale = self._default_target_scales[self._current_idx]*scale_frac[2]
 
         # Possibly randomize the materials
         if self._randomize_textures[self._current_idx]:
@@ -438,11 +507,12 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
         # Call super reset
         super().reset()
 
-        if self.target_obj_position is not None and self.target_obj_orientation is not None and self.scene_info is None:
+        # False
+        if self.target_parent_obj_position is not None and self.target_parent_obj_orientation is not None and self.scene_info is None:
             # Also re-randomize the object poses
             self.cabs[self._current_idx].set_position_orientation(*self.randomize_object_pose(
-                self.target_obj_position,
-                self.target_obj_orientation,
+                self.target_parent_obj_position,
+                self.target_parent_obj_orientation,
                 max_xyz_offset=self._xyz_randomization if self._randomize_cabinet_pose else th.zeros(3),
                 max_z_rotation=self._z_rot_randomization if self._randomize_cabinet_pose else 0.0,
             ))
@@ -454,11 +524,73 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
             ))
         else:
             # Also re-randomize the object poses
+            # Random Pose 적용안함
             self.cabs[self._current_idx].set_position_orientation(*self.randomize_object_pose(
                 *self._default_cab_poses[self._current_idx],
                 max_xyz_offset=self._xyz_randomization if self._randomize_cabinet_pose else th.zeros(3),
                 max_z_rotation=self._z_rot_randomization if self._randomize_cabinet_pose else 0.0,
             ))
+
+
+            cab_link = self.cabs[self._current_idx].links[self.target_links[self._current_idx]]  # ← 두 번째 칸
+            # Cabinet AABB
+            cab_aabb_min, cab_aabb_max = cab_link.aabb
+            # Target object AABB
+            target_aabb_min, target_aabb_max = self.target_objs[self._current_idx].aabb
+            target_y_width = target_aabb_max[1] - target_aabb_min[1]
+
+            padding = 0.05
+
+            allowed_y_min = cab_aabb_min[1] + target_y_width / 2.0 - padding
+            allowed_y_max = cab_aabb_max[1] - target_y_width / 2.0 - padding
+
+            # Target object의 x축 width
+            target_x_width = target_aabb_max[0] - target_aabb_min[0]
+
+            # Cabinet AABB로부터 x축에서 안전한 배치 범위 계산
+            allowed_x_min = cab_aabb_min[0] + target_x_width / 2.0 + padding
+            allowed_x_max = cab_aabb_max[0] - target_x_width / 2.0 - padding*2
+
+            # x축도 중앙까지 제한해서 샘플링
+            sampled_target_x = random.uniform(allowed_x_min.item(), ((allowed_x_min + allowed_x_max) / 2.0).item())
+            sampled_target_y = random.uniform(allowed_y_min.item(), ((allowed_y_min + allowed_y_max) / 2.0).item())
+            
+            print("📐 [X축 샘플링 범위]")
+            print("   ▶ allowed_x_min      =", allowed_x_min.item())
+            print("   ▶ allowed_x_max      =", allowed_x_max.item())
+            print("   ▶ allowed_x_center   =", ((allowed_x_min + allowed_x_max) / 2.0).item())
+            print("   🎯 sampled_target_x  =", sampled_target_x)
+
+            print()
+
+            print("📐 [Y축 샘플링 범위]")
+            print("   ▶ allowed_y_min      =", allowed_y_min.item())
+            print("   ▶ allowed_y_max      =", allowed_y_max.item())
+            print("   ▶ allowed_y_center   =", ((allowed_y_min + allowed_y_max) / 2.0).item())
+            print("   🎯 sampled_target_y  =", sampled_target_y)
+
+
+            # 안전하게 pos, quat 꺼내고 텐서 형태 보장
+            pos, quat = self._default_target_poses[self._current_idx]
+
+            # pos가 list of tensor일 경우: stack으로 변환
+            if isinstance(pos, list) and all(isinstance(p, th.Tensor) for p in pos):
+                pos = th.stack(pos)
+
+            
+            # pos, quat이 tensor가 아닐 경우: tensor로 변환
+            if not isinstance(pos, th.Tensor):
+                pos = th.tensor(pos, dtype=th.float32)
+            pos[0] = sampled_target_x
+            pos[1] = sampled_target_y
+
+            if not isinstance(quat, th.Tensor):
+                quat = th.tensor(quat, dtype=th.float32)
+
+            # 위치 설정
+            self.target_objs[self._current_idx].set_position_orientation(pos, quat)
+
+            # self.target_objs[self._current_idx].set_position_orientation(self._default_target_poses[self._current_idx])
 
             self.robot.set_position_orientation(*self.randomize_object_pose(
                 *self._default_robot_poses[self._current_idx],
@@ -466,13 +598,55 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                 max_z_rotation=self._z_rot_randomization if self._randomize_agent_pose else 0.0,
                     ))
 
+        step_size = 0.005
+        target_obj = self.target_objs[self._current_idx]
+        cab_obj = self.cabs[self._current_idx]
+
+        target_obj.keep_still()
+        cab_obj.keep_still()
+        target_obj.visual_only = False
+        cab_obj.visual_only = False
+        og.sim.step_physics()
+
+        old_state = og.sim.dump_state()
+
+        from omnigibson.object_states import Touching
+        # 이미 충돌 중이면 살짝 위로 밀기
+        if target_obj.states[Touching].get_value(cab_obj):
+            reverse_dir = th.tensor([0, 0, 1.0], dtype=th.float)
+            while target_obj.states[Touching].get_value(cab_obj):
+                og.sim.load_state(old_state)
+                new_pos = target_obj.get_position_orientation()[0] + reverse_dir * step_size
+                target_obj.set_position_orientation(position=new_pos)
+                old_state = og.sim.dump_state()
+                og.sim.step_physics()
+                og.sim.step()
+                og.sim.render()
+
+        # 아래로 움직이며 충돌할 때까지 붙이기
+        step_dir = th.tensor([0, 0, -1.0], dtype=th.float)
+        while not target_obj.states[Touching].get_value(cab_obj):
+            og.sim.load_state(old_state)
+            new_pos = target_obj.get_position_orientation()[0] + step_dir * step_size
+            target_obj.set_position_orientation(position=new_pos)
+            old_state = og.sim.dump_state()
+            og.sim.step_physics()
+            og.sim.step()
+            og.sim.render()
+
+        # 마지막 1스텝 back해서 살짝 위로 되돌리기
+        og.sim.load_state(old_state)
+        final_pos = target_obj.get_position_orientation()[0] - step_dir * step_size
+        target_obj.set_position_orientation(position=final_pos)
+
+
         # Adjust z-value only based on scene graph
         # Enable physics for objects on the same sub-graph
         if self.obj_root_in_cab_subgraph and self.scene_graph and self.active_other_obj[self.obj_root_in_cab_subgraph]:
             def _adjust_z_by_graph(root_name):
                 # First adjust z of root, and enable physics
                 obj_beneath_name = self.scene_graph[root_name]["objBeneath"]
-                if root_name == self.scene_target_obj_name:
+                if root_name == self.scene_target_parent_obj_name:
                     # cab_center_x, cab_center_y, cab_center_z = self.cabs[self._current_idx].aabb_center
                     cab_center_x, cab_center_y, cab_center_z = self.cabs[self._current_idx].get_position_orientation()[0]
                     # adjust objects beneath cab
@@ -526,7 +700,8 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                     _adjust_z_by_graph(obj_on_top_name)
            
             _adjust_z_by_graph(self.obj_root_in_cab_subgraph)
-            
+        
+
         if self.scene_info is None:
             # Set the camera to visualize
             self.skills[self._current_idx].set_camera_to_visualize()

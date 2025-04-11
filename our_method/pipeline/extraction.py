@@ -1,3 +1,4 @@
+from curses import raw
 import torch
 from torchvision.ops.boxes import box_convert
 from groundingdino.util.inference import load_image
@@ -130,6 +131,9 @@ class RealWorldExtractor:
         Path(save_dir).mkdir(parents=True, exist_ok=True)
 
         raw_rgb = Image.open(input_path)
+        # RGBA나 다른 모드일 수 있으므로 강제로 RGB로 변환
+        raw_rgb = raw_rgb.convert("RGB")
+
         raw_width, raw_height = raw_rgb.size
             
         # Determine the scaling factor to ensure the longer edge becomes 1600
@@ -218,6 +222,7 @@ class RealWorldExtractor:
 
         # Prompt to filter out invalid backsplash masks (wall masks are usually accurate)
         rgb = np.array(Image.open(input_path))
+
         if filter_backsplash:
             filtered_wall_mask_paths = []
             for cand_mask_dir in backsplash_mask_paths + wall_mask_paths:
