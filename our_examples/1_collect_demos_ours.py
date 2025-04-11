@@ -187,6 +187,7 @@ def main(args):
         "dist_out_from_handle": DEFAULT_DIST_FROM_HANDLE[0],
         "dist_right_of_handle": DEFAULT_DIST_FROM_HANDLE[1],
         "dist_up_from_handle": DEFAULT_DIST_FROM_HANDLE[2],
+        "z_rot_from_handle": -90,
         "xyz_randomization": XYZ_RANDOMIZATION,
         "z_rot_randomization": Z_ROT_RANDOMIZATION,
         "bbox_randomization": bbox_randomizations,

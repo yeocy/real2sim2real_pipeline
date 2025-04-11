@@ -372,7 +372,6 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
             link = cab.links[cab_link]
 
             default_cab_pose = cab.get_position_orientation()
-            default_target_obj_pose = target_obj.get_position_orientation()
 
             og.sim.play()
 
@@ -381,6 +380,7 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
             for joint_name, joint in cab.joints.items():
                 if joint_name[2:] != self.target_links[i]:
                     joint.friction = 10.0   # Usually < 0.1
+
 
             # Create the skill
             skill = OpenandGrabSkill(
@@ -403,6 +403,12 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                 dist_right_of_handle=dist_right_of_handle,
                 dist_up_from_handle=dist_up_from_handle,
             )
+            # TODO
+            # default_robot_pos[1] 앞 뒤로 +는 Cabinet한테 가까이, -Cabinet한테 멀어짐
+            # default_robot_pos = th.tensor([default_robot_pos[0]-0.55, default_robot_pos[1]+0.15, default_robot_pos[2] + 0.65], dtype=th.float)
+            default_robot_pos = th.tensor([default_robot_pos[0]-0.45, default_robot_pos[1], default_robot_pos[2] + 0.65], dtype=th.float)
+            
+
             # Multiply default robot pose by default z rot offset
             default_robot_quat = OT.quat_multiply(OT.euler2quat(th.tensor([0, 0, z_rot_from_handle], dtype=th.float)), default_robot_quat)
             default_robot_pose = (default_robot_pos, default_robot_quat)
@@ -541,15 +547,15 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
 
             padding = 0.05
 
-            allowed_y_min = cab_aabb_min[1] + target_y_width / 2.0 - padding
-            allowed_y_max = cab_aabb_max[1] - target_y_width / 2.0 - padding
+            allowed_y_min = cab_aabb_min[1] + target_y_width / 2.0 + padding
+            allowed_y_max = cab_aabb_max[1] - target_y_width / 2.0 - padding*4
 
             # Target object의 x축 width
             target_x_width = target_aabb_max[0] - target_aabb_min[0]
 
             # Cabinet AABB로부터 x축에서 안전한 배치 범위 계산
             allowed_x_min = cab_aabb_min[0] + target_x_width / 2.0 + padding
-            allowed_x_max = cab_aabb_max[0] - target_x_width / 2.0 - padding*2
+            allowed_x_max = cab_aabb_max[0] - target_x_width / 2.0 - padding
 
             # x축도 중앙까지 제한해서 샘플링
             sampled_target_x = random.uniform(allowed_x_min.item(), ((allowed_x_min + allowed_x_max) / 2.0).item())

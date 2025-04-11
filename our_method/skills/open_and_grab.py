@@ -11,12 +11,20 @@ from enum import IntEnum
 
 # Specific stage of the skill
 class OpenOrCloseStep(IntEnum):
-    APPROACH = 0
-    CONVERGE = 1
-    GRASP = 2
-    ARTICULATE = 3
-    UNGRASP = 4
-    RETREAT = 5
+    CABINET_APPROACH = 0
+    CABINET_CONVERGE = 1
+    CABINET_GRASP = 2
+    CABINET_ARTICULATE = 3
+    CABINET_UNGRASP = 4
+    CABINET_RETREAT = 5
+    ROBOT_RETURN_TO_INITIAL = 6
+    TARGET_APPROACH = 7
+    TARGET_CONVERGE = 8
+    TARGET_GRASP = 9
+    TARGET_UP = 10
+    TARGET_PLACE = 11
+    TARGET_UNGRASP = 12
+    TARGET_RELEASE = 13
 
 
 class OpenandGrabSkill(ManipulationSkill):
@@ -69,7 +77,8 @@ class OpenandGrabSkill(ManipulationSkill):
         self._target_link = target_link
         self._handle_dist = handle_dist
         self._handle_offset = th.zeros(3) if handle_offset is None else th.tensor(handle_offset, dtype=th.float)
-        self._approach_dist = approach_dist
+        # self._approach_dist = approach_dist
+        self._approach_dist = 0.5
         self._flip_xy_scale_if_not_x_oriented = flip_xy_scale_if_not_x_oriented
 
         # Other info that will be filled in later
@@ -84,10 +93,12 @@ class OpenandGrabSkill(ManipulationSkill):
         self._joint_rel_mat = None                  # (3, 3)-array
         self._joint_to_handle_pos = None            # 3-array
         self._joint_to_approach_pos = None          # 3-array
+        self._joint_to_approach_target_pos = None
         self._approach_idx = None                   # {0, 1}
         self._approach_sign = None                  # {-1, 1}
         self._link_to_grasp_pos = None              # 3-array
         self._update_grasp_pose = None             # Lambda function that internally updates joint_to_handle/approach_pos based on current obj scale
+        self.target_step = False
 
         # Call super
         super().__init__(
@@ -243,6 +254,7 @@ class OpenandGrabSkill(ManipulationSkill):
         approach_offset = initial_offset.clone()
         approach_offset[self._approach_idx] += self._approach_dist * self._approach_sign
 
+
         # Grasp Pose 계산 함수 정의 및 실행
         # Define lambda function for updating grasp pose based on internal scale
         # TODO: Parent link pos itself might need to be scaled accordingly if it's not the root link frame
@@ -255,14 +267,27 @@ class OpenandGrabSkill(ManipulationSkill):
 
             # Calculate joint position to grasping position in the joint frame
             joint_world_pos = OT.quat2mat(parent_link_ori) @ (joint_rel_pos * scale_frac) + parent_link_pos
+
+            # print("\n[DEBUG] Computing joint_to_approach_pos")
+            # print(f"self._joint_rel_mat.T:\n{self._joint_rel_mat.T}")
+            # print(f"OT.quat2mat(parent_link_ori).T:\n{OT.quat2mat(parent_link_ori).T}")
+            # print(f"grasp_pos_canonical:\n{grasp_pos_canonical}")
+            # print(f"joint_world_pos:\n{joint_world_pos}")
+            # print(f"approach_offset:\n{approach_offset}")
+
             self._joint_to_handle_pos = self._joint_rel_mat.T @ OT.quat2mat(parent_link_ori).T @ (
                         grasp_pos_canonical - joint_world_pos + handle_offset)
             self._joint_to_approach_pos = self._joint_rel_mat.T @ OT.quat2mat(parent_link_ori).T @ (
                         grasp_pos_canonical - joint_world_pos + approach_offset)
+            
+            child_pos, _ = self._target_child_obj.get_position_orientation()
 
+            self._joint_to_approach_target_pos = child_pos
+            
         # grasp pose 계산 함수 정의 및 실행
         self._update_grasp_pose = pose_updater
         self._update_grasp_pose()
+
 
         # Determine whether this handle is horizontal or vertical based on the positions
         # (len(z) > (y) --> vertical, otherwise horizontal)
@@ -288,6 +313,7 @@ class OpenandGrabSkill(ManipulationSkill):
 
         # Restore state
         og.sim.load_state(state, serialized=False)
+        self._initial_eef_pos, self._initial_eef_quat = self._robot.get_relative_eef_pose(mat=False)
 
     def compute_grasp_pose(self, joint_to_grasp_pos, delta_jnt_val=0.0, return_mat=False):
         """
@@ -316,8 +342,41 @@ class OpenandGrabSkill(ManipulationSkill):
         # 문 손잡이가 수직이면 self._is_vertical_handle = True  회전 X
         # 문 손잡이가 수평이면 self._is_vertical_handle = False 회전 O
         gripper_yaw = 0.0 if self._is_vertical_handle else th.pi / 2
-        grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float))
+        # print(OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float)))
+        if self.target_step:
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([-th.pi / 2, 0, -th.pi / 2], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, 0, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, -th.pi / 2], dtype=th.float))
 
+ 
+            # 기존 grasp_mat 계산 뒤에 추가 회전
+            # [th.pi / 2, 0, 0], [0, 0, th.pi / 2]
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([th.pi / 2, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, th.pi / 2, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, th.pi / 2], dtype=th.float)) @ OT.euler2mat(th.tensor([0, th.pi / 2, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, th.pi / 2], dtype=th.float)) @ OT.euler2mat(th.tensor([0, 0, th.pi / 2], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, th.pi / 2], dtype=th.float)) @ OT.euler2mat(th.tensor([th.pi / 2, 0, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, th.pi / 2, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([th.pi / 2, 0, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, th.pi / 2, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, th.pi / 2, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, 0, th.pi / 2], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([th.pi / 2, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, 0, th.pi / 2], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([th.pi / 2, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, th.pi / 2, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([th.pi / 2, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([th.pi / 2, 0, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([th.pi / 2, 0, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, th.pi / 2, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, 0, th.pi / 2], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, 0, th.pi], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi, 0], dtype=th.float)) # 강추 
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([th.pi, 0, 0], dtype=th.float))
+            grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, -th.pi / 2], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([th.pi, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi, 0], dtype=th.float))
+
+        else:
+            grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float))
+        
+        # self._obj_z_rot_offset = OT.quat2mat(th.tensor([0, 0, 0, 1.0], dtype=th.float) if self._is_x_oriented else th.tensor([0, 0, 0.707, 0.707], dtype=th.float))
+        # print(OT.euler2mat(th.tensor([th.pi, -th.pi/2, 0]))
+        # exit()
+            
         # Revolute vs Prismatic
         if self._target_joint.is_revolute:
             # Joint angle corresponds to angle, so convert into modified pose in the global frame
@@ -460,27 +519,58 @@ class OpenandGrabSkill(ManipulationSkill):
         joint_to_grasp_pos = None
         delta_jnt_vals = None
 
+        # grasp = True
+        #         # (1) Move to approach pose
+        # if step == OpenOrCloseStep.CABINET_APPROACH:
+        #     # n_steps = n_approach_steps
+        #     # joint_to_grasp_pos = self._joint_to_approach_pos
+        #     # grasp = False
+        #     self.target_step = True
+        #     n_steps = n_approach_steps
+        #     # self._joint_to_approach_target_pos[0] = -0.1383
+        #     # self._joint_to_approach_target_pos[1] = -5.6
+        #     # self._joint_to_approach_target_pos[2] = 1.1141
+            
+        #     # self._joint_to_approach_pos[0] -= 0.4
+        #     # self._joint_to_approach_pos[2] -= 0.4
+        #     joint_to_grasp_pos = self._joint_to_approach_pos
+        #     grasp = False
         
+        # # (3) Grasp the handle
+        # elif step == OpenOrCloseStep.CABINET_CONVERGE:
+        #     n_steps = n_grasp_steps
+        #     no_op = True
+        #     grasp = True
+        
+        # # (5) Release grasp
+        # elif step == OpenOrCloseStep.CABINET_GRASP:
+        #     n_steps = n_grasp_steps
+        #     no_op = True
+        #     grasp = False
+
+
+        self.target_step = False
+        self.target_approach = 0.0
         # (1) Move to approach pose
-        if step == OpenOrCloseStep.APPROACH:
+        if step == OpenOrCloseStep.CABINET_APPROACH:
             n_steps = n_approach_steps
             joint_to_grasp_pos = self._joint_to_approach_pos
             grasp = False
 
         # (2) Approach the handle
-        elif step == OpenOrCloseStep.CONVERGE:
+        elif step == OpenOrCloseStep.CABINET_CONVERGE:
             n_steps = n_converge_steps
             joint_to_grasp_pos = self._joint_to_handle_pos
             grasp = False
 
         # (3) Grasp the handle
-        elif step == OpenOrCloseStep.GRASP:
+        elif step == OpenOrCloseStep.CABINET_GRASP:
             n_steps = n_grasp_steps
             no_op = True
             grasp = True
 
         # (4) Open the link
-        elif step == OpenOrCloseStep.ARTICULATE:
+        elif step == OpenOrCloseStep.CABINET_ARTICULATE:
             n_steps = n_articulate_steps
             joint_to_grasp_pos = self._joint_to_handle_pos
             cur_jnt_val = self._target_joint.get_state()[0][0]
@@ -494,23 +584,88 @@ class OpenandGrabSkill(ManipulationSkill):
             grasp = True
 
         # (5) Release grasp
-        elif step == OpenOrCloseStep.UNGRASP:
+        elif step == OpenOrCloseStep.CABINET_UNGRASP:
             n_steps = n_grasp_steps
             no_op = True
             grasp = False
 
         # (6) Retreat from grasp
-        elif step == OpenOrCloseStep.RETREAT:
-            n_steps = n_converge_steps
+        elif step == OpenOrCloseStep.CABINET_RETREAT:
+            n_steps = n_approach_steps
             joint_to_grasp_pos = self._joint_to_approach_pos
             grasp = False
+        elif step == OpenOrCloseStep.ROBOT_RETURN_TO_INITIAL:
+            assert self._initial_eef_pos is not None and self._initial_eef_quat is not None
+            target_pos = self._initial_eef_pos
+            target_quat = self._initial_eef_quat
 
+            cmds = self.interpolate_to_pose(
+                target_pos=target_pos,
+                target_quat=target_quat,
+                n_steps=n_approach_steps,
+                return_aa=True,
+            )
+            cmds = th.concatenate([cmds, th.ones((len(cmds), 1)) * 1.0], dim=-1)
+
+            buffer_cmds = th.ones((5, 7)) * cmds[-1].view(1, -1)
+            cmds = th.concatenate([cmds, buffer_cmds], dim=0)
+
+            return cmds, None  # 👈 여기서 바로 return!
+
+        # (7) Approach Target Object
+        elif step == OpenOrCloseStep.TARGET_APPROACH:
+            self.target_step = True
+            self.target_approach = 0.2
+            n_steps = n_approach_steps
+            # joint_to_grasp_pos = self._joint_to_handle_pos
+            # joint_to_grasp_pos[2] += 0.2
+            # print("joint_to_grasp_pos: ",joint_to_grasp_pos)
+            joint_to_grasp_pos = self._joint_to_approach_target_pos
+            grasp = False
+        # (8) Converge to Target Object
+        elif step == OpenOrCloseStep.TARGET_CONVERGE:
+            self.target_step = True
+            n_steps = n_converge_steps
+            # joint_to_grasp_pos = self._joint_to_handle_pos
+            # joint_to_grasp_pos[2] += 0.2
+            # print("joint_to_grasp_pos: ",joint_to_grasp_pos)
+            joint_to_grasp_pos = self._joint_to_approach_target_pos
+            grasp = False
+        # (9) Grasp the Target Object
+        elif step == OpenOrCloseStep.TARGET_GRASP:
+            self.target_step = True
+            n_steps = n_grasp_steps
+            no_op = True
+            grasp = True
+        # (10) UP the Target Object
+        elif step == OpenOrCloseStep.TARGET_UP:
+            self.target_step = True
+            self.target_approach = 0.4
+            n_steps = n_articulate_steps
+            joint_to_grasp_pos = self._joint_to_approach_target_pos
+            grasp = True
+        # (11) Move to Target Place
+        elif step == OpenOrCloseStep.TARGET_PLACE:
+            self.target_step = True
+            self.target_approach = 0.0
+            n_steps = n_approach_steps
+            joint_to_grasp_pos = th.tensor([-0.8, -0.21, 1.026], dtype=th.float)
+            grasp = True
+        # (12) Release grasp
+        elif step == OpenOrCloseStep.TARGET_UNGRASP:
+            self.target_step = True
+            n_steps = n_grasp_steps
+            no_op = True
+            grasp = False
+        elif step == OpenOrCloseStep.TARGET_RELEASE:
+            self.target_step = True
+            self.target_approach = 0.4
+            n_steps = n_approach_steps
+            joint_to_grasp_pos = self._joint_to_approach_target_pos
+            grasp = False
         else:
             raise ValueError(f"Got unknown OpenOrCloseStep: {step}")
         
-        print(f"step: {step}")
-        print(f"joint_to_grasp_pos (raw tensor): {joint_to_grasp_pos}")
-
         # Possibly override grasp value
         if grasp_override_val is not None:
             grasp = grasp_override_val
@@ -526,11 +681,21 @@ class OpenandGrabSkill(ManipulationSkill):
         # linearly-interpolated trajectory to the desired waypoint
         elif delta_jnt_vals is None:
             # 특정 위치로 이동만 할 때 
-            target_pos, target_mat = self.compute_grasp_pose(
-                joint_to_grasp_pos=joint_to_grasp_pos,
-                delta_jnt_val=0.0,
-                return_mat=True,
-            )
+            if not self.target_step:
+                target_pos, target_mat = self.compute_grasp_pose(
+                    joint_to_grasp_pos=joint_to_grasp_pos,
+                    delta_jnt_val=0.0,
+                    return_mat=True,
+                )
+            else:
+                _, target_mat = self.compute_grasp_pose(
+                    joint_to_grasp_pos=joint_to_grasp_pos,
+                    delta_jnt_val=0.0,
+                    return_mat=True,
+                )
+                target_pos = joint_to_grasp_pos + th.tensor([0.0, 0.0, self.target_approach], dtype=th.float)
+                
+
             target_pos_in_robot_frame, target_aa_in_robot_frame = \
                 self.get_pose_in_robot_frame(pos=target_pos, mat=target_mat, return_mat=False, include_eef_offset=not maintain_current_orientation)
 
