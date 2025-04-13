@@ -17,6 +17,7 @@ from our_method.pipeline.real_scene_generation import RealSceneGenerator
 from our_method.pipeline.task_proposals import TaskProposals
 from our_method.pipeline.task_object_extraction import TaskObjectExtraction
 from our_method.pipeline.task_object_spatial_reasoning import TaskObjectSpatialReasoning
+from our_method.pipeline.task_object_extraction_and_spatial_reasoning import TaskObjectExtractionAndSpatialReasoning
 from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
 from our_method.pipeline.task_object_resizing import TaskObjectResizing
@@ -48,6 +49,7 @@ class ACDC:
             run_step_3=False,
             run_step_4=False,
             run_step_5=False,
+            run_step_4_and_5=False,
             run_step_6=False,
             run_step_7=False,
             run_task_object_resizing=False,
@@ -93,7 +95,7 @@ class ACDC:
         save_dir = f"{os.path.dirname(input_path)}/acdc_output"
         # Cfg에 Save dir 설정
         for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "TaskProposals",
-                     "TaskObjectExtraction", "TaskObjectSpatialReasoning", "TaskObjectRetrieval", "TaskObjectResizing", "TaskSceneGenerator"]:
+                     "TaskObjectExtraction", "TaskObjectSpatialReasoning", "TaskObjectExtractionAndSpatialReasoning", "TaskObjectRetrieval", "TaskObjectResizing", "TaskSceneGenerator"]:
             cur_save_dir = config["pipeline"][step]["call"].get("save_dir", None)
             assert cur_save_dir is None, f"save_dir should not be specified in {step} config! Got: {cur_save_dir}"
             config["pipeline"][step]["call"]["save_dir"] = save_dir
@@ -103,6 +105,7 @@ class ACDC:
             config["pipeline"]["DigitalCousinMatcher"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectExtraction"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectSpatialReasoning"]["call"]["gpt_api_key"] = gpt_api_key
+            config["pipeline"]["TaskObjectExtractionAndSpatialReasoning"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectRetrieval"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectResizing"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskProposals"]["call"]["gpt_api_key"] = gpt_api_key
@@ -111,10 +114,12 @@ class ACDC:
             config["pipeline"]["DigitalCousinMatcher"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectExtraction"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectSpatialReasoning"]["call"]["gpt_version"] = gpt_version
+            config["pipeline"]["TaskObjectExtractionAndSpatialReasoning"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectRetrieval"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectResizing"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskProposals"]["call"]["gpt_version"] = gpt_version
         config["pipeline"]["TaskObjectExtraction"]["call"]["goal_task"] = goal_task
+        config["pipeline"]["TaskObjectExtractionAndSpatialReasoning"]["call"]["goal_task"] = goal_task
         print(f"""
 
 {"#" * 50}
@@ -267,6 +272,30 @@ class ACDC:
                 )
                 if not success:
                     raise ValueError("Failed ACDC Step 5!")
+
+        if run_step_4_and_5:
+
+                print(f"""
+
+{"#" * 50}
+{"#" * 50}
+# Running Task Object Extraction & Spatial Reasoning at once
+{"#" * 50}
+{"#" * 50}
+
+                        """)
+                print(f'TaskObjectExtractionAndSpatialReasoning Config: {config["pipeline"]["TaskObjectExtractionAndSpatialReasoning"]["call"]}')
+                step_4_and_5 = TaskObjectExtractionAndSpatialReasoning(
+                    verbose=config["pipeline"]["verbose"],
+                )
+                success, step_4_and_5_output_path = step_4_and_5(
+                    step_1_output_path=step_1_output_path,
+                    step_2_output_path=step_2_output_path,
+                    step_3_output_path=step_3_output_path,
+                    **config["pipeline"]["TaskObjectExtractionAndSpatialReasoning"]["call"],
+                )
+                if not success:
+                    raise ValueError("Failed ACDC Step 4&5!")
 
 
         if run_step_6:

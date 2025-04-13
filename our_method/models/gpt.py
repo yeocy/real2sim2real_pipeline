@@ -1872,6 +1872,176 @@ Scene image:
         }
         return NN_payload
     
+    def payload_task_object_extraction_and_spatial_reasoning(
+            self,
+            annotated_image_path,
+            scene_objects,
+            goal_task
+    ):
+        """
+        
+
+        Args:
+            
+
+        Returns:
+            
+        """
+        # Getting the base64 string
+        annotated_img_base64 = self.encode_image(annotated_image_path)
+
+        prompt_text_system = """You are a professional simulation designer.
+Look at the task and scene and think of new objects necessary to perform the task successfully.
+
+If the objects already in the scene are sufficient for the task and the task is clearly needed in the scene, you can leave the "objects" value empty.
+However, if the scene does not currently reflect a need for the task, you must introduce appropriate objects to create the initial conditions for that task.
+
+Place the objects you've thought of in appropriate placement to perform the given task.
+Placement must be selected strictly from only these seven 3D spatial options: ['above', 'below', 'left', 'right', 'front', 'back', 'inside'], relative to the parent_object.
+These placements should be interpreted in 3D space from the viewer’s perspective, not based on the 2D layout of a surface. For example, an object placed on the top surface of a desk should be labeled as 'above', not 'left' or 'right', even if it's visually on the right side of the desk.
+The parent_object can be either a scene object or a newly thought of object.
+
+Please provide answers for all possible scenarios.
+Your answer should consist of a reasoning explanation followed by the JSON. Keep explanation simple and don't add any additional text after the JSON.
+
+Keep in mind that your job is to set up the initial state of the simulation environment. Therefore, you should describe the appropriate initial state to perform the task, not the state after the task is completed.
+You are setting up the initial state of the environment where the task has not yet been performed. This means the scene should clearly reflect the need for the task.
+"""
+
+        step1_and_2_text_prompt1 = """
+Let me give you some examples
+
+### Example 1 ###
+Example Input:
+Task: Give me the water bottle next to the microwave
+Scene image: <image>
+Scene objects: ["cabinet_0", "cabinet_1", "cabinet_2", "cabinet_3", "cabinet_4", "microwave_0", "refrigerator_0", "cup_0"]
+
+Example Output:
+A water bottle should be placed to the right or left of the microwave on the countertop so that it's clearly next to it and easy to pick up.
+{{
+    "scenario_0": {{
+        "objects": {{
+            "water_bottle": {{
+                "parent_object": "microwave_0",
+                "placement": "right"
+            }}
+        }}
+    }},
+    "scenario_1": {{
+        "objects": {{
+            "water_bottle": {{
+                "parent_object": "microwave_0",
+                "placement": "left"
+            }}
+        }}
+    }}
+}}
+
+### Example 2 ###
+Example Input:
+Task: Clear the table
+Scene image: <image>
+Scene objects: ["table_0", "chair_0", "vacuum_cleaner_0", "box_0", "coffee_machine_vacuum_0", "chair_1"]
+
+Example Output:
+In the current scene, the table has objects (box_0 and coffee_machine_vacuum_0) on it that need to be cleared. To perform this task, we need a destination for these objects. Since the scene lacks any storage or surface to move these items to, we must introduce appropriate objects (e.g., a "counter" or "cabinet") in the initial state, so that the task of clearing the table can be carried out.
+{{
+    "scenario_0": {{
+        "objects": {{
+            "cabinet": {{
+                "parent_object": "table_0",
+                "placement": "right"
+            }}
+        }}
+    }},
+    "scenario_1": {{
+        "objects": {{
+            "side_table": {{
+                "parent_object": "chair_0",
+                "placement": "left"
+            }}
+        }}
+    }}
+}}
+
+### Example 3 ###
+Example Input:
+Task: Open the cabinet next to the locker and give me the cup inside
+Scene image: <image>
+Scene objects: ["locker_0"]
+
+Example Output:
+There is no visible cabinet next to the locker in the current scene, so to successfully perform the task, a cabinet containing a cup must be added adjacent to the locker.
+{{
+    "scenario_0": {{
+        "objects": {{
+            "cabinet": {{
+                "parent_object": "locker_0",
+                "placement": "left"
+            }},
+            "cup": {{
+                "parent_object": "cabinet",
+                "placement": "inside"
+            }}
+        }}
+    }}
+}}
+
+
+Now based on the following input, please give me appropriate answer.
+Task: {}
+Scene image: """
+
+        step1_and_2_text_prompt2 = """Scene objects: {}
+"""
+
+        # Fill text prompts
+        step1_and_2_text_prompt1_filled = step1_and_2_text_prompt1.format(goal_task)
+        step1_and_2_text_prompt2_filled = step1_and_2_text_prompt2.format(scene_objects)
+
+        content = [
+            {
+            "type": "text",
+            "text": step1_and_2_text_prompt1_filled
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{annotated_img_base64}"
+                }
+            },
+            {
+            "type": "text",
+            "text": step1_and_2_text_prompt2_filled
+            },
+        ]
+
+        text_dict_system = {
+                "type": "text",
+                "text": prompt_text_system
+            }
+        content_system = [text_dict_system]
+
+
+        task_object_extraction_and_spatial_reasoning_payload = {
+            "model": self.VERSIONS[self.version],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": content_system
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            # TODO
+            "temperature": 0,
+            "max_tokens": 500
+        }
+        return task_object_extraction_and_spatial_reasoning_payload
+    
     def payload_task_object_resizing(
             self,
             object_size_info,

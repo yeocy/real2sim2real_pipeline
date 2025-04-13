@@ -62,6 +62,11 @@ pipeline:
       gpt_api_key: null
       gpt_version: 4o
 
+  TaskObjectExtractionAndSpatialReasoning:
+    call:
+      gpt_api_key: null
+      gpt_version: 4o
+
   TaskObjectRetrieval:
     call:
       gpt_api_key: null

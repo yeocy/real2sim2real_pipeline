@@ -10,7 +10,7 @@ __pycache__/
 our_method/pipeline/test.ipynb
 our_method/pipeline/draw_bbox.ipynb
 
-our_method_test/
+our_method_test/*/
 our_method_test/acdc_output/
 our_method_test/acdc_output_orig/
 logs/

@@ -112,6 +112,32 @@ def test_acdc_step_5(args):
     )
     del pipeline
 
+def test_acdc_step_4_and_5(args):
+    from our_method.pipeline.acdc import ACDC
+    pipeline = ACDC()
+    pipeline.run(
+        input_path=TEST_IMG_PATH,
+        run_step_1=False,
+        run_step_2=False,
+        run_step_3=False,
+        run_step_4=False,
+        run_step_5=False,
+        run_step_4_and_5=True,
+        run_step_6=False,
+        run_task_object_resizing=False,
+        run_step_7=False,
+        step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
+        step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
+        step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
+        task_object_extraction_output_path=f"{TEST_DIR}/acdc_output/task_object_extraction/target_object_extraction.json",
+        gpt_api_key=args.gpt_api_key,
+        gpt_version=args.gpt_version,
+        goal_task = args.goal_task
+    )
+    del pipeline
+
+
+
 def test_acdc_step_6(args):
     from our_method.pipeline.acdc import ACDC
     pipeline = ACDC()
@@ -233,9 +259,10 @@ def main(args):
     # test_task_proposals(args)
     # test_acdc_step_4(args) # Task Object Extraction
     # test_acdc_step_5(args) # Task Object Spatial Reasoning
+    test_acdc_step_4_and_5(args)  # Task Object Extraction and Spatial Reasoning at once
     # test_acdc_step_6(args) # Task Object Retrieval
     # test_object_resizing(args) # Task Object Resizing
-    test_acdc_step_7(args) # Task following Scene Generation
+    # test_acdc_step_7(args) # Task following Scene Generation
     # og.shutdown()
 
     # Final test -- OG should always come at the end
