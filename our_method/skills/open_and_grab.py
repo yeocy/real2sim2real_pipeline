@@ -77,8 +77,8 @@ class OpenandGrabSkill(ManipulationSkill):
         self._target_link = target_link
         self._handle_dist = handle_dist
         self._handle_offset = th.zeros(3) if handle_offset is None else th.tensor(handle_offset, dtype=th.float)
-        # self._approach_dist = approach_dist
-        self._approach_dist = 0.5
+        self._approach_dist = approach_dist
+        # self._approach_dist = 0.5
         self._flip_xy_scale_if_not_x_oriented = flip_xy_scale_if_not_x_oriented
 
         # Other info that will be filled in later
@@ -602,7 +602,7 @@ class OpenandGrabSkill(ManipulationSkill):
             cmds = self.interpolate_to_pose(
                 target_pos=target_pos,
                 target_quat=target_quat,
-                n_steps=n_approach_steps,
+                n_steps=n_approach_steps*2,
                 return_aa=True,
             )
             cmds = th.concatenate([cmds, th.ones((len(cmds), 1)) * 1.0], dim=-1)
@@ -648,7 +648,7 @@ class OpenandGrabSkill(ManipulationSkill):
         elif step == OpenOrCloseStep.TARGET_PLACE:
             self.target_step = True
             self.target_approach = 0.0
-            n_steps = n_approach_steps
+            n_steps = n_approach_steps*2
             joint_to_grasp_pos = th.tensor([-0.8, -0.21, 1.026], dtype=th.float)
             grasp = True
         # (12) Release grasp
@@ -695,6 +695,7 @@ class OpenandGrabSkill(ManipulationSkill):
                 )
                 target_pos = joint_to_grasp_pos + th.tensor([0.0, 0.0, self.target_approach], dtype=th.float)
                 
+            print("target_mat", target_mat)
 
             target_pos_in_robot_frame, target_aa_in_robot_frame = \
                 self.get_pose_in_robot_frame(pos=target_pos, mat=target_mat, return_mat=False, include_eef_offset=not maintain_current_orientation)

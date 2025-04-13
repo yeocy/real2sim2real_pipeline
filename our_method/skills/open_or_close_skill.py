@@ -241,6 +241,8 @@ class OpenOrCloseSkill(ManipulationSkill):
         approach_offset = initial_offset.clone()
         approach_offset[self._approach_idx] += self._approach_dist * self._approach_sign
 
+
+
         # Grasp Pose 계산 함수 정의 및 실행
         # Define lambda function for updating grasp pose based on internal scale
         # TODO: Parent link pos itself might need to be scaled accordingly if it's not the root link frame
@@ -461,7 +463,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         
         # (1) Move to approach pose
         if step == OpenOrCloseStep.APPROACH:
-            n_steps = n_approach_steps
+            n_steps = n_approach_steps*2
             joint_to_grasp_pos = self._joint_to_approach_pos
             grasp = False
 

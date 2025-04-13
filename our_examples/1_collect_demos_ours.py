@@ -33,8 +33,8 @@ USE_OSC = False                                                 # Whether to use
 USE_DELTA_CMDS = True                                           # Whether to use delta commands or not
 DIST_USE_FROM_HANDLE = True                                     # Whether to calculate distance from target object handle or center of its bbox
 VISUALIZE_SKILL = False                                         # Whether to visualize skill during demo collection or not
-XYZ_RANDOMIZATION = np.array([0.03, 0.03, 0.07])                # (x,y,z) randomization to apply to target object
-Z_ROT_RANDOMIZATION = np.pi / 10                                # z-rotation randomization to apply to target object
+XYZ_RANDOMIZATION = np.array([0.03, 0.03, 0.03])                # (x,y,z) randomization to apply to target object
+Z_ROT_RANDOMIZATION = np.pi / 30                                # z-rotation randomization to apply to target object                          # z-rotation randomization to apply to target object
 EXTERNAL_CAM_XYZ_RANDOMIZATION = np.ones(3) * 0.01              # (x,y,z) randomization to apply to camera between episodes
 EXTERNAL_CAM_ROT_RANDOMIZATION = np.pi / 30                     # orientation magnitude randomization to apply to camera between episodes
 DEFAULT_DIST_FROM_HANDLE = np.array([0.5, 0.1, -1.7])           # default offset from the robot base to the target object's handle
@@ -71,21 +71,32 @@ def main(args):
 
     # Set robot params
     robot_params = {
-        "model_name": "FrankaMounted",      # Only currently works for FrankaPanda, FrankaMounted models
+        "model_name": "KinovaGen3Lite",      # Only currently works for FrankaPanda, FrankaMounted models
         "robot_name": "robot0",
-        "reset_qpos": th.tensor([-0.0027, -1.3000, -0.0012, -2.0000, -0.0082, 2.1875, 0.8032, 0.0400, 0.0400]),
+        # "reset_qpos": th.tensor([-0.0027, -1.3000, -0.0012, -2.0000, -0.0082, 2.1875, 0.8032, 0.0400, 0.0400]),
+        "reset_qpos": th.tensor([0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]),
         "eef_z_offset": 0.180,
         "open_qpos": None,              # If specified, joint values defining an open state for the robot gripper
         "root_link": "panda_base",
         "vis_local_position": th.tensor([-0.26549, -0.30288, 1.0 + 0.861]),
         "vis_local_orientation": th.tensor([0.36165891, -0.24745751, -0.50752921, 0.74187715]),
     }
+    # robot_params = {
+    #     "model_name": "FrankaMounted",      # Only currently works for FrankaPanda, FrankaMounted models
+    #     "robot_name": "robot0",
+    #     "reset_qpos": th.tensor([-0.0027, -1.3000, -0.0012, -2.0000, -0.0082, 2.1875, 0.8032, 0.0400, 0.0400]),
+    #     "eef_z_offset": 0.180,
+    #     "open_qpos": None,              # If specified, joint values defining an open state for the robot gripper
+    #     "root_link": "panda_base",
+    #     "vis_local_position": th.tensor([-0.26549, -0.30288, 1.0 + 0.861]),
+    #     "vis_local_orientation": th.tensor([0.36165891, -0.24745751, -0.50752921, 0.74187715]),
+    # }
 
     # Define skill kwargs
     skill_kwargs = dict(
         should_open=True,
         joint_limits=(0.0, np.pi / 4),  # This assumes joint is revolute
-        n_approach_steps=int(75 / STEP_DIVISOR),
+        n_approach_steps=int(90 / STEP_DIVISOR),
         n_converge_steps=int(75 / STEP_DIVISOR),
         n_grasp_steps=int(5 / STEP_DIVISOR),
         n_articulate_steps=int(125 / STEP_DIVISOR),
@@ -135,6 +146,7 @@ def main(args):
         "type": "Scene",
         "use_floor_plane": True,
     }
+
     cfg["robots"] = [{
         "type": robot_params["model_name"],
         "name": robot_params["robot_name"],
@@ -187,7 +199,7 @@ def main(args):
         "dist_out_from_handle": DEFAULT_DIST_FROM_HANDLE[0],
         "dist_right_of_handle": DEFAULT_DIST_FROM_HANDLE[1],
         "dist_up_from_handle": DEFAULT_DIST_FROM_HANDLE[2],
-        "z_rot_from_handle": -90,
+        "z_rot_from_handle": -th.pi / 2,
         "xyz_randomization": XYZ_RANDOMIZATION,
         "z_rot_randomization": Z_ROT_RANDOMIZATION,
         "bbox_randomization": bbox_randomizations,

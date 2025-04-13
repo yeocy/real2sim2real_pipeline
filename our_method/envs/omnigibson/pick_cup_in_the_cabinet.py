@@ -3,11 +3,11 @@ from collections.abc import Iterable
 import random
 import json
 
-from huggingface_hub import Padding
 
 import torch as th
 from our_method.envs.omnigibson.skill_wrapper import SkillWrapper
 from our_method.skills.open_and_grab import OpenandGrabSkill
+from our_method.skills.open_or_close_skill import OpenOrCloseSkill
 import omnigibson as og
 from omnigibson.objects import DatasetObject
 from omnigibson.prims.material_prim import MaterialPrim
@@ -65,7 +65,7 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
             cab_bboxs=None,
             eval_idx=None,
             handle_dist=0.02,
-            approach_dist=0.13,
+            approach_dist=0.2,
             dist_use_from_handle=True,
             dist_out_from_handle=0.3,
             dist_right_of_handle=-0.1,
@@ -124,7 +124,6 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
         # scene_info keys = ['resolution', 'scene_graph', 'cam_pose', 'objects']
         # scene_target_obj_name = cabinet_4
         # non_target_objs_visual_only = True
-
         # Store values
         # 객체의 (x, y, z) 위치에 대해 무작위로 흔들어줄 값의 최대 범위를 설정
         self._xyz_randomization = th.zeros(3) if xyz_randomization is None else th.tensor(xyz_randomization, dtype=th.float)
@@ -382,7 +381,7 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                     joint.friction = 10.0   # Usually < 0.1
 
 
-            # Create the skill
+            # # Create the skill
             skill = OpenandGrabSkill(
                 robot=self.robot,
                 eef_z_offset=eef_z_offset,
@@ -396,6 +395,18 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                 visualize_cam_pose=visualize_cam_pose,
             )
 
+            # skill = OpenOrCloseSkill(
+            #     robot=self.robot,
+            #     eef_z_offset=eef_z_offset,
+            #     target_obj=cab,
+            #     target_link=link,
+            #     handle_dist=handle_dist,
+            #     approach_dist=approach_dist,
+            #     flip_xy_scale_if_not_x_oriented=self.scene_info is None,  # Trust bounding box in cousin scene info
+            #     visualize=visualize_skill,
+            #     visualize_cam_pose=visualize_cam_pose,
+            # )
+            
             # Compute the base pose to set the robot at
             default_robot_pos, default_robot_quat = skill.compute_robot_base_pose(
                 dist_use_from_handle=dist_use_from_handle,
@@ -406,8 +417,9 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
             # TODO
             # default_robot_pos[1] 앞 뒤로 +는 Cabinet한테 가까이, -Cabinet한테 멀어짐
             # default_robot_pos = th.tensor([default_robot_pos[0]-0.55, default_robot_pos[1]+0.15, default_robot_pos[2] + 0.65], dtype=th.float)
-            default_robot_pos = th.tensor([default_robot_pos[0]-0.45, default_robot_pos[1], default_robot_pos[2] + 0.65], dtype=th.float)
             
+            default_robot_pos = th.tensor([default_robot_pos[0]-0.45, default_robot_pos[1], default_robot_pos[2] + 0.65], dtype=th.float)
+            # z_rot_from_handle = 0
 
             # Multiply default robot pose by default z rot offset
             default_robot_quat = OT.quat_multiply(OT.euler2quat(th.tensor([0, 0, z_rot_from_handle], dtype=th.float)), default_robot_quat)

@@ -221,6 +221,7 @@ class ManipulationSkill(SyntheticSkill):
         """
         # Grab robot local pose
         cur_pos, cur_quat = self._robot.get_relative_eef_pose(mat=False)
+        # print(f"cur_pos: {cur_pos}, cur_quat: {cur_quat}")
 
         # Get from pose0 --> pose1 in n_steps
         # Returns list of 2-tuple, where each entry is an interpolated value between the endpoints
