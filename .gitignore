@@ -27,6 +27,7 @@ logs/
 RoboGen_scenes/data/
 RoboGen_scenes/configs/
 RoboGen_scenes/log_dir/
-RoboGen_scenes/omnigibson_*
+RoboGen_scenes/omnigibson_task
+RoboGen_scenes/omnigibson_*.py
 RoboGen_scenes/pybullet_to_omnigibson/
 RoboGen_scenes/trashcan/

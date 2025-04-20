@@ -36,7 +36,21 @@ def step2():
               --camera_position={cam_position_str} --camera_orientation {cam_orientation_str} \
               --use_gpt_spatial_relationship 0")
 
+def continue_learning(cam_position_str, cam_orientation_str):
+    restore_state_file = "data/generated_task_from_ours/Pick_up_the_water_bottle_on_the_table_water_bottle__2025-04-20-19-13-08/task_Pick_up_the_water_bottle_on_the_table/primitive_states/2025-04-20-19-50-40/grasp_the_water_bottle/state_147.pkl"
+    substep = 1
+
+    os.system(f"cd {robogen_base_dir} && \
+            python execute.py --task_config_path {robogen_config_path} \
+            --gui 1 --run_training 1 \
+            --table_id 0 --robot_name panda \
+            --camera_position={cam_position_str} --camera_orientation {cam_orientation_str} \
+            --use_gpt_spatial_relationship 0 \
+            --last_restore_state_file {restore_state_file} \
+            --only_learn_substep {substep}")
 
 if __name__ == "__main__":
     # step1()
-    step2()
+    # step2()
+    continue_learning(cam_position_str="[-1.0188654760225047,-1.3939319681343485,1.7417502443113455]",
+                      cam_orientation_str="[0.4685056303627537,-0.0067159416974899196,0.0,0.8834349837115999]")
