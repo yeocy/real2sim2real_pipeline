@@ -25,7 +25,9 @@ import our_method
 from our_method.utils.processing_utils import NumpyTorchEncoder, process_depth_linear, compute_point_cloud_from_depth, shrink_mask
 import our_method.utils.transform_utils as NT
 
+import matplotlib.pyplot as plt
 
+depth_count = 0
 def get_env_class(env_meta=None, env_type=None, env=None):
     env_type = EU.get_env_type(env_meta=env_meta, env_type=env_type, env=env)
     if env_type == EB.EnvType.ROBOSUITE_TYPE:
@@ -64,7 +66,7 @@ def apply_depth_threshold(depth_img, threshold, rgb=None, depth_fill_value=5):
         np.ndarray: Mask, where nonzero values define the pixels considered "too far"
     """
     # Create masks of pixels where the depth value is greater than the threshold
-    mask = depth_img > threshold
+    mask = depth_img >= np.inf
 
     if rgb is not None:
         # Set the RGB values to black where the mask is True
@@ -88,9 +90,29 @@ def process_omni_obs(
         include_segment_strs=None,
         postprocess_for_eval=False,
 ):
+    global depth_count
     step_obs_data = {}
     pc_depths = {}
     pc_seg_ids = {}
+
+    # === process_omni_obs 입력 파라미터 ===
+    # robot: <omnigibson.robots.kinova_gen3_lite.KinovaGen3Lite object at 0x7f1c8bdc0a90>
+    # external_sensors: {'external_cam0': <omnigibson.sensors.vision_sensor.VisionSensor object at 0x7f1c1f916530>}
+    # obs keys: ['robot0', 'task', 'external']
+    # obs_modalities: ['external::external_cam0::point_cloud', 'robot0::proprio']
+    # robot_depth_threshold: 10
+    # external_depth_threshold: 10
+    # pc_prune_depth_background: True
+    # combine_pc: True
+    # include_segment_strs: ['cabinet']
+    # postprocess_for_eval: False
+
+    # external_cam0 위치 설정
+    # include_segment_strs 설정
+
+    # include_segment_strs, external_sensors, obs_key, 등등 이해하기
+    # =====================================
+
     for mod in obs_modalities:
         mod_data = obs
 
@@ -99,6 +121,19 @@ def process_omni_obs(
             if "point_cloud" in str_key:
                 # Explicitly continue, we will handle this later
                 pc_depths[mod] = mod_data["depth_linear"].detach().cpu().numpy()
+
+                # depth_img =pc_depths[mod]
+                # inf_mask = np.isinf(depth_img)
+                # valid_max = np.max(depth_img[~inf_mask])
+                # depth_img[inf_mask] = valid_max
+                
+                # # 정규화 (0~1 범위로)
+                # depth_img_norm = (depth_img - depth_img.min()) / (depth_img.max() - depth_img.min() + 1e-8)
+
+                # plt.imsave(f"images/{depth_count}_depth.png", depth_img_norm, cmap="gray")
+                # depth_count += 1
+
+                    
                 if pc_prune_depth_background:
                     pc_seg_ids[mod] = mod_data["seg_instance_id"].detach().cpu().numpy()
                 skip_data = True
@@ -144,13 +179,13 @@ def process_omni_obs(
         if include_segment_strs is not None:
             valid_inst_ids = []
             for idx, prim_path in VisionSensor.INSTANCE_ID_REGISTRY.items():
+                # print(f"prim_path: {prim_path}")
                 # Check over all inclusion strings, if not included in any, continue
                 for include_str in include_segment_strs:
                     if include_str in prim_path:
                         valid_inst_ids.append(idx)
                         break
             valid_inst_ids = np.array(valid_inst_ids)
-
         for pc_name, depth_linear in pc_depths.items():
             # Grab sensor
             group, sensor_name, _ = pc_name.split("::")
@@ -210,7 +245,7 @@ class EnvOmniGibson(EB.EnvBase):
             combine_pc=False,
             include_eef_pc=True,
             embed_eef_pc=False,
-            include_segment_strs=("cabinet",),
+            include_segment_strs=("cabinet","pencil_case"),
             max_pc=8192,
             og_env=None,
             postprocess_visual_obs=True,
@@ -298,6 +333,7 @@ class EnvOmniGibson(EB.EnvBase):
         """
         self._env_name = env_name
         self.og_config = deepcopy(og_config)
+
         self.obs_modalities = obs_modalities
         self.postprocess_visual_obs = postprocess_visual_obs
         self.wrap_during_initialization = wrap_during_initialization
@@ -354,7 +390,7 @@ class EnvOmniGibson(EB.EnvBase):
             "init_robot_joint_noise_proportion": init_robot_joint_noise_proportion,
         }
         self.env = og.Environment(configs=deepcopy(self.og_config)) if og_env is None else og_env
-
+ 
         # Optionally wrap if there is a type specified
         if self.wrap_during_initialization and self.env.wrapper_config["type"] is not None:
             self.env = create_wrapper(env=self.env)
@@ -363,6 +399,12 @@ class EnvOmniGibson(EB.EnvBase):
         self.external_sensor_default_poses = {
             name: sensor.get_position_orientation(frame="parent") for name, sensor in self.env.external_sensors.items()
         }
+        # self.env.external_sensors['external_cam0'] = [[614.04736328125, 0.0, 320.4498596191406], [0.0, 614.044677734375, 244.81724548339844], [0.0, 0.0, 1.0]]
+        # print(f"External sensor default poses: {self.env.external_sensors['external_cam0'].intrinsic_matrix}")
+        # exit()
+        # <omnigibson.sensors.vision_sensor.VisionSensor object at 0x7f1d047cc190>
+        # (tensor([-0.2655, -0.3029,  1.8610]), tensor([ 0.3617, -0.2475, -0.5075,  0.7419]))
+        # {'external_cam0': (tensor([-0.2655, -0.3029,  1.8610]), tensor([ 0.3617, -0.2475, -0.5075,  0.7419]))}
 
         # Load eef pc if requested
         self.finger_pcs = dict()
@@ -370,13 +412,25 @@ class EnvOmniGibson(EB.EnvBase):
         if self.include_eef_pc:
             robot = self.env.robots[0]
             # Make sure this is franka mounted, since that's the only robot we have the finger models for
-            assert isinstance(robot, FrankaMounted), "Only FrankaMounted robot is supported for @include_eef_pc!"
+            # assert isinstance(robot, FrankaMounted), "Only FrankaMounted robot is supported for @include_eef_pc!"
             for link in robot.finger_links[robot.default_arm]:
                 link_name = link.body_name
-                pc = th.tensor(np.load(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/finray_finger.npy"), dtype=th.float)
+                if link_name == "LEFT_FINGER_PROX":
+                    filename = "gen3_lite_finray_finger_left_finger_prox.npy"
+                elif link_name == "RIGHT_FINGER_PROX":
+                    filename = "gen3_lite_finray_finger_right_finger_prox.npy"
+                elif link_name == "LEFT_FINGER_DIST":
+                    filename = "gen3_lite_finray_finger_left_finger_dist.npy"
+                elif link_name == "RIGHT_FINGER_DIST":
+                    filename = "gen3_lite_finray_finger_right_finger_dist.npy"
+                else:
+                    raise ValueError(f"Unknown link name: {link_name}")
+                
+                pc = th.tensor(np.load(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/{filename}"), dtype=th.float)
+                # pc = th.tensor(np.load(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/gen3_lite_finray_finger.npy"), dtype=th.float)
                 self.finger_pcs[link.visual_meshes["visuals"]] = pc
 
-            with open(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/tfs/eef2finger_tfs.json", "r") as f:
+            with open(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/tfs/gen3_lite_eef2finger_tfs.json", "r") as f:
                 eef2finger_tfs = json.load(f)
 
             for name, tf in eef2finger_tfs.items():
@@ -558,7 +612,7 @@ class EnvOmniGibson(EB.EnvBase):
     def get_observation(self, di=None):
         if di is None:
             di, _ = self.env.get_obs()
-
+    
         # Re-structure dict
         robot = self.env.robots[0]
         di = process_omni_obs(

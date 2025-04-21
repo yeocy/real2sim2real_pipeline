@@ -221,7 +221,6 @@ class ManipulationSkill(SyntheticSkill):
         """
         # Grab robot local pose
         cur_pos, cur_quat = self._robot.get_relative_eef_pose(mat=False)
-        # print(f"cur_pos: {cur_pos}, cur_quat: {cur_quat}")
 
         # Get from pose0 --> pose1 in n_steps
         # Returns list of 2-tuple, where each entry is an interpolated value between the endpoints
@@ -237,3 +236,67 @@ class ManipulationSkill(SyntheticSkill):
             vals[i, 3:] = ori
 
         return th.tensor(vals, dtype=th.float)
+
+    # def plan_to_pose(self, target_pos, target_quat, n_steps=50):
+    #     """
+    #     Plans a joint trajectory to a target EEF pose using interpolation + IK (no planning context, no collision check)
+
+    #     Args:
+    #         target_pos (torch.tensor): (x,y,z) EEF target position (in robot frame)
+    #         target_quat (torch.tensor): (x,y,z,w) EEF target quaternion (in robot frame)
+    #         n_steps (int): Number of steps in the interpolated path
+
+    #     Returns:
+    #         List[torch.Tensor] or None: List of joint positions along the trajectory, or None if IK fails
+    #     """
+    #     from omnigibson.utils.control_utils import IKSolver
+    #     # Setup joint info
+    #     arm_name = self._robot.default_arm
+    #     joint_control_idx = self._robot.arm_control_idx[arm_name]
+    #     current_joint_pos = self._robot.get_joint_positions()[joint_control_idx]
+
+    #     # IK solver 준비
+    #     ik_solver = IKSolver(
+    #         robot_description_path=self._robot.robot_arm_descriptor_yamls.get("left_fixed", self._robot.robot_arm_descriptor_yamls[arm_name]),
+    #         robot_urdf_path=self._robot.urdf_path,
+    #         reset_joint_pos=self._robot.reset_joint_pos[joint_control_idx],
+    #         eef_name=self._robot.eef_link_names[arm_name],
+    #     )
+
+    #     # 현재 EEF pose
+    #     cur_pos, cur_quat = self._robot.get_relative_eef_pose(mat=False)
+
+    #     # trajectory 생성
+    #     traj = []
+    #     for i in range(1, n_steps + 1):
+    #         frac = th.tensor(i / n_steps, dtype=th.float32)
+    #         interp_pos = cur_pos * (1 - frac) + target_pos * frac
+    #         interp_quat = OT.quat_slerp(cur_quat, target_quat, frac=frac)
+
+    #         # IK로 joint 값 구하기
+    #         joint_sol = ik_solver.solve(
+    #             target_pos=interp_pos,
+    #             target_quat=interp_quat,
+    #             max_iterations=1000,
+    #         )
+
+    #         if joint_sol is not None:
+    #             traj.append(joint_sol)
+    #         else:
+    #             print(f"[⚠️ IK 실패] Step {i}/{n_steps}: pos={interp_pos}, quat={interp_quat}")
+    #             return None  # 중간에 실패하면 전체 실패로 간주
+    #     # if len(traj) == n_steps:
+    #     #     return th.stack(traj, dim=0)
+    #     # else:
+    #     #     return None
+    #     if len(traj) == n_steps:
+    #         eef_traj = []
+    #         for joint_pos in traj:
+    #             self._robot.set_joint_positions(joint_pos, indices=joint_control_idx)
+    #             pos, quat = self._robot.get_relative_eef_pose(mat=False)
+    #             aa = OT.quat2axisangle(quat)
+    #             pose = th.cat([pos, aa])
+    #             eef_traj.append(pose)
+    #         return th.stack(eef_traj, dim=0)
+    #     else:
+    #         return None

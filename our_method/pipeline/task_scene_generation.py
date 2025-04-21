@@ -170,8 +170,8 @@ class TaskSceneGenerator:
             task_obj_output_info = json.load(f)
 
         scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, cam_pose=cam_pose, obj_info_json=task_obj_output_info, visual_only=True)
-        scene_rgb = self.take_photo(n_render_steps=1000000)
-        # scene_rgb = self.take_photo(n_render_steps=1000)
+        # scene_rgb = self.take_photo(n_render_steps=1000000)
+        scene_rgb = self.take_photo(n_render_steps=100)
         # exit(())
         
         final_scene_info = deepcopy(scene_info)
@@ -545,6 +545,7 @@ class TaskSceneGenerator:
                 # TODO
         og.sim.step()
         for obj_name, obj_info in obj_info_json["objects"].items():
+            print("obj_name: ", obj_name)
             TaskSceneGenerator.snap_to_place(scene, 
                                             obj_info,
                                             cam_pose=cam_pose,
@@ -579,7 +580,7 @@ class TaskSceneGenerator:
                 },
             }
         
-        scene_info["objects"][obj_name] = obj_scene_info
+            scene_info["objects"][obj_name] = obj_scene_info
         
         # Initialize all objects by taking one step
         og.sim.step()

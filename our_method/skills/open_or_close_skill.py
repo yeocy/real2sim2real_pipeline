@@ -531,6 +531,7 @@ class OpenOrCloseSkill(ManipulationSkill):
                 delta_jnt_val=0.0,
                 return_mat=True,
             )
+            print("target_mat", target_mat)
             target_pos_in_robot_frame, target_aa_in_robot_frame = \
                 self.get_pose_in_robot_frame(pos=target_pos, mat=target_mat, return_mat=False, include_eef_offset=not maintain_current_orientation)
 

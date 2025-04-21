@@ -1,3 +1,4 @@
 from our_method.envs.omnigibson.cabinet_open_wrapper import OpenCabinetWrapper
 from our_method.envs.omnigibson.pick_cup_in_the_cabinet import PickCupInTheCabinetWrapper
+from our_method.envs.omnigibson.pick_cup_in_the_cabinet_kinova import PickCupInTheCabinetKinovaWrapper
 from our_method.envs.robomimic.env_og import EnvOmniGibson

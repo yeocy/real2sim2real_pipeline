@@ -695,7 +695,6 @@ class OpenandGrabSkill(ManipulationSkill):
                 )
                 target_pos = joint_to_grasp_pos + th.tensor([0.0, 0.0, self.target_approach], dtype=th.float)
                 
-            print("target_mat", target_mat)
 
             target_pos_in_robot_frame, target_aa_in_robot_frame = \
                 self.get_pose_in_robot_frame(pos=target_pos, mat=target_mat, return_mat=False, include_eef_offset=not maintain_current_orientation)

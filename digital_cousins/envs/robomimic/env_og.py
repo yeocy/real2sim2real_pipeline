@@ -88,6 +88,17 @@ def process_omni_obs(
         include_segment_strs=None,
         postprocess_for_eval=False,
 ):
+    # robot: <omnigibson.robots.franka_mounted.FrankaMounted object at 0x7f11e28bf130>
+    # external_sensors: {'external_cam0': <omnigibson.sensors.vision_sensor.VisionSensor object at 0x7f11e1c4dde0>}
+    # obs keys: ['robot0', 'task', 'external']
+    # obs_modalities: ['external::external_cam0::point_cloud', 'robot0::proprio']
+    # robot_depth_threshold: 10
+    # external_depth_threshold: 10
+    # pc_prune_depth_background: True
+    # combine_pc: True
+    # include_segment_strs: ['cabinet']
+    # postprocess_for_eval: False
+
     step_obs_data = {}
     pc_depths = {}
     pc_seg_ids = {}
@@ -99,6 +110,8 @@ def process_omni_obs(
             if "point_cloud" in str_key:
                 # Explicitly continue, we will handle this later
                 pc_depths[mod] = mod_data["depth_linear"].detach().cpu().numpy()
+
+
                 if pc_prune_depth_background:
                     pc_seg_ids[mod] = mod_data["seg_instance_id"].detach().cpu().numpy()
                 skip_data = True
@@ -144,6 +157,7 @@ def process_omni_obs(
         if include_segment_strs is not None:
             valid_inst_ids = []
             for idx, prim_path in VisionSensor.INSTANCE_ID_REGISTRY.items():
+                print(f"prim_path: {prim_path}")
                 # Check over all inclusion strings, if not included in any, continue
                 for include_str in include_segment_strs:
                     if include_str in prim_path:

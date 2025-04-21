@@ -297,7 +297,7 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
                 )
 
                 target_obj = DatasetObject(
-                    name=f"coffe_box{i}",
+                    name=f"coffee_box{i}",
                     category=self.scene_info["objects"][self.scene_target_child_obj_name]["category"],
                     model=self.scene_info["objects"][self.scene_target_child_obj_name]["model"],
                     # visual_only=obj_name == self.scene_target_parent_obj_name or self.scene_target_child_obj_name or self.non_target_objs_visual_only,
@@ -626,6 +626,7 @@ class PickCupInTheCabinetWrapper(SkillWrapper):
         cab_obj.visual_only = False
         og.sim.step_physics()
 
+        # TODO
         old_state = og.sim.dump_state()
 
         from omnigibson.object_states import Touching
