@@ -286,7 +286,7 @@ class TaskObjectRetrieval:
                 # TODO
                 nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene(
                                         sim_real_img_path=input_sim_real_rgb_path,
-                                        parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
+                                        # parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
                                         goal_task=task_extraction_output_info["task"],
                                         parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
                                         placement=task_extraction_output_info["objects"][name]["placement"],

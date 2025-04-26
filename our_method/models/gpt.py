@@ -2122,7 +2122,6 @@ Only respond using this format. Do not include any additional explanation or tex
     def payload_nearest_neighbor_text_ref_scene(
             self,
             sim_real_img_path,
-            parent_obj_bbox_img_path,
             goal_task,
             parent_obj_name,
             placement,
@@ -2146,7 +2145,8 @@ Only respond using this format. Do not include any additional explanation or tex
         """
         # Getting the base64 string
         sim_real_scene_img_base64 = self.encode_image(sim_real_img_path)
-        parent_obj_bbox_img_base64 = self.encode_image(parent_obj_bbox_img_path)
+        # parent_obj_bbox_img_base64 = self.encode_image(parent_obj_bbox_img_path)
+        # f"I will provide an image with a bounding box highlighting the location of the parent object ({parent_obj_name}) where the target object will be placed."+ \
         candidate_obj_img_base64 = self.encode_image(candidates_path)
 
 
@@ -2159,7 +2159,6 @@ Only respond using this format. Do not include any additional explanation or tex
                 f"I will show you an image of a simulation scene. \n" + \
                 f"In this scene, the goal task is to: {goal_task}. " + \
                 f"To achieve this, the object needs to be placed {placement} the {parent_obj_name}. \n" + \
-                f"I will provide an image with a bounding box highlighting the location of the parent object ({parent_obj_name}) where the target object will be placed."+ \
                 f"I will then present you a list of candidate assets in my simulator. \n" + \
                 f"Your task is to select the top {top_k} candidate assets that have the highest geometric similarity to the target object ({caption}), in descending order of similarity so that I can use the asset to represent the target object in the simulator with the intended goal and placement. " + \
                 f"In other words, I want you to select the most suitable object, taking into account the scene, task, and placement.\n\n" + \
@@ -2204,16 +2203,6 @@ Only respond using this format. Do not include any additional explanation or tex
                 "type": "text",
                 "text": "The above image left side shows a scene in the real world. " + \
                         f"and right side shows the simulation scene that is similar to the real-world scene."
-            },
-            {
-                "type": "text",
-                "text": f"The following image shows the bounding box of the parent object({parent_obj_name})."
-            },
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{parent_obj_bbox_img_base64}"
-                }
             },
             {
                 "type": "text",
