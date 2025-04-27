@@ -1,4 +1,5 @@
 import enum
+from hmac import new
 from sklearn import feature_extraction
 import torch
 from torchvision.ops.boxes import _box_xyxy_to_cxcywh
@@ -172,6 +173,25 @@ class TaskObjectRetrieval:
         for scenario_json_path in task_spatial_reasoning_output_info:
             with open(scenario_json_path, "r") as f:
                 task_extraction_output_info = json.load(f)
+            
+            # 'objects' 안에 있는 키 모음
+            existing_objects = set(task_extraction_output_info['objects'].keys())
+
+            # 각 object에 대해 'new'를 추가
+            for obj_name, obj_info in task_extraction_output_info['objects'].items():
+                parent_obj = obj_info.get('parent_object')
+                obj_info['new'] = parent_obj in existing_objects
+            
+            # 정렬: new=False 먼저, new=True 나중
+            sorted_objects = dict(
+                sorted(
+                    task_extraction_output_info['objects'].items(),
+                    key=lambda item: item[1]['new']
+                )
+            )
+
+            # 다시 넣기
+            task_extraction_output_info['objects'] = sorted_objects
 
             obj_name_list = []
             for obj_name, obj_info in task_extraction_output_info["objects"].items():
@@ -283,8 +303,8 @@ class TaskObjectRetrieval:
                     save_path=concat_img_save_dir
                 )
                 
-                # TODO
-                nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene(
+                if task_extraction_output_info["objects"][name]["new"]:
+                    nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene(
                                         sim_real_img_path=input_sim_real_rgb_path,
                                         # parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
                                         goal_task=task_extraction_output_info["task"],
@@ -293,6 +313,17 @@ class TaskObjectRetrieval:
                                         caption=obj_phrases[instance_idx],
                                         candidates_path=concat_img_save_dir,
                                         top_k=top_k_models)
+                else:               
+                    nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene_bbox(
+                                        sim_real_img_path=input_sim_real_rgb_path,
+                                        parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
+                                        goal_task=task_extraction_output_info["task"],
+                                        parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
+                                        placement=task_extraction_output_info["objects"][name]["placement"],
+                                        caption=obj_phrases[instance_idx],
+                                        candidates_path=concat_img_save_dir,
+                                        top_k=top_k_models)
+                
                 
                 gpt_text_response = gpt(nn_selection_payload)
 
@@ -443,6 +474,8 @@ class TaskObjectRetrieval:
 
                 """)
             for instance_idx, name in enumerate(obj_name_list):
+                if task_extraction_output_info["objects"][name]["new"]:
+                    continue
                 # category_list = task_extraction_output_info["objects"][name]["category"]
                 # model_list = task_extraction_output_info["objects"][name]["model"]
                 # re_axis_mat_list = []
@@ -508,6 +541,9 @@ class TaskObjectRetrieval:
                 task_extraction_output_info["objects"][name]["parent_re_axis_mat"] = RE_AXIS_MAT[model_idx]
 
             step_5_output_path = f"{save_dir}/step_5_output_info.json"
+
+  
+
             
             
             index_lists = [
@@ -530,8 +566,12 @@ class TaskObjectRetrieval:
                     new_obj["model"] = obj["model"][idx]
                     new_obj["category"] = obj["category"][idx]
                     new_obj["re_axis_mat"] = obj["re_axis_mat"][idx]
+                    if new_obj["new"]:
+                        new_obj["parent_re_axis_mat"] = combo_obj_data[obj["parent_object"]]["re_axis_mat"]
+                    new_obj.pop("new", None)
 
                     combo_obj_data[obj_name] = new_obj
+
 
                 output_json = {
                     "task": task_extraction_output_info["task"],

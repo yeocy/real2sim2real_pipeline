@@ -2261,6 +2261,160 @@ Only respond using this format. Do not include any additional explanation or tex
         }
         return NN_payload
     
+    def payload_nearest_neighbor_text_ref_scene_bbox(
+            self,
+            sim_real_img_path,
+            parent_obj_bbox_img_path,
+            goal_task,
+            parent_obj_name,
+            placement,
+            caption,
+            candidates_path,
+            top_k = 3
+    ):
+        """
+        Given a list of candidate snapshots, return the payload used to find the nearest neighbor
+        to represent the "caption" in original image in simulation
+
+        Args:
+            img_path (str): Absolute path to image to infer object selection from
+            caption (str): Caption associated with the image at @img_path
+            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+            candidates_fpaths (list of str): List of absolute paths to candidate images
+            nonproject_obj_img_path (str): Absolute path to segmented object image
+
+        Returns:
+            dict: Prompt payload
+        """
+        # Getting the base64 string
+        sim_real_scene_img_base64 = self.encode_image(sim_real_img_path)
+        parent_obj_bbox_img_base64 = self.encode_image(parent_obj_bbox_img_path)
+        
+        candidate_obj_img_base64 = self.encode_image(candidates_path)
+
+
+        prompt_text_system = "You are an expert in indoor design and feature matching. " + \
+                        "The user will provide you with an image showing real-world scene and simulation scene, and a list of candidate orientations of an asset in the simulator.\n" + \
+                        f"Your task is to select the top {top_k} candidate assets that best match the goal, placement requirements, and overall context of the given scene."
+
+        prompt_user_1 = "### Task Overview ###\n" + \
+                f"I will show you an image of a real-world scene. " + \
+                f"I will show you an image of a simulation scene. \n" + \
+                f"In this scene, the goal task is to: {goal_task}. " + \
+                f"To achieve this, the object needs to be placed {placement} the {parent_obj_name}. \n" + \
+                f"I will provide an image with a bounding box highlighting the location of the parent object ({parent_obj_name}) where the target object will be placed."+ \
+                f"I will then present you a list of candidate assets in my simulator. \n" + \
+                f"Your task is to select the top {top_k} candidate assets that have the highest geometric similarity to the target object ({caption}), in descending order of similarity so that I can use the asset to represent the target object in the simulator with the intended goal and placement. " + \
+                f"In other words, I want you to select the most suitable object, taking into account the scene, task, and placement.\n\n" + \
+                "### Special Requirements ###\n" + \
+                "1. I have full control over these assets (as a whole), which means I can reoriente, reposition, and rescale the assets; I can also change the relative ratios of length, width, and height; adjust the texture; or relight the object by defining a new light direction; " + \
+                "It's important to note that the aforementioned operations can only be applied to the entire object, not to its parts. " + \
+                "For example, I can rescale an entire cabinet without keeping the original length-width-height ratio, but I cannot rescale one drawer of a cabinet by one ratio and another drawer by a different ratio.\n" + \
+                "2. When the target object is partially occluded by other objects, please observe its visible parts and infer its full geometry.\n" + \
+                "3. Also notice that the candidate asset snapshots are taken with a black background, so pay attention to observe the asset snapshot when it has a dark color.\n" + \
+                "4. Consider which asset, after being modified (reoriented, repositioned, rescaled, ratio changed, texture altered, relit), resembles the target object most closely. " + \
+                "Geometry (shape) similarity after the aforementioned modifications is much more critical than appearance similarity.\n" + \
+                "5. You should consider not only the overall shape, but also key features and affordance of the target object's category. " + \
+                "For example, if it is a mug, consider if it has a handle and if some candidate assets have a handle. " + \
+                "If they both have handles, which asset has the most similar handle as the target object.\n" + \
+                "6. Please ensure you return a valid index. For example, if there are n candidates, then your response should be an integer from 1 to n." + \
+                "Please return exactly {top_k} indices of the most suitable asset snapshots, in descending order of similarity. Only include the indices, separated by commas. Do not include any explanations. \n" + \
+                "Example output:2, 14, 21\n" + \
+                "Example output:6, 31, 1\n" + \
+                "Example output:16\n" + \
+                "Example output:3, 5, 7\n" + \
+                "Example output:10, 3, 4, 6, 17, 24\n" + \
+                "Example output:1, 3, 19, 32\n\n\n" + \
+                "Now, let's take a deep breath and begin!\n"
+
+        prompt_text_user_final = f"The following are a list of assets you can choose to represent the {caption}. " + \
+                        f"Please select the top {top_k} assets that best fits the scene, considering the intended task ({goal_task})," +\
+                        f"the placement ({placement} of the {parent_obj_name}), and the geometric similarity to the target object.\n" +\
+                        "Choose the most suitable object for this context."
+        
+        content = [
+            {
+                "type": "text",
+                "text": prompt_user_1
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{sim_real_scene_img_base64}"
+                }
+            },
+            {
+                "type": "text",
+                "text": "The above image left side shows a scene in the real world. " + \
+                        f"and right side shows the simulation scene that is similar to the real-world scene."
+            },
+            {
+                "type": "text",
+                "text": f"The following image shows the bounding box of the parent object({parent_obj_name})."
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{parent_obj_bbox_img_base64}"
+                }
+            },
+            {
+                "type": "text",
+                "text": f"The following image shows candidate asset list ({caption})."
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{candidate_obj_img_base64}"
+                }
+            },
+            {
+                "type": "text",
+                "text": prompt_text_user_final
+            }
+        ]
+        
+        # for i, candidate_fpath in enumerate(candidates_fpaths):
+        #     text_prompt = f"image {i + 1}:\n"
+        #     text_dict = {
+        #         "type": "text",
+        #         "text": text_prompt
+        #     }
+        #     cand_base64 = self.encode_image(candidate_fpath)
+        #     img_dict = {
+        #         "type": "image_url",
+        #         "image_url": {
+        #             "url": f"data:image/png;base64,{cand_base64}"
+        #         }
+        #     }
+        #     content.append(text_dict)
+        #     content.append(img_dict)
+
+        text_dict_system = {
+            "type": "text",
+            "text": prompt_text_system
+        }
+        content_system = [text_dict_system]
+
+
+        NN_payload = {
+            "model": self.VERSIONS[self.version],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": content_system
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            # TODO
+            "temperature": 0,
+            "max_tokens": 10
+        }
+        return NN_payload
+    
 
     def payload_front_view_image(
             self,
