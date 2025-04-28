@@ -257,6 +257,7 @@ class DigitalCousinMatcher:
 
             # Select digital cousins iteratively
             for i in range(n_digital_cousins):
+                print(f"i: {i}")
                 # Reselect candidates
                 if i % n_cousins_reselect_cand == 0 or i >= n_cousins_link_count_threshold:
                     if self.verbose:
@@ -318,28 +319,74 @@ class DigitalCousinMatcher:
                                                     for candidate_imgs_fdir in candidate_imgs_fdirs
                                                     for model in os.listdir(candidate_imgs_fdir)
                                                     if model not in selected_models))
+                    print(f"len(candidate_imgs): {len(candidate_imgs)}")
 
                     # Run feature-matching!
                     if self.verbose:
                         print(f"Selecting Top-{top_k_models} nearest models using {self.fm.encoder_name}...")
 
-                    model_results = self.fm.find_nearest_neighbor_candidates(
-                        input_category=category,
-                        input_img_fpath=input_rgb_path,
-                        candidate_imgs_fdirs=None,
-                        candidate_imgs=candidate_imgs,
-                        candidate_filter=None,
-                        n_candidates=top_k_models,
-                        save_dir=topk_model_candidates_dir,
-                        visualize_resolution=(640, 480),
-                        boxes=bboxes,
-                        logits=logit.unsqueeze(dim=0),
-                        phrases=[phrase],
-                        obj_masks=obj_masks,
-                        save_prefix=f"{name}_iter{i}",
-                        remove_background=remove_background,
-                    )
-
+                    max_candidates = 120
+                    if len(candidate_imgs) < max_candidates:
+                        model_results = self.fm.find_nearest_neighbor_candidates(
+                            input_category=category,
+                            input_img_fpath=input_rgb_path,
+                            candidate_imgs_fdirs=None,
+                            candidate_imgs=candidate_imgs,
+                            candidate_filter=None,
+                            n_candidates=top_k_models,
+                            save_dir=topk_model_candidates_dir,
+                            visualize_resolution=(640, 480),
+                            boxes=bboxes,
+                            logits=logit.unsqueeze(dim=0),
+                            phrases=[phrase],
+                            obj_masks=obj_masks,
+                            save_prefix=f"{name}_iter{i}",
+                            remove_background=remove_background,
+                        )
+                    else:
+                        num_batches = len(candidate_imgs) // max_candidates + 1
+                        print(f"Too many candidates, splitting into {num_batches} batches...")
+                        model_results_list = []
+                        for i in range(num_batches):
+                            print(f"Batch {i + 1}/{num_batches}")
+                            candidate_imgs_temp = candidate_imgs[i * max_candidates:(i + 1) * max_candidates]
+                            print(f"len(candidate_imgs_temp): {len(candidate_imgs_temp)}")
+                            model_results_temp = self.fm.find_nearest_neighbor_candidates(
+                                input_category=category,
+                                input_img_fpath=input_rgb_path,
+                                candidate_imgs_fdirs=None,
+                                candidate_imgs=candidate_imgs_temp,
+                                candidate_filter=None,
+                                n_candidates=top_k_models,
+                                save_dir=topk_model_candidates_dir,
+                                visualize_resolution=(640, 480),
+                                boxes=bboxes,
+                                logits=logit.unsqueeze(dim=0),
+                                phrases=[phrase],
+                                obj_masks=obj_masks,
+                                save_prefix=f"{name}_iter{i}",
+                                remove_background=remove_background,
+                            )
+                            model_results_list.extend(model_results_temp['candidates'])
+                        
+                        print(f"len(model_results_list): {len(model_results_list)}")
+                        model_results = self.fm.find_nearest_neighbor_candidates(
+                            input_category=category,
+                            input_img_fpath=input_rgb_path,
+                            candidate_imgs_fdirs=None,
+                            candidate_imgs=model_results_list,
+                            candidate_filter=None,
+                            n_candidates=top_k_models,
+                            save_dir=topk_model_candidates_dir,
+                            visualize_resolution=(640, 480),
+                            boxes=bboxes,
+                            logits=logit.unsqueeze(dim=0),
+                            phrases=[phrase],
+                            obj_masks=obj_masks,
+                            save_prefix=f"{name}_iter{i + 1}",
+                            remove_background=remove_background,
+                        )
+                        # print(f"model_results: {model_results}")
                     # Rename bbox and mask images
                     os.rename(f"{topk_model_candidates_dir}/{name}_iter{i}_annotated_bboxes.png", f"{topk_model_candidates_dir}/{name}_annotated_bboxes.png")
                     os.rename(f"{topk_model_candidates_dir}/{name}_iter{i}_mask.png", f"{topk_model_candidates_dir}/{name}_mask.png")
