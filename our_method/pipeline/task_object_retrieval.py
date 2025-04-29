@@ -538,7 +538,7 @@ class TaskObjectRetrieval:
                 
                 results[model_name] = {
                     "view_path": parent_candidate_model_view_imgs[nn_model_index],
-                    "re_axis_mat": RE_AXIS_MAT[model_idx],
+                    "re_axis_mat": RE_AXIS_MAT[nn_model_index],
                 }
                 
                 shutil.copy(parent_candidate_model_view_imgs[nn_model_index], 
@@ -547,7 +547,7 @@ class TaskObjectRetrieval:
                 with open(f"{parent_front_pose_select_dir}/parent_model_pose_selection_results.json", "w+") as f:
                     json.dump(results, f)
                 
-                task_extraction_output_info["objects"][name]["parent_re_axis_mat"] = RE_AXIS_MAT[model_idx]
+                task_extraction_output_info["objects"][name]["parent_re_axis_mat"] = RE_AXIS_MAT[nn_model_index]
 
             step_5_output_path = f"{save_dir}/step_5_output_info.json"
 
