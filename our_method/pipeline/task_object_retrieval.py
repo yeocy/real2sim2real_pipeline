@@ -264,7 +264,7 @@ class TaskObjectRetrieval:
 
             # Create GPT instance
             assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
-            gpt = GPT(api_key=gpt_api_key, version=gpt_version)
+            gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="_TaskObjectRetrieval")
 
             
             for instance_idx, name in enumerate(obj_name_list):
@@ -331,6 +331,7 @@ class TaskObjectRetrieval:
                 print(f"   {gpt_text_response}")
 
                 if gpt_text_response is None:
+                    print(f"gpt_text_response is None")
                     # Failed, terminate early
                     return False, None
                 # 숫자 모두 추출
@@ -385,6 +386,7 @@ class TaskObjectRetrieval:
 
                 # 정면 포즈 찾기
 
+            print(f"task_extraction_output_info: {task_extraction_output_info}")
 
             if self.verbose:
                 print("""
@@ -406,7 +408,9 @@ class TaskObjectRetrieval:
                 results = {}
 
                 for model_idx, model_name in enumerate(model_list):
-                    
+                    print(f"category: {category_list[model_idx]}")
+                    print(f"model: {model_list[model_idx]}")
+
                     # Find Top-K candidates
                     candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{category_list[model_idx]}/model/{model_list[model_idx]}" 
 
@@ -434,7 +438,9 @@ class TaskObjectRetrieval:
                             )
                     
                     gpt_text_response = gpt(nn_selection_payload)
+                    print(f"gpt_text_response: {gpt_text_response}")
                     if gpt_text_response is None:
+                        print(f"gpt_text_response is None")
                         # Failed, terminate early
                         return False, None
 
@@ -444,17 +450,19 @@ class TaskObjectRetrieval:
                     if match:
                         nn_model_index = int(match.group()) - 1
                     else:
-                        # No valid integer found, handle this case
-                        return False, None
+                        print(f"match is empty")
+                        # # No valid integer found, handle this case
+                        # return False, None
+                        nn_model_index = 0
                     
                     # nn_model_index = 1
                     
                     results[model_name] = {
                         "view_path": candidate_model_view_imgs[nn_model_index],
-                        "re_axis_mat": RE_AXIS_MAT[model_idx],
+                        "re_axis_mat": RE_AXIS_MAT[nn_model_index],
                     }
                     
-                    re_axis_mat_list.append(RE_AXIS_MAT[model_idx])
+                    re_axis_mat_list.append(RE_AXIS_MAT[nn_model_index])
                     
                     shutil.copy(candidate_model_view_imgs[nn_model_index], 
                                 os.path.join(front_pose_select_dir, os.path.basename(candidate_model_view_imgs[nn_model_index])))
@@ -464,6 +472,7 @@ class TaskObjectRetrieval:
                 
                 task_extraction_output_info["objects"][name]["re_axis_mat"] = re_axis_mat_list
 
+            print(f"task_extraction_output_info: {task_extraction_output_info}")
 
             if self.verbose:
                 print("""
