@@ -1,4 +1,8 @@
+from calendar import c
+from pickle import FALSE
+from tabnanny import check
 from threading import local
+
 from robomimic.utils.log_utils import PrintLogger
 import torch as th
 import numpy as np
@@ -6,14 +10,18 @@ from pathlib import Path
 from PIL import Image
 from copy import deepcopy
 import os
+import re
 import json
 import imageio
 from typing import Optional, List
 import omnigibson as og
+from our_method.models.gpt import GPT
 from omnigibson.scenes import Scene
 from omnigibson.objects import DatasetObject
 from omnigibson.object_states import Touching
 from omnigibson.object_states import ToggledOn
+from omnigibson.utils.sim_utils import place_base_pose, check_collision
+import random
 import our_method
 from our_method.utils.processing_utils import NumpyTorchEncoder, unprocess_depth_linear, compute_point_cloud_from_depth, \
     get_reproject_offset, resize_image
@@ -36,6 +44,7 @@ CATEGORIES_MUST_ON_FLOOR = {
     "rug",
     "carpet"
 }
+
 
 class TaskSceneGenerator:
     """
@@ -68,13 +77,14 @@ class TaskSceneGenerator:
             verbose (bool): Whether to display verbose print outs during execution or not
         """
         self.verbose = verbose
-
     def __call__(
             self,
             step_1_output_path,
             step_2_output_path,
             step_3_output_path,
             task_feature_matching_path,
+            gpt_api_key,
+            gpt_version="4o",
             n_scenes=1,
             # sampling_method="random",
             sampling_method="ordered",
@@ -140,6 +150,7 @@ class TaskSceneGenerator:
         ###### Step 2 결과 로드 ######
         if save_dir is None:
             save_dir = os.path.dirname(os.path.dirname(task_feature_matching_path))
+        
         save_dir = os.path.join(save_dir, "task_scene_generation")
         Path(save_dir).mkdir(parents=True, exist_ok=True)
 
@@ -161,226 +172,52 @@ class TaskSceneGenerator:
         # obj = scene.object_registry("name", "cup_0")
         # print(obj._joints)
         # exit()
+        print("cam_pose : ", cam_pose)
 
         scene_rgb = self.take_photo(n_render_steps=10)
 
         # scene_rgb = self.joint_test(scene, n_render_steps=10)
-
+        # print(task_feature_matching_path)
+        # print("#######################################################")
+        # exit()
         with open(task_feature_matching_path, "r") as f:
             task_obj_output_info = json.load(f)
+        
+        
+        # scene_rgb = self.take_photo(n_render_steps=100000)
+        # TODO
 
-        scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, cam_pose=cam_pose, obj_info_json=task_obj_output_info, visual_only=True)
+        scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, cam_pose=cam_pose, obj_info_json=task_obj_output_info, gpt_api_key=gpt_api_key, gpt_version=gpt_version, save_dir=save_dir, visual_only=True)
         # scene_rgb = self.take_photo(n_render_steps=1000000)
+        # og.sim.viewer_camera.set_position_orientation(th.tensor([-0.3616, -2.9108,  2.2365], dtype=th.float), th.tensor([5.3933e-01, 6.4206e-03, 4.1202e-18, 8.4207e-01], dtype=th.float))
+        # TODO
         scene_rgb = self.take_photo(n_render_steps=100)
         # exit(())
+
+
+        cam_pose = scene_info["cam_pose"]
+        # cam_pos = [0.15453, -4.16293, 2.24934]
+        # cam_quat = [0.64139, -0.00021, 0.0, 0.76722]
         
+        # cam_pos = [-0.71511, -2.44625, 1.38723]
+        # cam_quat = [0.61408, -0.10552, -0.141, 0.76935]
+        # Bed camera setting
+        # cam_pos = [-0.35551, 0.54989, 4.3775]
+        # cam_quat = [-0.01576, 0.00582, -0.02624, 0.99951]
+        # og.sim.viewer_camera.set_position_orientation(th.tensor(cam_pos, dtype=th.float), th.tensor(cam_quat, dtype=th.float))
+        og.sim.viewer_camera.set_position_orientation(th.tensor(cam_pose[0], dtype=th.float), th.tensor(cam_pose[1], dtype=th.float))
+        
+        print(og.sim.viewer_camera.get_position_orientation())
+        # og.sim.viewer_camera.set_position_orientation(th.tensor([-0.3616, -2.9108,  2.2365], dtype=th.float), th.tensor([5.3933e-01, 6.4206e-03, 4.1202e-18, 8.4207e-01], dtype=th.float))
+        
+        scene_rgb = self.take_photo(n_render_steps=100)
+
         final_scene_info = deepcopy(scene_info)
 
         # Save final info
         with open(f"{save_dir}/scene_info.json", "w+") as f:
             json.dump(final_scene_info, f, indent=4, cls=NumpyTorchEncoder)
         print(final_scene_info)
-        exit()
-
-
-        # Object BBox 정보 저장
-        if self.verbose:
-            print("Object BBox 정보 저장")
-        all_obj_bbox_info = dict()
-        for obj_name, obj_info in scene_info["objects"].items():
-            if discard_objs and obj_name in discard_objs:
-                continue
-            if self.verbose:
-                print(f"obj_name: {obj_name}")
-                print(f"obj_info: {obj_info}")
-            # Grab object and relevant info
-            obj = scene.object_registry("name", obj_name)
-            obj_bbox_info = compute_obj_bbox_info(obj=obj)
-            if self.verbose:
-                print(f"obj_bbox_info: {obj_bbox_info}")
-            # obj_bbox_info["articulated"] = step_2_output_info["objects"][obj_name]["articulated"]
-            obj_bbox_info["mount"] = obj_info["mount"]
-            all_obj_bbox_info[obj_name] = obj_bbox_info
-        sorted_z_obj_bbox_info = dict(sorted(all_obj_bbox_info.items(), key=lambda x: x[1]['lower'][2]))  # sort by lower corner's height (z)
-        print("##############################################")
-        print(sorted_z_obj_bbox_info)
-        exit()
-
-        scene_graph_info = {
-            "floor": {
-                "objOnTop": [],
-                "objBeneath": None,  # This must be empty, i.e., no obj is beneath floor
-                "mount": {
-                    "floor": True,
-                    "wall": False,
-                },
-            },
-        }
-
-        final_scene_info = deepcopy(scene_info)
-        for name in sorted_z_obj_bbox_info:
-            #### 높이 조정 ####
-                obj_name_beneath, z_offset = compute_object_z_offset_non_articulated(
-                    target_obj_name=name,
-                    sorted_obj_bbox_info=sorted_z_obj_bbox_info,
-                    verbose=self.verbose,
-                )
-                obj = scene.object_registry("name", name)
-
-                #### 바닥에 꼭 있어야 하는 객체 처리 ####
-                if scene_info["objects"][name]["category"] in CATEGORIES_MUST_ON_FLOOR:
-                    obj_name_beneath = "floor"
-                    z_offset = -sorted_z_obj_bbox_info[name]["lower"][-1]
-
-                # Add information to scene graph info
-                if name not in scene_graph_info.keys():
-                    scene_graph_info[name] = {
-                        "objOnTop": [],
-                        "objBeneath": obj_name_beneath,
-                        "mount": None,
-                    }
-                else:
-                    scene_graph_info[name]["objBeneath"] = obj_name_beneath
-
-                if obj_name_beneath not in scene_graph_info.keys():
-                    scene_graph_info[obj_name_beneath] = {
-                        "objOnTop": [name],
-                        "objBeneath": None,
-                        "mount": None,
-                    }
-                else:
-                    scene_graph_info[obj_name_beneath]["objOnTop"].append(name)
-
-                mount_type = scene_info["objects"][name]["mount"]  # a list
-                scene_graph_info[name]["mount"] = mount_type
-                #### 객체 고정 ####
-                # TODO
-                obj.keep_still()
-
-                # Modify object pose if z_offset is not 0
-                if z_offset != 0:
-                    if (not mount_type["floor"]) and z_offset <= 0:
-                        # If the object in mounted on the wall, and we want to lower it, omit that
-                        continue
-                    new_center = sorted_z_obj_bbox_info[name]["center"] + np.array([0.0, 0.0, z_offset])
-                    ##### 객체 위치 재설정 ####
-                    obj.set_bbox_center_position_orientation(position=th.tensor(new_center, dtype=th.float), orientation=None)
-                    og.sim.step_physics()
-
-                    #### 높이 조정 후 Json BBox 업데이트
-                    # Grab updated obj bbox info
-                    obj_bbox_info = compute_obj_bbox_info(obj=obj)
-                    sorted_z_obj_bbox_info[name].update(obj_bbox_info)
-
-                #### 카메라 기준 변환 행렬 업데이트 ####
-                # Update scene_info
-                obj_pos, obj_quat = obj.get_position_orientation()
-                rel_tf = T.relative_pose_transform(obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), cam_pose[0], cam_pose[1])
-                final_scene_info["objects"][name]["tf_from_cam"] = T.pose2mat(rel_tf)
-
-        for obj in scene.objects:
-            obj.keep_still()
-        og.sim.step_physics()
-
-        for _ in range(3):
-            og.sim.render()
-
-        sorted_x_obj_bbox_info = dict(sorted(sorted_z_obj_bbox_info.items(), key=lambda x: x[1]['lower'][0], reverse=True))  # sort by lower corner's x
-        obj_names = list(sorted_x_obj_bbox_info.keys())
-
-        if self.verbose:
-            print(f"[Scene] depenetrating collisions...")
-
-        # Iterate over all objects; check for collision
-        for obj1_idx, obj1_name in enumerate(obj_names):
-
-            # 투명하거나 충돌이 필요없는 것들을 검사 제외
-            # Skip any non-collidable categories
-            if any(cat in obj1_name for cat in NON_COLLIDABLE_CATEGORIES):
-                continue
-
-            # Grab the object, make it collidable
-            obj1 = scene.object_registry("name", obj1_name)
-            # TODO
-            obj1.keep_still()
-            obj1.visual_only = False
-
-            # 왼쪽에서 부터 점점 오른쪽하고 충돌 비교
-            # Check all subsequent downstream objects for collision
-            for obj2_name in obj_names[obj1_idx + 1:]:
-                
-                # Skip any non-collidable categories
-                if any(cat in obj2_name for cat in NON_COLLIDABLE_CATEGORIES):
-                    continue
-
-                # Sanity check to make sure the two objects aren't the same
-                assert obj1_name != obj2_name
-
-                # 수직관계로 놓여있을 경우 충돌 제외
-                # If the objects are related by a vertical relationship, continue -- collision is expected
-                if (obj2_name in scene_graph_info[obj1_name]['objOnTop']) or (
-                        scene_graph_info[obj1_name]["objBeneath"] == obj2_name):
-                    continue
-                
-                ## 충돌 검사 ##
-                # Grab the object, make it collidable
-                obj2 = scene.object_registry("name", obj2_name)
-                old_state = og.sim.dump_state()
-                # TODO
-                obj2.keep_still()
-                obj2.visual_only = False
-                og.sim.step_physics()
-
-                obj12_collision = obj2.states[Touching].get_value(obj1)
-                ##############
-
-                # If we're in contact, move the object with smaller x value
-                if obj12_collision:
-                    # Adjust the object with smaller x
-                    if self.verbose:
-                        print(f"Detected collision between {obj1_name} and {obj2_name}")
-                    # Get obj 2's x and y axes
-                    obj2_ori_mat = T.quat2mat(obj2.get_position_orientation()[1].cpu().detach().numpy())
-                    obj2_x_dir = obj2_ori_mat[:, 0]
-                    obj2_y_dir = obj2_ori_mat[:, 1]
-
-                    center_step_size = 0.01  # 1cm
-                    obj2_to_obj1 = (obj1.get_position_orientation()[0] - obj2.get_position_orientation()[0]).cpu().detach().numpy()
-
-                    chosen_axis = obj2_x_dir if abs(np.dot(obj2_x_dir, obj2_to_obj1)) > abs(np.dot(obj2_y_dir, obj2_to_obj1)) else obj2_y_dir
-                    center_step_dir = -chosen_axis if np.dot(chosen_axis, obj2_to_obj1) > 0 else chosen_axis
-
-                    # 충돌이 없을 때까지 이동
-                    while obj2.states[Touching].get_value(obj1):
-                        og.sim.load_state(old_state)
-                        new_center = obj2.get_position_orientation()[0] + th.tensor(center_step_dir, dtype=th.float) * center_step_size
-                        obj2.set_position_orientation(position=new_center)
-                        old_state = og.sim.dump_state()
-                        og.sim.step_physics()
-
-                    # 충돌 해결후 새로운 위치 설정
-                    # Finally, load the collision-free state, update relative transformation
-                    og.sim.load_state(old_state)
-                    obj2.set_position_orientation(position=new_center)
-                    obj_pos, obj_quat = obj2.get_position_orientation()
-                    rel_tf = T.relative_pose_transform(obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), cam_pose[0], cam_pose[1])
-                    final_scene_info["objects"][obj2_name]["tf_from_cam"] = T.pose2mat(rel_tf)
-                else:
-                    # Simply load old state
-                    og.sim.load_state(old_state)
-                # Make obj2 visual only again so as not collide with any other objects
-                # obj2.visual_only = False
-                obj2.visual_only = True
-            # Make obj1 visual only again so as not collide with any other objects
-            # obj1.visual_only = False
-            obj1.visual_only = True
-        
-        for obj in scene.objects:
-            obj.keep_still()
-            og.sim.step_physics()
-        
-        # print(sorted_z_obj_bbox_info)
-        scene_rgb = self.take_photo(n_render_steps=10000)
         exit()
 
 
@@ -468,6 +305,12 @@ class TaskSceneGenerator:
         for _ in range(n_render_steps):
             og.sim.render()
         rgb = og.sim.viewer_camera.get_obs()[0]["rgb"][:, :, :3].cpu().detach().numpy()
+        if rgb.dtype != np.uint8:
+            rgb = (rgb * 255).astype(np.uint8)
+
+        img = Image.fromarray(rgb)
+        img.save("./our_method_test/acdc_output/viewer_rgb.png")
+
         return rgb
 
     def joint_test(self, scene, n_render_steps=5):
@@ -500,9 +343,15 @@ class TaskSceneGenerator:
         rgb = og.sim.viewer_camera.get_obs()[0]["rgb"][:, :, :3].cpu().detach().numpy()
         return rgb
     
-    def add_task_object(scene, scene_info, cam_pose, obj_info_json, visual_only=False):
+    
+    def add_task_object(scene, scene_info, cam_pose, obj_info_json, gpt_api_key, gpt_version, save_dir, visual_only=False, probability_map = True):
          # Load all objects
+        assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
+        gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="TaskSceneGeneration")
+        object_retrieval_save_dir = os.path.join(os.path.dirname(save_dir), "task_object_retrieval")
         with og.sim.stopped():
+            count = 1
+
             for obj_name, obj_info in obj_info_json["objects"].items():
                 obj = DatasetObject(
                     name=obj_name,
@@ -517,15 +366,210 @@ class TaskSceneGenerator:
                 # "task_obj_cup"
                 parent_obj_name = obj_info["parent_object"]
                 placement = obj_info["placement"]
-                obj_pos, obj_quat, child_clearance_axis, child_clearance_sign = TaskSceneGenerator.place_relative_to(scene, 
+                sampled_point_3d = None
+                probability_map_sampler = None
+
+                if placement == "above":
+                    from scipy.stats import multivariate_normal
+                    import matplotlib.pyplot as plt
+
+                    def find_model_image(model_id, image_dir):
+                        """
+                        모델 ID로 시작하는 PNG 이미지를 image_dir에서 찾아 경로 반환
+
+                        Args:
+                            model_id (str): 예: "lclkju"
+                            image_dir (str): 이미지들이 저장된 디렉토리 경로
+
+                        Returns:
+                            str or None: 해당 이미지의 경로 (없으면 None)
+                        """
+                        for fname in os.listdir(image_dir):
+                            if fname.startswith(model_id) and fname.endswith(".png"):
+                                return os.path.join(image_dir, fname)
+                        return None
+                    
+                    def compute_probability_map_on_plane(
+                        bbox_points_world: np.ndarray,
+                        center_points_world: np.ndarray,
+                        grid_res: int = 500,
+                        cov: float = 0.001,
+                        weights: np.ndarray = None,
+                    ):
+                        """
+                        4개의 bbox 꼭짓점으로 정의된 평면 위에,
+                        9개의 중심점을 투영하여 확률 맵 생성.
+
+                        Args:
+                            bbox_points_world: (4, 3) ndarray, 3D 꼭짓점
+                            center_points_world: (N, 3) ndarray, 3D 중심점들
+                            grid_res: 확률 맵 해상도
+                            cov: 각 가우시안 분포의 공분산 (float)
+                            weights: (N,) 확률 가중치, 없으면 uniform
+
+                        Returns:
+                            prob_map: (grid_res, grid_res) ndarray, 확률 분포
+                            center_points_2d: (N, 2) ndarray, 평면상 투영된 중심점 좌표
+                            bounds: (u_min, u_max, v_min, v_max), 확률 맵 좌표 범위
+                        """
+                        # 1. 평면 좌표계 정의
+                        P0, P1, _, P3 = bbox_points_world
+                        origin = P0
+                        x_axis = P1 - P0
+                        x_axis /= np.linalg.norm(x_axis)
+                        y_axis = P3 - P0
+                        y_axis -= x_axis * np.dot(y_axis, x_axis)
+                        y_axis /= np.linalg.norm(y_axis)
+
+                        # 2. 3D → 평면 투영
+                        def project_to_plane(p):
+                            vec = p - origin
+                            u = np.dot(vec, x_axis)
+                            v = np.dot(vec, y_axis)
+                            return np.array([u, v])
+
+                        center_points_2d = np.array([project_to_plane(p) for p in center_points_world])
+                        bbox_2d = np.array([project_to_plane(p) for p in bbox_points_world])
+                        u_min, u_max = bbox_2d[:,0].min(), bbox_2d[:,0].max()
+                        v_min, v_max = bbox_2d[:,1].min(), bbox_2d[:,1].max()
+
+
+
+                        # # 3. 2D grid 설정
+                        # u_min, u_max = center_points_2d[:, 0].min(), center_points_2d[:, 0].max()
+                        # v_min, v_max = center_points_2d[:, 1].min(), center_points_2d[:, 1].max()
+                        uu, vv = np.meshgrid(np.linspace(u_min, u_max, grid_res),
+                                            np.linspace(v_min, v_max, grid_res))
+                        grid_points = np.stack([uu, vv], axis=-1)
+
+                        # 4. 확률맵 생성
+                        if weights is None:
+                            weights = np.ones(len(center_points_2d)) / len(center_points_2d)
+
+                        prob_map = np.zeros((grid_res, grid_res))
+                        for mu, w in zip(center_points_2d, weights):
+                            rv = multivariate_normal(mean=mu, cov=cov)
+                            prob_map += w * rv.pdf(grid_points)
+
+                        prob_map /= prob_map.sum()
+
+                        # return prob_map, center_points_2d, (u_min, u_max, v_min, v_max)
+                        return prob_map, center_points_2d, (u_min, u_max, v_min, v_max), origin, x_axis, y_axis
+
+                    blended_number_img_path, grid_centers_world, bbox_world = TaskSceneGenerator.get_VLM_prompt_image(scene, 
+                                                                                      parent_obj_name=parent_obj_name, 
+                                                                                      child_obj_name=child_obj_name,
+                                                                                      parent_re_axis_mat=obj_info.get("parent_re_axis_mat", np.diag([1, 1, 1])),
+                                                                                      child_re_axis_mat=obj_info.get("re_axis_mat", np.diag([1, 1, 1])),
+                                                                                      output_dir=save_dir
+                                                                                      )                    
+                    front_parent_img_path = find_model_image(scene_info["objects"][parent_obj_name]["model"], 
+                                                             f"{object_retrieval_save_dir}/{child_obj_name}/parent_object_front_pose_select/")
+                    front_child_img_path = find_model_image(obj_info_json["objects"][child_obj_name]["model"], 
+                                            f"{object_retrieval_save_dir}/{child_obj_name}/task_object_front_pose_select/")
+                    
+                    assert front_parent_img_path is not None or front_child_img_path is not None, \
+                    f"❌ Image not found: Could not find a model image for either parent '{parent_obj_name}' or child '{child_obj_name}'."
+                                        
+                    def save_probability_map_image(prob_map, center_points_2d, bounds, save_path="./our_method_test/acdc_output/prob_map_vis.png"):
+                        import matplotlib
+                        matplotlib.use('Agg')  # GUI 없이 이미지 저장 전용 백엔드
+                        u_min, u_max, v_min, v_max = bounds
+
+                        plt.figure(figsize=(6, 6))
+                        plt.imshow(prob_map, extent=[u_min, u_max, v_min, v_max], origin='lower', cmap='viridis')
+                        plt.scatter(center_points_2d[:, 0], center_points_2d[:, 1], c='r', label='Centers')
+                        plt.title("2D Probability Map on Projected Plane")
+                        plt.colorbar(label='Probability Density')
+                        plt.axis('equal')
+                        plt.legend()
+                        plt.tight_layout()
+
+                        plt.savefig(save_path, dpi=300)
+                        plt.close()
+                        print(f"[✅] Saved probability map image to: {save_path}")
+
+                    if probability_map:
+                        nn_selection_payload = gpt.payload_above_object_distribution(
+                                prompt_img_path = blended_number_img_path,
+                                parent_obj_name = parent_obj_name,
+                                placement = placement,
+                                child_obj_name = child_obj_name,
+                                parent_front_view_img_path = front_parent_img_path,
+                                child_front_view_img_path = front_child_img_path)                    
+
+                        gpt_text_response = gpt(nn_selection_payload)
+                        print(f"gpt_text_response: {gpt_text_response}")
+                        if gpt_text_response is None:
+                            print(f"gpt_text_response is None")
+                            # Failed, terminate early
+                            return False, None
+
+                        # gpt_text_response = "1: 0.15, 2: 0.20, 3: 0.05, 4: 0.15, 5: 0.00, 6: 0.00, 7: 0.15, 8: 0.20, 9: 0.10"
+                        # gpt_text_response = "1: 0.10, 2: 0.00, 3: 0.00, 4: 0.10, 5: 0.20, 6: 0.20, 7: 0.00, 8: 0.20, 9: 0.20"
+
+
+                        # 정규식으로 추출 후 dict로 변환
+                        prob_dict = {
+                            int(k): float(v)
+                            for k, v in re.findall(r"(\d+):\s*([01]\.\d+)", gpt_text_response)
+                        }
+
+                        print(prob_dict)
+                        # prob_map, center_points_2d, (u_min, u_max, v_min, v_max) = compute_probability_map_on_plane(bbox_world, grid_centers_world, cov=0.005, weights=prob_dict.values())
+                        (prob_map, center_points_2d, bounds, origin, x_axis, y_axis) = compute_probability_map_on_plane(bbox_world, grid_centers_world, cov=0.005, weights=prob_dict.values())
+                        save_probability_map_image(prob_map, center_points_2d, bounds, save_path="prob_map_result.png")
+                        # 샘플러 초기화
+                        probability_map_sampler = ProbMapSampler(prob_map, bounds, origin, x_axis, y_axis)
+
+                        # 나중에 3D 좌표 1개 뽑기
+                        sampled_point_3d = probability_map_sampler.sample()
+                        
+                        print(f"sampled_point_3d: {sampled_point_3d}")
+                    else:
+                        nn_selection_payload = gpt.payload_above_object_position(
+                                prompt_img_path = blended_number_img_path,
+                                parent_obj_name = parent_obj_name,
+                                placement = placement,
+                                child_obj_name = child_obj_name,
+                                parent_front_view_img_path = front_parent_img_path,
+                                child_front_view_img_path = front_child_img_path)                    
+
+                        gpt_text_response = gpt(nn_selection_payload)
+                        print(f"gpt_text_response: {gpt_text_response}")
+                        if gpt_text_response is None:
+                            print(f"gpt_text_response is None")
+                            # Failed, terminate early
+                            return False, None
+
+                        # Extract the first non-negative integer from the response
+                        match = re.search(r'\b\d+\b', gpt_text_response)
+
+                        if match:
+                            selected_index = int(match.group())
+                            print(f"Selected index: {selected_index}")
+                        else:
+                            print("No valid number found.")
+                            return False, None                 
+
+
+
+                        probability_map_sampler = None
+                        sampled_point_3d = grid_centers_world[selected_index-1]
+                        print(f"sampled_point_3d: {sampled_point_3d}")                  
+
+                obj_pos, obj_quat, child_clearance_axis, child_clearance_sign = TaskSceneGenerator.place_relative_to(count, scene, 
                                                                          child_obj_name=child_obj_name,
                                                                          parent_obj_name=parent_obj_name,
                                                                          placement=placement,
                                                                          parent_re_axis_mat=obj_info.get("parent_re_axis_mat", np.diag([1, 1, 1])),
-                                                                         child_re_axis_mat=obj_info.get("re_axis_mat", np.diag([1, 1, 1]))
+                                                                         child_re_axis_mat=obj_info.get("re_axis_mat", np.diag([1, 1, 1])),
+                                                                         above_sampled_point_3d=sampled_point_3d,
                                                                         )
                 obj_info_json["objects"][obj_name]["clearance_axis"] = child_clearance_axis
                 obj_info_json["objects"][obj_name]["clearance_sign"] = child_clearance_sign
+                count += 1
+
 
                 # obj_pos, obj_quat = T.mat2pose(T.pose_in_A_to_pose_in_B(
                 #     pose_A=np.array(obj_info["tf_from_cam"]),
@@ -552,6 +596,23 @@ class TaskSceneGenerator:
                                             child_obj_name=obj_name,
                                             parent_obj_name=obj_info["parent_object"],
                                             placement=obj_info["placement"])
+            
+            # TaskSceneGenerator.random_position_on_parent(scene, 
+            #                                 obj_info,
+            #                                 cam_pose=cam_pose,
+            #                                 child_obj_name=obj_name,
+            #                                 parent_obj_name=obj_info["parent_object"],
+            #                                 parent_re_axis_mat=obj_info.get("parent_re_axis_mat", np.diag([1, 1, 1])),
+            #                                 child_re_axis_mat=obj_info.get("re_axis_mat", np.diag([1, 1, 1])))
+
+            if probability_map:
+                TaskSceneGenerator.above_collision_check(scene, 
+                                                obj_info,
+                                                child_obj_name=obj_name,
+                                                parent_obj_name=obj_info["parent_object"],
+                                                probability_map_sampler=probability_map_sampler,
+                                                above_sampled_point_3d=sampled_point_3d)
+                                            
             
             obj = scene.object_registry("name", obj_name)
             # TaskSceneGenerator.align_object_z_axis(scene, 
@@ -585,15 +646,480 @@ class TaskSceneGenerator:
         # Initialize all objects by taking one step
         og.sim.step()
         return scene
+    
+    @staticmethod
+    def get_VLM_prompt_image(scene, parent_obj_name, child_obj_name, parent_re_axis_mat, child_re_axis_mat, output_dir = "./our_method_test/acdc_output/"):
+        """
+        위에서 본 parent object의 segmentation mask를 시각화하고 반환합니다.
+
+        Args:
+            scene: 현재 OmniGibson scene
+            parent_obj_name (str): 시각화할 parent object 이름
+
+        Returns:
+            mask (np.ndarray): binary mask image (numpy array)
+        """
+        import matplotlib.pyplot as plt
+        from omnigibson.sensors import VisionSensor
+        import omni.replicator.core as rep
+        import matplotlib.cm as cm
+        from omnigibson.utils.transform_utils import pose2mat
+        from PIL import Image, ImageDraw, ImageFont
+        import torch
+        import numpy as np
+        import math
+        import cv2
+        # 미리 정의된 20가지 RGB 컬러 (0~255 범위)
+        PRESET_COLORS = (np.array(plt.get_cmap("tab20").colors) * 255).astype(np.uint8)
+        os.makedirs(output_dir, exist_ok=True)
+        file_prefix = f"{parent_obj_name}_above_{child_obj_name}"
+
+
+        def assign_colors_to_ids(id_to_label):
+            ids = sorted(id_to_label.keys())
+            color_map = {}
+            for i, sid in enumerate(ids):
+                color_map[sid] = tuple(PRESET_COLORS[i % len(PRESET_COLORS)])
+            return color_map
+
+        def render_segmentation_overlay(seg_tensor, id_to_label):
+            seg_np = seg_tensor.cpu().numpy()
+            H, W = seg_np.shape
+            color_map = assign_colors_to_ids(id_to_label)
+
+            seg_rgb = np.zeros((H, W, 3), dtype=np.uint8)
+            for sid, color in color_map.items():
+                seg_rgb[seg_np == sid] = color
+            return seg_rgb
+        
+        def split_bbox_into_grid(bbox_corners, num_rows, num_cols):
+            """
+            4개의 꼭짓점(bbox의 bottom face 기준)으로 구성된 BBox를 x-y 평면에서 num_rows x num_cols grid로 나눔
+            Returns 각 cell 중심점의 (x, y, z)
+            """
+            # 꼭짓점에서 x/y 범위 추출
+            x_coords = bbox_corners[:, 0]
+            y_coords = bbox_corners[:, 1]
+            z_val = bbox_corners[0, 2]  # z는 일정하므로 하나만
+
+            x_min, x_max = x_coords.min(), x_coords.max()
+            y_min, y_max = y_coords.min(), y_coords.max()
+
+            xs = np.linspace(x_min, x_max, num=num_cols + 1)
+            ys = np.linspace(y_min, y_max, num=num_rows + 1)
+
+            centers = []
+            for r in range(num_rows):
+                for c in range(num_cols):
+                    cx = (xs[c] + xs[c+1]) / 2
+                    cy = (ys[r] + ys[r+1]) / 2
+                    centers.append([cx, cy, z_val])
+
+            return np.array(centers)  # shape: (num_rows*num_cols, 3)
+        
+        def world_to_image(cam, points_world):
+            from scipy.spatial.transform import Rotation as R
+            def compute_intrinsics(cam):
+                # 카메라 파라미터
+                focal_length = cam.focal_length  # 초점 거리 (mm)
+                width, height = cam.image_width, cam.image_height  # 이미지 해상도 (픽셀)
+                horizontal_aperture = cam.horizontal_aperture  # 수평 아퍼처 (mm)
+
+                # 1. 수평 시야각 (horizontal FOV) 계산
+                horizontal_fov = 2 * math.atan(horizontal_aperture / (2 * focal_length))  # radian 단위
+
+                # 2. 수직 시야각 (vertical FOV) 계산
+                vertical_fov = horizontal_fov * height / width  # 수직 시야각
+
+                # 3. fx, fy 계산
+                fx = (width / 2.0) / math.tan(horizontal_fov / 2.0)  # 수평 초점 거리 (픽셀)
+                fy = (height / 2.0) / math.tan(vertical_fov / 2.0)  # 수직 초점 거리 (픽셀)
+
+                # 4. cx, cy 계산 (이미지의 중심)
+                cx = width / 2
+                cy = height / 2
+
+                # 5. 내적 행렬 (Intrinsic Matrix) 계산
+                K = th.tensor([
+                    [fx, 0.0, cx],
+                    [0.0, fy, cy],
+                    [0.0, 0.0, 1.0]
+                ], dtype=th.float32)
+
+                # print("========== Intrinsics ==========")
+                # print("fx, fy:", fx, fy)
+                # print("cx, cy:", cx, cy)
+                # print("K:\n", K)
+                # print("================================\n")
+
+                return K
+
+            # 1. 카메라 pose 가져오기
+            cam_pos, cam_quat = cam.get_position_orientation()  # cam_quat: (x, y, z, w)
+            cam_pos = torch.tensor(cam_pos, dtype=torch.float32)
+            cam_quat = torch.tensor(cam_quat, dtype=torch.float32)
+            # print("****************************************************")
+            # print("cam_pos: ", cam_pos)
+            # print("cam_quat: ", cam_quat)
+            # print("****************************************************")
+
+
+            # 2. pose2mat: 카메라 월드 좌표계 → 4x4 변환 행렬
+            def pose2mat(pos, quat):
+                r = R.from_quat(quat.numpy())  # (x, y, z, w)
+                rot_mat = torch.tensor(r.as_matrix(), dtype=torch.float32)
+                T = torch.eye(4, dtype=torch.float32)
+                T[:3, :3] = rot_mat
+                T[:3, 3] = pos
+                return T
+
+            cam_T_world = pose2mat(cam_pos, cam_quat)          # (4, 4)
+            world_T_cam = torch.linalg.inv(cam_T_world)        # (4, 4)
+
+            # # 3. Intrinsics 계산 (조정된 fx, fy 값)
+            # fx, fy = 500, 500  # fx, fy 값을 적절한 값으로 조정
+            # cx, cy = cam.image_width / 2, cam.image_height / 2
+            # print("************ Camera Transform ************")
+            # print("cam_T_world:\n", cam_T_world)
+            # print("world_T_cam:\n", world_T_cam)
+            # print("*******************************************\n")
+
+            K = compute_intrinsics(cam)
+
+            # 4. 변환 시작
+            pixel_coords = []
+            for idx, pt in enumerate(points_world):
+
+                pt_world = torch.tensor(pt, dtype=torch.float32)
+                pt_homo = torch.cat([pt_world, torch.tensor([1.0])])  # (4,)
+                pt_cam = (world_T_cam @ pt_homo)[:3]                  # (x, y, z)
+
+                pt_cam = torch.tensor([pt_cam[0], -pt_cam[1], -pt_cam[2]])
+
+                # print(f"[{idx}] pt_world: {pt_world.tolist()}")
+                # print(f"[{idx}] pt_cam: {pt_cam.tolist()} (before flip)")
+
+                # # OpenCV 기준: z > 0 이어야 보임
+                # if pt_cam[2] <= 1e-5:
+                #     pixel_coords.append((-1, -1))  # 매우 작은 z 값을 가진 점을 처리
+                #     continue
+
+                # 5. Project to image plane
+                uvw = K @ pt_cam
+                u = int(uvw[0].item() / uvw[2].item())
+                v = int(uvw[1].item() / uvw[2].item())
+
+
+                # print(f"[{idx}] uvw: {uvw.tolist()}")
+                # print(f"[{idx}] pixel: ({u}, {v})\n")
+            
+                # 6. 이미지 범위 내에 있는지 확인
+                if 0 <= u < cam.image_width and 0 <= v < cam.image_height:
+                    pixel_coords.append((u, v))
+                else:
+                    print(f"[{idx}] ❌ Out of bounds: ({u}, {v})\n")
+                    pixel_coords.append((-1, -1))
+
+            return pixel_coords
+        
+        def draw_numbers_on_blended_image(blended: Image.Image, pixel_coords: list) -> Image.Image:
+            """
+            blended: PIL.Image (RGBA)
+            pixel_coords: list of (u, v)
+            Returns: PIL.Image (RGBA) with white text on solid black rectangle background
+            """
+            blended_cv_rgba = np.array(blended)
+            blended_cv_bgra = cv2.cvtColor(blended_cv_rgba, cv2.COLOR_RGBA2BGRA)
+
+            height, width = blended_cv_bgra.shape[:2]
+            base_scale = min(width, height) / 512  # 기준 사이즈 512x512 기준
+
+            font_scale = 0.4 * base_scale
+            thickness = max(int(1 * base_scale), 1)
+
+            for i, (u, v) in enumerate(pixel_coords):
+                if 0 <= u < width and 0 <= v < height:
+                    label = f"[{i+1}]"
+
+                    (text_w, text_h), baseline = cv2.getTextSize(
+                        label,
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=font_scale,
+                        thickness=thickness
+                    )
+
+                    x1 = u - text_w // 2 - 4
+                    y1 = v - text_h - 4
+                    x2 = u + text_w // 2 + 4
+                    y2 = v + baseline + 4
+
+                    # ✅ 불투명한 검정색 배경 (BGRA = 0, 0, 0, 255)
+                    cv2.rectangle(
+                        blended_cv_bgra,
+                        (x1, y1), (x2, y2),
+                        color=(0, 0, 0, 255),
+                        thickness=-1
+                    )
+
+                    print((u - text_w // 2, v))
+                    # ✅ 흰색 텍스트 (불투명)
+                    cv2.putText(
+                        blended_cv_bgra,
+                        label,
+                        (u - text_w // 2, v),
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=font_scale,
+                        color=(255, 255, 255, 255),
+                        thickness=thickness,
+                        lineType=cv2.LINE_AA
+                    )
+
+            blended_with_numbers = Image.fromarray(cv2.cvtColor(blended_cv_bgra, cv2.COLOR_BGRA2RGBA))
+            return blended_with_numbers
+        
+        def look_at_rotation(forward, up):
+            # Normalize input vectors
+            forward = forward / np.linalg.norm(forward)
+            right = np.cross(up, forward)
+            right = right / np.linalg.norm(right)
+            true_up = np.cross(forward, right)
+            
+            rot_mat = np.stack([right, true_up, forward], axis=1)  # (3, 3)
+            return rot_mat
+
+
+            # 1. parent object 가져오기
+
+        
+        if not isinstance(parent_re_axis_mat, np.ndarray):
+            parent_re_axis_mat = np.array(parent_re_axis_mat)
+        if not isinstance(child_re_axis_mat, np.ndarray):
+            child_re_axis_mat = np.array(child_re_axis_mat)
+        
+        # 1. parent object 가져오기
+        parent_obj = scene.object_registry("name", parent_obj_name)
+        parent_pos, parent_quat = parent_obj.get_position_orientation()
+        parent_pos = parent_pos.cpu().numpy() if isinstance(parent_pos, th.Tensor) else parent_pos
+        parent_quat = parent_quat.cpu().numpy() if isinstance(parent_quat, th.Tensor) else parent_quat
+
+        # parent의 회전 행렬
+        parent_rot_mat = T.quat2mat(parent_quat)  # (3, 3)
+
+
+        # 2. child object 가져오기
+        child_obj = scene.object_registry("name", child_obj_name)
+        child_pos, child_quat = child_obj.get_position_orientation()
+        child_pos = child_pos.cpu().numpy() if isinstance(child_pos, th.Tensor) else child_pos
+        child_quat = child_quat.cpu().numpy() if isinstance(child_quat, th.Tensor) else child_quat
+
+        # 3. BBox 정보 추출
+        parent_bbox_dict = compute_obj_bbox_info(parent_obj)
+        child_bbox_dict = compute_obj_bbox_info(child_obj)
+        parent_bbox = parent_bbox_dict["bbox_top_in_desired_frame"]
+        child_bbox_raw = child_bbox_dict["bbox_top_in_desired_frame"]
+
+        # 5. child bbox를 child 기준 → parent 기준 회전 변환
+        child_bbox = (np.linalg.inv(child_re_axis_mat) @ child_bbox_raw.T).T  # local align
+        R_rel = parent_re_axis_mat.T @ child_re_axis_mat
+        vec = R_rel @ np.array([1, 0, 0])  # child의 x축이 parent 기준으로 얼마나 회전했는지
+
+        # 6. child의 projected extent 계산
+        child_axis = np.argmax(np.abs(vec))  # child의 주축
+        if not child_axis:  # child x축이 parent x축과 정렬
+            x_extent_c = (np.max(child_bbox[:, 0]) - np.min(child_bbox[:, 0])) / 2
+            y_extent_c = (np.max(child_bbox[:, 1]) - np.min(child_bbox[:, 1])) / 2
+        else:  # child x축이 parent y축과 정렬
+            x_extent_c = (np.max(child_bbox[:, 1]) - np.min(child_bbox[:, 1])) / 2
+            y_extent_c = (np.max(child_bbox[:, 0]) - np.min(child_bbox[:, 0])) / 2
+
+        # 7. parent bbox 범위 계산 및 축소
+        x_min_p = np.min(parent_bbox[:, 0])
+        x_max_p = np.max(parent_bbox[:, 0])
+        y_min_p = np.min(parent_bbox[:, 1])
+        y_max_p = np.max(parent_bbox[:, 1])
+
+        x_min = x_min_p + x_extent_c
+        x_max = x_max_p - x_extent_c
+        y_min = y_min_p + y_extent_c
+        y_max = y_max_p - y_extent_c
+
+        # 8. 축소된 bbox 생성 (z는 그대로 사용)
+        z_val = np.mean(parent_bbox[:, 2])
+        parent_obj_above_bbox = np.array([
+            [x_min, y_min, z_val],
+            [x_max, y_min, z_val],
+            [x_max, y_max, z_val],
+            [x_min, y_max, z_val],
+        ])
+
+        grid_centers_local = split_bbox_into_grid(parent_obj_above_bbox, num_rows=3, num_cols=3)  # (N, 3)
+
+
+
+        # object local → world로 변환
+
+        obj_pos_th = th.tensor(parent_pos, dtype=th.float32)
+        obj_quat_th = th.tensor(parent_quat, dtype=th.float32)
+        obj_T_world = pose2mat((obj_pos_th, obj_quat_th))  # (4, 4)
+
+        grid_centers_local_th = th.tensor(grid_centers_local, dtype=th.float32)  # (N, 3)
+        ones = th.ones((grid_centers_local_th.shape[0], 1))
+        grid_centers_local_homo = th.cat([grid_centers_local_th, ones], dim=1)  # (N, 4)
+
+        grid_centers_world_th = (obj_T_world @ grid_centers_local_homo.T).T[:, :3]
+        grid_centers_world = grid_centers_world_th.numpy()  # 최종 (N, 3)
+
+        # 1. (4, 3) → (4, 4) homogeneous 확장
+        parent_bbox_local = th.tensor(parent_obj_above_bbox, dtype=th.float32)  # (4, 3)
+        parent_bbox_local_homo = th.cat([parent_bbox_local, th.ones((4, 1))], dim=1)  # (4, 4)
+
+        # 2. 로컬 → 월드 좌표 변환
+        parent_bbox_world = (obj_T_world @ parent_bbox_local_homo.T).T[:, :3]  # (4, 3)
+
+        # 3. numpy로 변환
+        parent_obj_above_bbox_world = parent_bbox_world.numpy()
+
+        # 3. 새 카메라 생성
+        cam_name = f"vlm_camera_{parent_obj_name}"
+        cam = VisionSensor(
+            name=cam_name,
+            relative_prim_path=f"/{cam_name}",
+            # modalities=["rgb"],
+            modalities=["rgb","seg_semantic"],
+            image_width=512,
+            image_height=512,
+            focal_length = 20.0
+        )
+        # scene.load(cam)
+        cam.load(scene)
+
+        # ========== Camera Parameter를 활용한 높이 설정 ==========
+
+        # margin (안전 여유 계수)
+        margin_scale = 1.1
+
+        # 카메라 FOV 계산 (단위: 라디안)
+        horizontal_fov = 2 * math.atan(cam.horizontal_aperture / (2 * cam.focal_length))
+        vertical_fov = horizontal_fov * cam.image_height / cam.image_width
+
+        # BBox의 x, y 크기 계산
+        bbox_xs = parent_bbox[:, 0]
+        bbox_ys = parent_bbox[:, 1]
+        bbox_width = bbox_xs.max() - bbox_xs.min()
+        bbox_height = bbox_ys.max() - bbox_ys.min()
+
+        # 각각의 축 기준으로 필요한 카메라 높이 계산
+        h_for_width = (bbox_width * margin_scale) / (2 * math.tan(horizontal_fov / 2))
+        h_for_height = (bbox_height * margin_scale) / (2 * math.tan(vertical_fov / 2))
+
+        # 둘 중 더 큰 값이 실제로 필요한 카메라 높이
+        min_camera_height = max(h_for_width, h_for_height)
+
+
+        # 카메라 위치 설정 (Z축 위쪽에 배치)
+        cam_pos = parent_pos + np.array([0, 0, min_camera_height])
+
+        look_dir = parent_rot_mat[:, 2]  # parent의 -Z 방향
+        up_dir = parent_rot_mat[:, 1]    # parent의 +Y 방향 (혹은 world Y)
+
+        # Look-at 행렬 생성
+        camera_rot_mat = look_at_rotation(look_dir, up_dir)  # 이걸로 정확한 회전 생성
+
+
+        # 회전 행렬 → 쿼터니언
+        camera_quat = T.mat2quat(camera_rot_mat)
+
+        # 카메라 pose 설정
+        cam.set_position_orientation(cam_pos, camera_quat)
+        # cam.set_position_orientation(cam_pos, [0, 0, 0, 1])  # 바라보는 방향은 그대로 (위에서 아래로)
+        
+
+
+
+        # # 위에서 바라보는 위치
+        cam.initialize()
+        # 1. 시뮬레이터 몇 프레임 실행 (렌더링 안정화용)
+        for _ in range(5):
+            og.sim.step()
+            og.sim.render()
+
+        # 2. Replicator 트리거: 데이터 캡처 요청
+        rep.trigger.on_frame()
+
+        # 3. 시뮬레이터 한 프레임 진행 (트리거 반영되도록)
+        og.sim.step()
+        og.sim.render()
+
+        # 4. Replicator 데이터 수집 처리
+        rep.orchestrator.step()
+
+
+        pixel_coords = world_to_image(cam, grid_centers_world)
+
+        # 5. 추가적으로 여유 프레임 (선택적)
+        for _ in range(2):
+            og.sim.step()
+            og.sim.render()
+
+        
+        obs, obs_info = cam.get_obs()
+
+        rgb = obs["rgb"].cpu().numpy()[..., :3]
+        seg = obs["seg_semantic"]
+        label_map = obs_info["seg_semantic"]  # e.g., {825831922: 'keyboard', ...}
+
+        # 세그멘테이션 시각화 (라벨 텍스트 없이)
+        seg_img_color = render_segmentation_overlay(seg, label_map)
+
+        # ✅ 1. 불투명한 segmentation 저장 (alpha = 1.0)
+        seg_img_opaque = np.concatenate([
+            seg_img_color,
+            255 * np.ones((seg_img_color.shape[0], seg_img_color.shape[1], 1), dtype=np.uint8)
+        ], axis=-1)  # (H, W, 4)
+
+        seg_img_opaque_pil = Image.fromarray(seg_img_opaque, mode="RGBA")
+        seg_img_opaque_pil.save(os.path.join(output_dir, f"{file_prefix}_seg_semantic.png"))
+
+        # ✅ 2. 반투명 버전으로 blending용 alpha 설정
+        alpha_value = 0.2
+        seg_img_color = np.concatenate([
+            seg_img_color,
+            int(alpha_value * 255) * np.ones((seg_img_color.shape[0], seg_img_color.shape[1], 1), dtype=np.uint8)
+        ], axis=-1)  # (H, W, 4)
+
+        # RGB → RGBA
+        rgb = np.concatenate([
+            rgb,
+            255 * np.ones((rgb.shape[0], rgb.shape[1], 1), dtype=np.uint8)
+        ], axis=-1)
+
+        # NumPy → PIL 변환
+        rgb_img = Image.fromarray(rgb, mode="RGBA")
+        seg_img = Image.fromarray(seg_img_color, mode="RGBA")
+
+        # 알파 블렌딩
+        blended_img = Image.alpha_composite(rgb_img, seg_img)
+
+        # 저장
+        blended_img.save(os.path.join(output_dir, f"{file_prefix}_blended_overlay.png"))
+        rgb_img.save(os.path.join(output_dir, f"{file_prefix}_view.png"))
+
+        blended_number_img_path = os.path.join(output_dir, f"{file_prefix}_blended_overlay_with_numbers.png")
+        blended_with_numbers = draw_numbers_on_blended_image(blended_img, pixel_coords)
+        blended_with_numbers.save(blended_number_img_path)
+
+        return blended_number_img_path, grid_centers_world, parent_obj_above_bbox_world
 
     @staticmethod
     def place_relative_to(
-        scene, 
+        count,
+        scene,
         child_obj_name: str,
         parent_obj_name: str,
         placement: str = "above",
         parent_re_axis_mat: np.ndarray = np.diag([1, 1, 1]),
-        child_re_axis_mat: np.ndarray = np.diag([1, 1, 1]),
+        child_re_axis_mat: np.ndarray = np.diag([1, 1, 1]),                                                                         
+        above_sampled_point_3d=None,        
     ): 
         """
         Places the child link relative to the parent link's bounding box with a specified placement and clearance,
@@ -651,17 +1177,20 @@ class TaskSceneGenerator:
 
         local_offset = np.zeros(3)
         clearance = np.zeros(3)
+        # if count==1:
+        #     clearance = np.array([0.2, 0.3, 0])
+        # else : 
+        #     clearance = np.array([0.0, 0.6, 0])
 
         # child bbox (local 기준) → 보정된 child 기준으로 변환
         bbox_child_orig_local = child_obj_bbox["bbox_bottom_in_desired_frame"]
-        print(bbox_child_orig_local)
         # bbox_child_corrected_local = ((child_re_axis_mat) @ bbox_child_orig_local.T).T
         bbox_child_corrected_local = (np.linalg.inv(child_re_axis_mat) @ bbox_child_orig_local.T).T
 
-        print(bbox_child_corrected_local)
         # bbox_child_corrected_local = child_obj_bbox["bbox_bottom_in_desired_frame"]
         
-
+        
+        
         clearance_axis = 0
         clearance_sign = 0
         if placement == "inside":
@@ -688,7 +1217,9 @@ class TaskSceneGenerator:
                 base_offset = np.array([0.0, offset_val, 0.0])
             elif placement_axis == 2:
                 offset_val = np.max(parent_obj_bbox["bbox_top_in_desired_frame"][:, 2]) if placement_sign > 0 else np.min(parent_obj_bbox["bbox_bottom_in_desired_frame"][:, 2])
+
                 base_offset = np.array([0.0, 0.0, offset_val])
+                # base_offset = np.array([x_max, y_max, offset_val])
 
             child_target_pos = parent_rot_mat @ base_offset + Translation
 
@@ -739,8 +1270,10 @@ class TaskSceneGenerator:
 
 
             placement_axis = np.argmax(np.abs(base_offset))
+            
             clearance[placement_axis] = clearance_val
-        
+            print("clearance: ",clearance) # clearance_val:  0.013136092573404312
+
             local_offset = base_offset+clearance
             
             # ✅ 최종 위치 계산
@@ -753,7 +1286,9 @@ class TaskSceneGenerator:
 
         # ✅ 최종 위치 계산
         child_target_pos = parent_rot_mat @ local_offset + Translation
-
+        if placement == "above":
+            child_target_pos[0] = above_sampled_point_3d[0]
+            child_target_pos[1] = above_sampled_point_3d[1]
         return child_target_pos, child_quat, clearance_axis, clearance_sign
 
        
@@ -777,12 +1312,13 @@ class TaskSceneGenerator:
 
             old_state = og.sim.dump_state()
 
-            step_size = 0.005  # 5mm 단위로 이동
+            step_size = 0.002  # 5mm 단위로 이동
             # print(type(obj_info["mount"]["wall"]))
             local_step_dir = np.zeros(3)            
             if placement == "below":
                 local_step_dir = np.array([0, 0, 1.0]) 
-            elif (placement == "right" or placement=="left")and not obj_info["mount"]["floor"]:
+            # elif (placement == "right" or placement=="left")and not obj_info["mount"]["floor"]:
+            elif (placement == "right" or placement=="left"):
                 # local_step_dir = np.array([0.0, -1.0, 0]) 
                 # 이동해야 할 축 방향의 반대 방향으로 이동해서 충돌 확인
                 local_step_dir[obj_info["clearance_axis"]] = obj_info["clearance_sign"]
@@ -893,6 +1429,348 @@ class TaskSceneGenerator:
             # og.sim.step_physics()
             # og.sim.step()
 
+
+
+    # def random_position_on_parent(            
+    #         scene,
+    #         obj_info,
+    #         cam_pose, 
+    #         child_obj_name: str,
+    #         parent_obj_name: str,
+    #         parent_re_axis_mat: np.ndarray = np.diag([1, 1, 1]),
+    #         child_re_axis_mat: np.ndarray = np.diag([1, 1, 1]),
+    #         ):    
+    #     """
+    #     Generates a random position on the parent bounding box for placing the child object.
+
+    #     Args:
+    #         parent_bbox (np.ndarray): The bounding box of the parent object.
+    #         child_bbox_local_corrected (np.ndarray): The corrected bounding box of the child object.
+
+    #     Returns:
+    #         tuple: Random x and y coordinates for placing the child object.
+    #     """
+    #     if not isinstance(parent_re_axis_mat, np.ndarray):
+    #         parent_re_axis_mat = np.array(parent_re_axis_mat)
+    #     if not isinstance(child_re_axis_mat, np.ndarray):
+    #         child_re_axis_mat = np.array(child_re_axis_mat)
+
+
+    #     parent_obj = scene.object_registry("name", parent_obj_name)
+    #     parent_obj_bbox = compute_obj_bbox_info(parent_obj)
+
+    #     parent_pos, parent_quat = parent_obj.get_position_orientation()
+
+    #     parent_rot_mat = T.quat2mat(parent_quat.cpu().numpy())
+
+
+
+    #     child_obj = scene.object_registry("name", child_obj_name)
+    #     child_pos, child_quat = child_obj.get_position_orientation()
+
+    #     Translation = child_pos.cpu().numpy()
+
+    #     child_obj_bbox_raw = compute_obj_bbox_info(child_obj)
+
+ 
+
+    #     child_bbox_raw = child_obj_bbox_raw["bbox_bottom_in_desired_frame"]
+    #     parent_bbox = parent_obj_bbox["bbox_bottom_in_desired_frame"]
+    #     child_bbox = (np.linalg.inv(child_re_axis_mat) @ child_bbox_raw.T).T
+
+    #     x_min_p = np.min(parent_bbox[:, 0])
+    #     x_max_p = np.max(parent_bbox[:, 0])
+    #     y_min_p = np.min(parent_bbox[:, 1])
+    #     y_max_p = np.max(parent_bbox[:, 1])
+
+    #     R_rel = parent_re_axis_mat.T @ child_re_axis_mat
+    #     vec = R_rel @ np.array([1, 0, 0])  # child x축 in parent frame
+    #     child_axis = np.argmax(np.abs(vec))
+    #     if not child_axis:
+    #         x_extent_c = (np.max(child_bbox[:, 0]) - np.min(child_bbox[:, 0])) / 2
+    #         y_extent_c = (np.max(child_bbox[:, 1]) - np.min(child_bbox[:, 1])) / 2    
+    #     else:
+    #         x_extent_c = (np.max(child_bbox[:, 1]) - np.min(child_bbox[:, 1])) / 2
+    #         y_extent_c = (np.max(child_bbox[:, 0]) - np.min(child_bbox[:, 0])) / 2
+
+    #     x_min = x_min_p + x_extent_c
+    #     x_max = x_max_p - x_extent_c
+    #     y_min = y_min_p + y_extent_c
+    #     y_max = y_max_p - y_extent_c
+
+    #     random_x = random.uniform(x_min, x_max)
+    #     random_y = random.uniform(y_min, y_max)
+
+
+    #     # base_offset = [x_max, y_max, 0.0]
+    #     base_offset = [0.0, 0.0, 0.0]
+
+
+            
+    #         # ✅ 최종 위치 계산
+    #         # child_target_pos = parent_rot_mat @ local_offset + Translation
+
+    #         # child_obj.set_position_orientation(th.tensor(child_target_pos, dtype=th.float), th.tensor(child_quat, dtype=th.float))
+
+    #         # for _ in range(10000):
+    #         #     og.sim.render()
+
+    #     # ✅ 최종 위치 계산
+    #     child_target_pos = parent_rot_mat @ base_offset + Translation
+        
+    #     child_obj.set_position_orientation(th.tensor(child_target_pos, dtype=th.float), th.tensor(child_quat, dtype=th.float))
+
+
+    #     child_obj.keep_still()
+    #     parent_obj.keep_still()
+    #             # ✅ 모든 오브젝트의 물리 충돌 허용
+    #     for obj in scene.objects:
+    #         obj.visual_only = False  # 충돌체 활성화
+    #     # child_obj.visual_only = False
+    #     # parent_obj.visual_only = False
+    #     og.sim.step_physics()
+    #     og.sim.render()
+
+        
+    #     # # ✅ 충돌 검사 (모든 오브젝트 대상)
+    #     # og.sim.step_physics()
+    #     # og.sim.step()
+
+    #     is_touching_any = False
+    #     for obj in scene.objects:
+    #         print(f"obj name: {obj.name}")
+    #         if obj.name == child_obj.name:
+    #             continue  # 자기 자신은 제외
+    #         if child_obj.states[Touching].get_value(obj):
+    #             print(f"[⚠️] Collision detected between '{child_obj_name}' and '{obj.name}'")
+    #             is_touching_any = True
+
+    #     print(f"[INFO] Collision with any object? -> {is_touching_any}")
+    #     return is_touching_any
+
+    def above_collision_check(
+            scene,
+            obj_info,
+            child_obj_name,
+            parent_obj_name,
+            above_sampled_point_3d=None,
+            probability_map_sampler=None,
+        ):
+
+        assert above_sampled_point_3d is not None, "above_sampled_point_3d must be provided."
+
+        def check_valid_pose(child_obj):
+            """
+            Returns True if the object is NOT in collision (i.e., placement is valid).
+            """
+            for all_obj in scene.objects:
+                all_obj.visual_only = False
+                all_obj.keep_still()
+
+            og.sim.step_physics()
+            for _ in range(20):
+                og.sim.step()
+                og.sim.render()
+            new_child_pos, new_child_quat = child_obj.get_position_orientation()
+            
+            dist = np.linalg.norm(np.array(above_sampled_point_3d) - np.array(new_child_pos))
+
+            x_diff = abs(above_sampled_point_3d[0] - new_child_pos[0])
+            y_diff = abs(above_sampled_point_3d[1] - new_child_pos[1])
+
+            for all_obj in scene.objects:
+                all_obj.visual_only = True
+
+            if dist < 0.3 and x_diff < 0.01 and y_diff < 0.01:
+                print("Successfully placed the object!")
+                return True
+            
+            # print("###################################################################################")
+
+            # in_collision = check_collision(prims=obj, step_physics=False)
+            # contacts = obj.contact_list()
+
+            
+            return False
+
+        child_obj = scene.object_registry("name", child_obj_name)
+        parent_obj = scene.object_registry("name", parent_obj_name)
+        
+        child_pos, child_quat = child_obj.get_position_orientation()
+        parent_pos, parent_quat = parent_obj.get_position_orientation()
+
+        child_pos = child_pos.cpu().numpy().copy()  # numpy로 복사
+        child_quat = child_quat.cpu().numpy().copy()
+
+        
+        while True:
+            # print("above_sampled_point_3d: ", above_sampled_point_3d)
+            above_sampled_point_3d = probability_map_sampler.sample()
+            # print(child_pos)
+
+            child_pos[0] = above_sampled_point_3d[0]
+            child_pos[1] = above_sampled_point_3d[1]
+            child_obj.set_position_orientation(
+                        th.tensor(child_pos, dtype=th.float),
+                        th.tensor(child_quat, dtype=th.float),
+                    )
+            
+            original_state = og.sim.dump_state()
+
+            if check_valid_pose(child_obj):
+                # og.sim.load_state(original_state)
+                child_obj.set_position_orientation(
+                        th.tensor(child_pos, dtype=th.float),
+                        th.tensor(child_quat, dtype=th.float),
+                    )
+                break
+        
+        # return False
+
+    def random_position_on_parent(
+        scene,
+        obj_info,
+        cam_pose,
+        child_obj_name: str,
+        parent_obj_name: str,
+        parent_re_axis_mat: np.ndarray = np.diag([1, 1, 1]),
+        child_re_axis_mat: np.ndarray = np.diag([1, 1, 1]),
+    ):
+        """
+        Tries random placements of child_obj on parent_obj until there is no collision.
+        """
+        if not isinstance(parent_re_axis_mat, np.ndarray):
+            parent_re_axis_mat = np.array(parent_re_axis_mat)
+        if not isinstance(child_re_axis_mat, np.ndarray):
+            child_re_axis_mat = np.array(child_re_axis_mat)
+
+        def check_valid_pose(obj, pos, quat):
+            """
+            Returns True if child_obj is touching any other object in the scene.
+            """
+
+            # Make sure sim is playing
+            assert og.sim.is_playing(), "Cannot test valid pose while sim is not playing!"
+            
+
+            # Store state before checking object position
+            state = og.sim.dump_state()
+
+            for all_obj in scene.objects:
+                all_obj.visual_only = False
+
+
+
+            # Set the pose of the object
+            print(pos)
+            # place_base_pose(obj, pos, quat)
+            obj.set_position_orientation(
+                    th.tensor(pos, dtype=th.float),
+                    th.tensor(quat, dtype=th.float),
+                )
+
+            og.sim.step_physics()
+            contacts = obj.contact_list()
+            if contacts:
+                print(f"🔧 Contacts for {obj.name}:")
+                for c in contacts:
+                    print(f"  - {c.body0} <--> {c.body1}")
+            for _ in range(1000):
+                og.sim.render()
+
+
+            # obj.keep_still()
+
+            # Check whether we're in collision after taking a single physics step
+            in_collision = check_collision(prims=obj, step_physics=False)
+            contacts = obj.contact_list()
+            print("Not Visible Only")
+            if contacts:
+                print(f"🔧 Contacts for {obj.name}:")
+                for c in contacts:
+                    print(f"  - {c.body0} <--> {c.body1}")
+
+            # Restore state after checking the collision
+            og.sim.load_state(state)
+
+            for all_obj in scene.objects:
+                all_obj.visual_only = True
+
+            # Valid if there are no collisions
+            return not in_collision
+
+        parent_obj = scene.object_registry("name", parent_obj_name)
+        parent_obj_bbox = compute_obj_bbox_info(parent_obj)
+        parent_pos, parent_quat = parent_obj.get_position_orientation()
+        parent_rot_mat = T.quat2mat(parent_quat.cpu().numpy())
+
+        child_obj = scene.object_registry("name", child_obj_name)
+        child_pos, child_quat = child_obj.get_position_orientation()
+        print("child_quat:",child_quat)
+        Translation = child_pos.cpu().numpy()
+        child_obj_bbox_raw = compute_obj_bbox_info(child_obj)
+        child_bbox_raw = child_obj_bbox_raw["bbox_bottom_in_desired_frame"]
+        parent_bbox = parent_obj_bbox["bbox_bottom_in_desired_frame"]
+        child_bbox = (np.linalg.inv(child_re_axis_mat) @ child_bbox_raw.T).T
+
+        x_min_p = np.min(parent_bbox[:, 0])
+        x_max_p = np.max(parent_bbox[:, 0])
+        y_min_p = np.min(parent_bbox[:, 1])
+        y_max_p = np.max(parent_bbox[:, 1])
+
+        R_rel = parent_re_axis_mat.T @ child_re_axis_mat
+        vec = R_rel @ np.array([1, 0, 0])
+        child_axis = np.argmax(np.abs(vec))
+        if not child_axis:
+            x_extent_c = (np.max(child_bbox[:, 0]) - np.min(child_bbox[:, 0])) / 2
+            y_extent_c = (np.max(child_bbox[:, 1]) - np.min(child_bbox[:, 1])) / 2
+        else:
+            x_extent_c = (np.max(child_bbox[:, 1]) - np.min(child_bbox[:, 1])) / 2
+            y_extent_c = (np.max(child_bbox[:, 0]) - np.min(child_bbox[:, 0])) / 2
+
+        x_min = x_min_p + x_extent_c
+        x_max = x_max_p - x_extent_c
+        y_min = y_min_p + y_extent_c
+        y_max = y_max_p - y_extent_c
+
+
+
+        # 반복 샘플링
+        max_tries = 20
+        # random.seed(42)
+        for i in range(max_tries):
+            random_x = random.uniform(x_min, x_max)
+            random_y = random.uniform(y_min, y_max)
+            base_offset = [random_x, random_y, 0.0]
+            # base_offset = [0, 0, 0.0]
+
+            child_target_pos = parent_rot_mat @ base_offset + Translation
+            print("child_target_pos:", child_target_pos)
+            print("child_quat:", child_quat)
+            print(f"[{i}] Trying placement at (x={random_x:.3f}, y={random_y:.3f})")
+            state = og.sim.dump_state()
+            is_valid = check_valid_pose(
+                obj=child_obj,
+                pos=th.tensor(child_target_pos, dtype=th.float),  # ⬅ torch 텐서로 변환
+                quat=th.tensor(child_quat, dtype=th.float)
+            )
+
+            if is_valid:
+                # 최종적으로 pose 적용
+                child_obj.set_position_orientation(
+                    th.tensor(child_target_pos, dtype=th.float),
+                    th.tensor(child_quat, dtype=th.float),
+                )
+                print(f"[✅] Found collision-free position on try {i}")
+                return True
+            og.sim.load_state(state)
+
+        print(f"[❌] Failed to find collision-free placement after {max_tries} tries")
+        return False
+
+        # return is_touching
+
+
     def align_object_z_axis(scene, obj_info, cam_pose, child_obj_name, verbose=True):
         """
         Aligns the object's z-axis with world +z using base-aligned bounding box (BAB).
@@ -962,3 +1840,24 @@ class TaskSceneGenerator:
         ref_rotation = R.from_quat(reference_orientation)
         local_position = ref_rotation.inv().apply(world_position)
         return local_position
+
+class ProbMapSampler:
+    def __init__(self, prob_map, bounds, origin, x_axis, y_axis):
+        self.prob_map = prob_map
+        self.bounds = bounds
+        self.origin = origin
+        self.x_axis = x_axis
+        self.y_axis = y_axis
+        self.grid_res = prob_map.shape[0]
+
+        # 미리 계산
+        self.u_vals = np.linspace(bounds[0], bounds[1], self.grid_res)
+        self.v_vals = np.linspace(bounds[2], bounds[3], self.grid_res)
+        self.flat_probs = prob_map.flatten()
+
+    def sample(self):
+        idx = np.random.choice(len(self.flat_probs), p=self.flat_probs)
+        i, j = divmod(idx, self.grid_res)
+        u = self.u_vals[j]
+        v = self.v_vals[i]
+        return self.origin + u * self.x_axis + v * self.y_axis  # (3,) np.ndarray
