@@ -154,10 +154,11 @@ def test_acdc_step_6(args):
         step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
         step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
         step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
-        task_spatial_reasoning_output_path=f"{TEST_DIR}/acdc_output/task_object_spatial_reasoning/task_obj_output_info.json",
+        task_spatial_reasoning_output_path=f"{TEST_DIR}/acdc_output/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
         # task_obj_output_path=f"{TEST_DIR}/acdc_output/task_output/task_obj_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
+        find_front_view = args.find_front_view
     )
     del pipeline
 
@@ -178,11 +179,12 @@ def test_object_resizing(args):
         step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
         step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
         step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
-        task_spatial_reasoning_output_path=f"{TEST_DIR}/acdc_output/task_object_spatial_reasoning/task_obj_output_info.json",
+        task_spatial_reasoning_output_path=f"{TEST_DIR}/acdc_output/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
         task_object_retrieval_path=f"{TEST_DIR}/acdc_output/task_object_retrieval/task_obj_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
-        goal_task=args.goal_task
+        goal_task=args.goal_task,
+        resizing = args.no_resizing
     )
     del pipeline
 
@@ -203,7 +205,7 @@ def test_acdc_step_7(args):
         step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
         step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
         step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
-        task_spatial_reasoning_output_path=f"{TEST_DIR}/acdc_output/task_object_spatial_reasoning/task_obj_output_info.json",
+        task_spatial_reasoning_output_path=f"{TEST_DIR}/acdc_output/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
         task_object_retrieval_path=f"{TEST_DIR}/acdc_output/task_object_retrieval/task_obj_output_info.json",
         task_object_resizing_path=f"{TEST_DIR}/acdc_output/task_object_resizing/task_obj_output_info.json",
         gpt_api_key=args.gpt_api_key,
@@ -261,8 +263,8 @@ def main(args):
     # test_acdc_step_5(args) # Task Object Spatial Reasoning
     # test_acdc_step_4_and_5(args)  # Task Object Extraction and Spatial Reasoning at once
     # test_acdc_step_6(args) # Task Object Retrieval
-    # test_object_resizing(args) # Task Object Resizing
-    test_acdc_step_7(args) # Task following Scene Generation
+    test_object_resizing(args) # Task Object Resizing
+    # test_acdc_step_7(args) # Task following Scene Generation
     # og.shutdown()
 
     # Final test -- OG should always come at the end
@@ -278,7 +280,30 @@ if __name__ == "__main__":
                         help="GPT API key to use. Must be compatible with GPT model specified")
     parser.add_argument("--gpt_version", type=str, default="4o", choices=list(GPT.VERSIONS.keys()),
                         help=f"GPT model version to use. Valid options: {list(GPT.VERSIONS.keys())}")
-    parser.add_argument("--goal_task", type=str, default="Give me the cup in the cabinet above the microwave", help=f"User Guieded Task")
+    parser.add_argument("--no_resizing", action="store_false", default=True, help="Disable resizing (default: enabled)")
+    parser.add_argument("--no_find_front_view", action="store_false", dest="find_front_view", help="Disable find_front_view")
+    # parser.add_argument("--goal_task", type=str, default="Give me the ball on the bed", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Turn on the Lamp", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me the cup on the table", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me a cushion", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Bring me something to read", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me a pillow on the bed", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me something to wear", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me the coffe box", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Bring me the pencil case from the cabinet", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me the something to eat.", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Can you give me something to clean the room with.", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Bring me the phone from the sofa?", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me the handbag?", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me something to clean the table with?", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="It's hot. Can you make it cooler in here", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me the eraser from the desk", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Bring me a pen.", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me the clothes on the chair.", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me a tissue.", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Give me something to carry.", help=f"User Guieded Task")
+    # parser.add_argument("--goal_task", type=str, default="Bring me a game controller.", help=f"User Guieded Task")
+    parser.add_argument("--goal_task", type=str, default="My legs are tired", help=f"User Guieded Task")
 
     args = parser.parse_args()
 

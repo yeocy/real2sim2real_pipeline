@@ -96,6 +96,7 @@ class TaskObjectRetrieval:
             n_cousins_link_count_threshold=3,
             save_dir=None,
             start_at_name=None,
+            find_front_view = True
     ):
         """
         Runs the digital cousin matcher. This does the following steps for each detected object from Step 1:
@@ -410,7 +411,7 @@ class TaskObjectRetrieval:
                 for model_idx, model_name in enumerate(model_list):
                     print(f"category: {category_list[model_idx]}")
                     print(f"model: {model_list[model_idx]}")
-
+                    
                     # Find Top-K candidates
                     candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{category_list[model_idx]}/model/{model_list[model_idx]}" 
 
@@ -420,40 +421,43 @@ class TaskObjectRetrieval:
                         if fname.endswith('.png') and int(fname.rstrip('.png').split('_')[-1]) % 25 == 0
                     )
 
-                    concat_img_save_dir = os.path.join(front_pose_select_dir, f'{name}_{model_name}_candidate_view_input_visualization.png')
+                    if find_front_view:
+                        concat_img_save_dir = os.path.join(front_pose_select_dir, f'{name}_{model_name}_candidate_view_input_visualization.png')
 
-                    concat_img = self.make_concat_images(
-                        snapshot_imgs_path=candidate_model_view_imgs,
-                        visualize_resolution=(640, 480),  # 해상도 조절 가능
-                        images_per_row=4,
-                        save_path=concat_img_save_dir
-                    ) 
+                        concat_img = self.make_concat_images(
+                            snapshot_imgs_path=candidate_model_view_imgs,
+                            visualize_resolution=(640, 480),  # 해상도 조절 가능
+                            images_per_row=4,
+                            save_path=concat_img_save_dir
+                        ) 
 
-                    nn_selection_payload = gpt.payload_front_view_image(
-                            candidate_view_path=concat_img_save_dir,
-                            goal_task=task_extraction_output_info["task"],
-                            parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
-                            placement=task_extraction_output_info["objects"][name]["placement"],
-                            caption=obj_phrases[instance_idx]
-                            )
-                    
-                    gpt_text_response = gpt(nn_selection_payload)
-                    print(f"gpt_text_response: {gpt_text_response}")
-                    if gpt_text_response is None:
-                        print(f"gpt_text_response is None")
-                        # Failed, terminate early
-                        return False, None
+                        nn_selection_payload = gpt.payload_front_view_image(
+                                candidate_view_path=concat_img_save_dir,
+                                goal_task=task_extraction_output_info["task"],
+                                parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
+                                placement=task_extraction_output_info["objects"][name]["placement"],
+                                caption=obj_phrases[instance_idx]
+                                )
+                        
+                        gpt_text_response = gpt(nn_selection_payload)
+                        print(f"gpt_text_response: {gpt_text_response}")
+                        if gpt_text_response is None:
+                            print(f"gpt_text_response is None")
+                            # Failed, terminate early
+                            return False, None
 
-                    # Extract the first non-negative integer from the response
-                    match = re.search(r'\b\d+\b', gpt_text_response)
+                        # Extract the first non-negative integer from the response
+                        match = re.search(r'\b\d+\b', gpt_text_response)
 
-                    if match:
-                        nn_model_index = int(match.group()) - 1
+                        if match:
+                            nn_model_index = int(match.group()) - 1
+                        else:
+                            print(f"match is empty")
+                            # # No valid integer found, handle this case
+                            # return False, None
+                            nn_model_index = 0
                     else:
-                        print(f"match is empty")
-                        # # No valid integer found, handle this case
-                        # return False, None
-                        nn_model_index = 0
+                        nn_model_index = 1
                     
                     # nn_model_index = 1
                     
@@ -504,35 +508,38 @@ class TaskObjectRetrieval:
                         if fname.endswith('.png') and int(fname.rstrip('.png').split('_')[-1]) % 25 == 0
                     )
                 
-                concat_img_save_dir = os.path.join(parent_front_pose_select_dir, f'{name}_parent_object_{model_name}_candidate_view_input_visualization.png')
-                concat_img = self.make_concat_images(
-                        snapshot_imgs_path=parent_candidate_model_view_imgs,
-                        visualize_resolution=(640, 480),  # 해상도 조절 가능
-                        images_per_row=4,
-                        save_path=concat_img_save_dir
-                    )
-                
-                nn_selection_payload = gpt.payload_front_view_image(
-                            candidate_view_path=concat_img_save_dir,
-                            goal_task=task_extraction_output_info["task"],
-                            parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
-                            placement=task_extraction_output_info["objects"][name]["placement"],
-                            caption=obj_phrases[instance_idx]
-                            )
+                if find_front_view:
+                    concat_img_save_dir = os.path.join(parent_front_pose_select_dir, f'{name}_parent_object_{model_name}_candidate_view_input_visualization.png')
+                    concat_img = self.make_concat_images(
+                            snapshot_imgs_path=parent_candidate_model_view_imgs,
+                            visualize_resolution=(640, 480),  # 해상도 조절 가능
+                            images_per_row=4,
+                            save_path=concat_img_save_dir
+                        )
                     
-                gpt_text_response = gpt(nn_selection_payload)
-                if gpt_text_response is None:
-                    # Failed, terminate early
-                    return False, None
+                    nn_selection_payload = gpt.payload_front_view_image(
+                                candidate_view_path=concat_img_save_dir,
+                                goal_task=task_extraction_output_info["task"],
+                                parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
+                                placement=task_extraction_output_info["objects"][name]["placement"],
+                                caption=obj_phrases[instance_idx]
+                                )
+                        
+                    gpt_text_response = gpt(nn_selection_payload)
+                    if gpt_text_response is None:
+                        # Failed, terminate early
+                        return False, None
 
-                # Extract the first non-negative integer from the response
-                match = re.search(r'\b\d+\b', gpt_text_response)
+                    # Extract the first non-negative integer from the response
+                    match = re.search(r'\b\d+\b', gpt_text_response)
 
-                if match:
-                    nn_model_index = int(match.group()) - 1
+                    if match:
+                        nn_model_index = int(match.group()) - 1
+                    else:
+                        # No valid integer found, handle this case
+                        return False, None
                 else:
-                    # No valid integer found, handle this case
-                    return False, None
+                    nn_model_index = 1
                 
                 # nn_model_index = 1
                 

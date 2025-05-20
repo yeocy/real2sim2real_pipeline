@@ -2505,5 +2505,275 @@ Only respond using this format. Do not include any additional explanation or tex
 
         return object_selection_payload
     
+    def payload_above_object_position(
+            self,
+            prompt_img_path,
+            parent_obj_name,
+            placement,
+            child_obj_name,
+            parent_front_view_img_path,
+            child_front_view_img_path,
+    ):
+        """
+        Given a list of candidate snapshots, return the payload used to find the nearest neighbor
+        to represent the "caption" in original image in simulation
+
+        Args:
+            img_path (str): Absolute path to image to infer object selection from
+            caption (str): Caption associated with the image at @img_path
+            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+            candidates_fpaths (list of str): List of absolute paths to candidate images
+            nonproject_obj_img_path (str): Absolute path to segmented object image
+
+        Returns:
+            dict: Prompt payload
+        """
+        # Getting the base64 string
+        prompt_img_base64 = self.encode_image(prompt_img_path)
+        parent_front_view_img_base64 = self.encode_image(parent_front_view_img_path)
+        child_front_view_img_base64 = self.encode_image(child_front_view_img_path)
+
+        prompt_text_system = "You are an expert in indoor object placement and visual spatial reasoning. \n" + \
+                             "Given the image below showing a simulated scene with a parent object overlaid with numbered candidate positions, " + \
+                             "your task is to identify the most realistic and physically appropriate grid location to place the child object on or above the parent object, "
+                             
+        prompt_user_1 = "### Task Overview ###\n" + \
+                f"I will show you an image of a simulated scene. This scene contains a parent object ({parent_obj_name}) overlaid with numbered candidate positions.\n" + \
+                f"A child object ({child_obj_name}) needs to be placed {placement} the parent object ({parent_obj_name}).\n" + \
+                "Your task is to select the most appropriate location that would realistically support placing the object, considering physical feasibility and spatial context.\n\n" + \
+                "I will also be provided with reference front-view images of the parent and child objects. " + \
+                "Please use them to understand the shape, scale, and orientation of the objects when reasoning about placement.\n" + \
+                "Your task is to select the most appropriate candidate position(s) for placing the object, based on physical plausibility and spatial reasoning.\n" + \
+                "In other words, select the position that best fits the scene context and realistically supports the object.\n\n" + \
+                "### Special Instructions ###\n" + \
+                "1. You must select exactly one grid location (a single number) that is most suitable for placing the object.\n" + \
+                "2. Prefer locations where the object would realistically be placed in the real world, not just in simulation. \n" + \
+                "   For example:\n" + \
+                "   - A fan should be placed on a flat surface like a desk or cabinet top, not on a keyboard or at the edge.\n" + \
+                "   - A monitor should face forward on the center of a desk, not halfway off the edge.\n" + \
+                "   - A bottle should be placed upright in a stable, reachable location, not on top of another object.\n" + \
+                "3. The object should be placed where it can realistically rest without falling, tilting, or floating. Avoid edges, unstable surfaces, or occluded areas.\n" + \
+                "4. Consider the object's intended function and affordance — for example, a fan should be placed where it can effectively ventilate the area.\n" + \
+                "5. Take into account the surrounding context: avoid placing the object where it would block or interfere with other nearby items such as lamps, books, or bottles.\n" + \
+                "6. Avoid grid positions that are close to or surrounded by other objects — especially if the child object is large or may require extra space. Placing the object too close to clutter increases the risk of collision or unrealistic overlap. \n" + \
+                "7. Be mindful that the child object may be tall or wide; ensure it fits comfortably in the selected grid location without hitting or overlapping nearby structures or items. \n" + \
+                "8. Use the reference front-view images of the parent and child objects to reason about size, shape, and how they physically interact.\n" + \
+                "9. Only consider the numbered grid positions shown in the image.\n" + \
+                "10. Respond with a single number corresponding to the selected grid location. Do not include any explanation or extra text.\n\n" + \
+                "Example output: 2\n" + \
+                "Example output: 5\n" + \
+                "Example output: 5\n" + \
+                "Example output: 3\n" + \
+                "Example output: 1\n" + \
+                "Example output: 7\n\n" + \
+                "Think carefully, and then respond."
+        
+        prompt_text_user_final = f"Please review the image and select exactly one grid position that best supports placing the child object ({child_obj_name}) {placement} the parent object ({parent_obj_name}). " + \
+                         "Your choice should reflect a physically realistic and contextually appropriate location, based on object shape, size, and surroundings. Avoid selecting positions that are close to other items or cluttered, especially if the child object is large or might collide with surrounding objects. \n" + \
+                         "Use the reference front-view images to guide your reasoning.\n" + \
+                         "Respond with a **single number only**, with no explanation or additional text."
+        
+        content = [
+            {
+                "type": "text",
+                "text": prompt_user_1
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{prompt_img_base64}"
+                }
+            },
+            {
+                "type": "text",
+                    "text": "The above image shows a simulated scene containing a parent object. " +\
+                            "Several existing objects in the scene are visualized using segmentation overlays, and " +\
+                            "nine candidate positions are marked with numeric labels from [1] to [9]. "
+            },
+            {
+                "type": "text",
+                "text": "The following images show the front-view appearances of the parent and child objects involved in the scene. " +
+            "Please use these reference images to understand the shape, scale, and orientation of both objects when deciding where the child object should be placed."
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{parent_front_view_img_base64}"
+                }
+            },
+                        {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{child_front_view_img_base64}"
+                }
+            },
+            {
+                "type": "text",
+                "text": prompt_text_user_final
+            }
+        ]
+
+        text_dict_system = {
+            "type": "text",
+            "text": prompt_text_system
+        }
+        content_system = [text_dict_system]
+
+
+        NN_payload = {
+            "model": self.VERSIONS[self.version],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": content_system
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            # TODO
+            "temperature": 0.0,
+            "max_tokens": 10
+        }
+        return NN_payload
     
-    
+    def payload_above_object_distribution(
+            self,
+            prompt_img_path,
+            parent_obj_name,
+            placement,
+            child_obj_name,
+            parent_front_view_img_path,
+            child_front_view_img_path,
+    ):
+        """
+        Return a payload that asks the model to output a probability distribution
+        over 9 candidate grid positions for placing a child object on or above a parent object.
+        """
+
+        # Getting the base64 string
+        prompt_img_base64 = self.encode_image(prompt_img_path)
+        parent_front_view_img_base64 = self.encode_image(parent_front_view_img_path)
+        child_front_view_img_base64 = self.encode_image(child_front_view_img_path)
+
+        prompt_text_system = "You are an expert in indoor object placement and visual spatial reasoning. \n" + \
+                             "Given the image below showing a simulated scene with a parent object overlaid with numbered candidate positions, " + \
+                             "your task is to evaluate the suitability of each candidate grid location for placing the child object on or above the parent object."
+                             
+        prompt_user_1 = "### Task Overview ###\n" + \
+                        f"I will show you an image of a simulated scene. This scene contains a parent object ({parent_obj_name}) overlaid with numbered candidate positions.\n" + \
+                        f"A child object ({child_obj_name}) needs to be placed {placement} the parent object ({parent_obj_name}).\n" + \
+                        "Your task is to analyze each grid location and assign a probability score that reflects how appropriate it is for placing the object, considering physical feasibility and spatial context.\n\n" + \
+                        "You will also be provided with reference front-view images of the parent and child objects. " + \
+                        "Please use them to understand the shape, scale, and orientation of the objects when reasoning about placement.\n\n" + \
+                        "### Special Instructions ###\n" + \
+                        "1. You must assign a probability score (between 0.0 and 1.0) to **each** of the 9 grid positions.\n" + \
+                        "2. The total of all 9 probability scores must **sum to 1.0**.\n" + \
+                        "3. If a grid position already contains another object or is clearly not physically suitable (e.g., too narrow, tilted, floating, or occluded), assign it a probability of **0.0**.\n" + \
+                        "4. Prefer locations where the object would realistically be placed in the real world, not just in simulation.\n" + \
+                        "   For example:\n" + \
+                        "   - A fan should be placed on a flat surface like a desk or cabinet top, not on a keyboard or at the edge.\n" + \
+                        "   - A monitor should face forward on the center of a desk, not halfway off the edge.\n" + \
+                        "   - A bottle should be placed upright in a stable, reachable location, not on top of another object.\n" + \
+                        "5. The object should be placed where it can realistically rest without falling, tilting, or floating. Avoid edges, unstable surfaces, or cluttered areas.\n" + \
+                        "6. Consider the object's intended function and affordance — for example, a fan should be placed where it can effectively ventilate the area.\n" + \
+                        "7. Take into account the surrounding context: avoid placing the object where it would block or interfere with other nearby items such as lamps, books, or bottles.\n" + \
+                        "8. Avoid grid positions that are close to or surrounded by other objects — especially if the child object is large or might require additional clearance. Placing objects near cluttered areas increases the risk of physical collision or unrealistic placement. \n" + \
+                        "9. Keep in mind that the child object may have a non-negligible size or height. Ensure that it fits comfortably within the selected grid space without overlapping or colliding with nearby objects or the environment. \n" + \
+                        "10. Use the reference front-view images of the parent and child objects to reason about size, shape, and how they physically interact.\n" + \
+                        "11. Only consider the numbered grid positions shown in the image.\n" + \
+                        "12. Respond only with a single line of comma-separated number-probability pairs. **Do not include any explanation or extra text.**\n\n" + \
+                        "### Output Format ###\n" + \
+                        "Your response must follow this exact format:\n" + \
+                        "1: 0.05, 2: 0.10, 3: 0.20, 4: 0.10, 5: 0.25, 6: 0.10, 7: 0.10, 8: 0.05, 9: 0.05\n\n" + \
+                        "### Example Outputs ###\n" + \
+                        "1: 0.10, 2: 0.10, 3: 0.10, 4: 0.10, 5: 0.10, 6: 0.10, 7: 0.10, 8: 0.10, 9: 0.20\n" + \
+                        "1: 0.00, 2: 0.00, 3: 0.00, 4: 0.30, 5: 0.25, 6: 0.20, 7: 0.15, 8: 0.10, 9: 0.00\n" + \
+                        "1: 0.25, 2: 0.15, 3: 0.10, 4: 0.10, 5: 0.10, 6: 0.10, 7: 0.05, 8: 0.10, 9: 0.05\n" + \
+                        "1: 0.00, 2: 0.00, 3: 0.05, 4: 0.15, 5: 0.30, 6: 0.25, 7: 0.15, 8: 0.10, 9: 0.00\n" + \
+                        "1: 0.05, 2: 0.20, 3: 0.25, 4: 0.05, 5: 0.05, 6: 0.10, 7: 0.10, 8: 0.10, 9: 0.10\n" + \
+                        "1: 0.00, 2: 0.10, 3: 0.10, 4: 0.10, 5: 0.10, 6: 0.10, 7: 0.10, 8: 0.10, 9: 0.30\n" + \
+                        "1: 0.15, 2: 0.10, 3: 0.10, 4: 0.05, 5: 0.10, 6: 0.15, 7: 0.10, 8: 0.10, 9: 0.15\n" + \
+                        "1: 0.00, 2: 0.00, 3: 0.00, 4: 0.05, 5: 0.20, 6: 0.35, 7: 0.20, 8: 0.10, 9: 0.10\n" + \
+                        "1: 0.20, 2: 0.10, 3: 0.05, 4: 0.05, 5: 0.05, 6: 0.10, 7: 0.15, 8: 0.20, 9: 0.10\n" + \
+                        "1: 0.10, 2: 0.05, 3: 0.10, 4: 0.10, 5: 0.05, 6: 0.15, 7: 0.15, 8: 0.15, 9: 0.15\n" + \
+                        "1: 0.00, 2: 0.00, 3: 0.00, 4: 0.00, 5: 0.10, 6: 0.20, 7: 0.30, 8: 0.25, 9: 0.15\n\n" + \
+                        "Make sure your response includes exactly 9 grid positions and that the sum of all probabilities equals 1.0." + \
+                        "### Final Reminder ###\n" + \
+                        "You must return 9 values that add up to 1.0.\n" + \
+                        "Clearly unsuitable or blocked positions should be given a probability of 0.0.\n" + \
+                        "Respond with the probabilities only — no extra text or explanation."
+        
+        prompt_text_user_final = f"Please review the image and assign a probability score to each of the 9 grid positions for placing the child object ({child_obj_name}) {placement} the parent object ({parent_obj_name}). " + \
+                                "Your probability scores should reflect how physically realistic and contextually appropriate each location is, based on object shape, size, and surroundings.\n" + \
+                                "Use the reference front-view images to guide your reasoning about object scale and placement feasibility.\n" + \
+                                "Your response must include exactly 9 probability values (between 0.0 and 1.0) — one for each grid position — and they must sum to 1.0.\n" + \
+                                "Assign a value of 0.0 to any position where placing the object is clearly impossible due to collisions, instability, or obstruction, or nearby clutter that might prevent safe placement. Consider whether the object’s size could lead to collisions with adjacent items.\n" + \
+                                "Respond with a **comma-separated list of number: probability pairs only**, and do not include any explanation or additional text."
+
+        content = [
+            {
+                "type": "text",
+                "text": prompt_user_1
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{prompt_img_base64}"
+                }
+            },
+            {
+                "type": "text",
+                    "text": "The above image shows a simulated scene containing a parent object. " +\
+                            "Several existing objects in the scene are visualized using segmentation overlays, and " +\
+                            "nine candidate positions are marked with numeric labels from [1] to [9]. "
+            },
+            {
+                "type": "text",
+                "text": "The following images show the front-view appearances of the parent and child objects involved in the scene. " +
+            "Please use these reference images to understand the shape, scale, and orientation of both objects when deciding where the child object should be placed."
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{parent_front_view_img_base64}"
+                }
+            },
+                        {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{child_front_view_img_base64}"
+                }
+            },
+            {
+                "type": "text",
+                "text": prompt_text_user_final
+            }
+        ]
+
+        text_dict_system = {
+            "type": "text",
+            "text": prompt_text_system
+        }
+        content_system = [text_dict_system]
+
+
+        NN_payload = {
+            "model": self.VERSIONS[self.version],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": content_system
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            # TODO
+            "temperature": 0.2,
+            "max_tokens": 300
+        }
+        return NN_payload
+

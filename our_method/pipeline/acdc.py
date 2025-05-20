@@ -63,7 +63,9 @@ class ACDC:
             task_object_resizing_path=None,
             gpt_api_key=None,
             gpt_version=None,
-            goal_task = None
+            goal_task = None,
+            resizing = None,
+            find_front_view = None,
     ):
         """
         Executes ACDC, running the following steps:
@@ -109,6 +111,7 @@ class ACDC:
             config["pipeline"]["TaskObjectRetrieval"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskObjectResizing"]["call"]["gpt_api_key"] = gpt_api_key
             config["pipeline"]["TaskProposals"]["call"]["gpt_api_key"] = gpt_api_key
+            config["pipeline"]["TaskSceneGenerator"]["call"]["gpt_api_key"] = gpt_api_key
         if gpt_version is not None:
             config["pipeline"]["RealWorldExtractor"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["DigitalCousinMatcher"]["call"]["gpt_version"] = gpt_version
@@ -118,6 +121,7 @@ class ACDC:
             config["pipeline"]["TaskObjectRetrieval"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskObjectResizing"]["call"]["gpt_version"] = gpt_version
             config["pipeline"]["TaskProposals"]["call"]["gpt_version"] = gpt_version
+            config["pipeline"]["TaskSceneGenerator"]["call"]["gpt_version"] = gpt_version
         config["pipeline"]["TaskObjectExtraction"]["call"]["goal_task"] = goal_task
         config["pipeline"]["TaskObjectExtractionAndSpatialReasoning"]["call"]["goal_task"] = goal_task
         print(f"""
@@ -320,6 +324,7 @@ class ACDC:
                     step_3_output_path=step_3_output_path,
                     task_spatial_reasoning_output_path = task_spatial_reasoning_output_path,
                     **config["pipeline"]["TaskObjectRetrieval"]["call"],
+                    find_front_view = find_front_view
                 )
                 if not success:
                     raise ValueError("Failed ACDC Step 6!")
@@ -342,6 +347,7 @@ class ACDC:
                 success, obj_resizing_output_path = obj_resizing(
                     task_feature_matching_path = task_object_retrieval_path,
                     **config["pipeline"]["TaskObjectResizing"]["call"],
+                    resizing = resizing
                 )
                 if not success:
                     raise ValueError("Failed SATELLITE Task Object Resizing!")
@@ -367,7 +373,7 @@ class ACDC:
                     step_3_output_path=step_3_output_path,
                     task_feature_matching_path = task_object_resizing_path,
                     # task_feature_matching_path = task_object_retrieval_path,
-                    **config["pipeline"]["RealSceneGenerator"]["call"],
+                    **config["pipeline"]["TaskSceneGenerator"]["call"],
                 )
                 if not success:
                     raise ValueError("Failed ACDC Step 7!")

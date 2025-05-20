@@ -59,7 +59,8 @@ class TaskObjectResizing:
             task_feature_matching_path,
             gpt_api_key,
             gpt_version="4o",
-            save_dir=None
+            save_dir=None,
+            resizing = True
     ):
         # Parse save_dir, and create the directory if it doesn't exist
         if save_dir is None:
@@ -86,57 +87,60 @@ class TaskObjectResizing:
         for scenario_obj_num_json_path in task_object_retrieval_output_info:
             with open(scenario_obj_num_json_path, "r") as f:
                 task_obj_output_info = json.load(f)
+            if resizing:
+                # Get current object size
+                obj_size_info = {}
+                for obj_name, obj_info in task_obj_output_info["objects"].items():
+                    obj = DatasetObject(
+                            name=obj_name,
+                            category=obj_info["category"],
+                            model=obj_info["model"],
+                            visual_only=True,
+                            scale=[1,1,1]
+                        )
+                    scene.add_object(obj)  # Add the object in the scene
+                    og.sim.step()
 
-            # Get current object size
-            obj_size_info = {}
-            for obj_name, obj_info in task_obj_output_info["objects"].items():
-                obj = DatasetObject(
-                        name=obj_name,
-                        category=obj_info["category"],
-                        model=obj_info["model"],
-                        visual_only=True,
-                        scale=[1,1,1]
-                    )
-                scene.add_object(obj)  # Add the object in the scene
-                og.sim.step()
+                    # Get Object Bounding Box
+                    obj_bbox_info = compute_obj_bbox_info(obj=obj)
+                    bbox_bottom_in_desired_frame = obj_bbox_info['bbox_bottom_in_desired_frame']
+                    bbox_top_in_desired_frame = obj_bbox_info['bbox_top_in_desired_frame']
 
-                # Get Object Bounding Box
-                obj_bbox_info = compute_obj_bbox_info(obj=obj)
-                bbox_bottom_in_desired_frame = obj_bbox_info['bbox_bottom_in_desired_frame']
-                bbox_top_in_desired_frame = obj_bbox_info['bbox_top_in_desired_frame']
+                    # Calculate dimensions of the object
+                    x_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_bottom_in_desired_frame[1])
+                    y_dim = np.linalg.norm(bbox_bottom_in_desired_frame[3] - bbox_bottom_in_desired_frame[0])
+                    z_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_top_in_desired_frame[0])
+                    # print(f"[{x_dim}, {y_dim}, {z_dim}]")
 
-                # Calculate dimensions of the object
-                x_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_bottom_in_desired_frame[1])
-                y_dim = np.linalg.norm(bbox_bottom_in_desired_frame[3] - bbox_bottom_in_desired_frame[0])
-                z_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_top_in_desired_frame[0])
-                # print(f"[{x_dim}, {y_dim}, {z_dim}]")
+                    obj_size_info[obj_name] = [x_dim, y_dim, z_dim]
 
-                obj_size_info[obj_name] = [x_dim, y_dim, z_dim]
+                    scene.remove_object(obj)
 
-                scene.remove_object(obj)
+                # Setup GPT prompt
+                task_object_resizing_payload = gpt.payload_task_object_resizing(
+                    object_size_info=obj_size_info,
+                    goal_task=task_obj_output_info['task'],
+                )
 
-            # Setup GPT prompt
-            task_object_resizing_payload = gpt.payload_task_object_resizing(
-                object_size_info=obj_size_info,
-                goal_task=task_obj_output_info['task'],
-            )
+                # Query GPT
+                gpt_text_response = gpt(task_object_resizing_payload, verbose=self.verbose)
 
-            # Query GPT
-            gpt_text_response = gpt(task_object_resizing_payload, verbose=self.verbose)
+                if gpt_text_response is None:
+                    # Failed, terminate early
+                    return False, None
 
-            if gpt_text_response is None:
-                # Failed, terminate early
-                return False, None
-
-            # Parse GPT result
-            gpt_task_obj_resize_result = self.parse_string(input_str=gpt_text_response)
+                # Parse GPT result
+                gpt_task_obj_resize_result = self.parse_string(input_str=gpt_text_response)
             # gpt_task_obj_resize_result = {"food": 0.3}
 
             task_obj_resize_info = copy.deepcopy(task_obj_output_info)
             for obj_name, obj_info in task_obj_resize_info['objects'].items():
                 # calculate scale factor
-                scale_factor = gpt_task_obj_resize_result[obj_name] / max(obj_size_info[obj_name])
-
+                if resizing:
+                    scale_factor = gpt_task_obj_resize_result[obj_name] / max(obj_size_info[obj_name])
+                else:
+                    scale_factor = 1.0
+                    
                 obj_info['scale'] = [1 * scale_factor for _ in range(3)]
                 # obj_info['scale_factor'] = scale_factor
 
