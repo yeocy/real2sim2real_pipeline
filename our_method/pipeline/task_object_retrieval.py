@@ -88,7 +88,7 @@ class TaskObjectRetrieval:
             gpt_api_key,
             gpt_version="4o",
             top_k_categories=3,
-            top_k_models=3,
+            top_k_models=5,
             n_digital_cousins=3,
             n_cousins_reselect_cand=3,
             remove_background=False,
