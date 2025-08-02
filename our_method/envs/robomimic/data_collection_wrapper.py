@@ -8,6 +8,10 @@ import numpy as np
 from pathlib import Path
 import os
 
+import pickle as pkl
+from icecream import ic
+ic.configureOutput(includeContext=True)
+
 h5py.get_config().track_order = True
 
 
@@ -103,6 +107,7 @@ class DataCollectionWrapper(EnvironmentWrapper):
                 - bool: truncated, i.e. whether this episode ended due to a time limit etc.
                 - dict: info, i.e. dictionary with any useful information
         """
+        # ic("step")
         next_obs, reward, terminated, truncated, info = self.env.step(action)
         self.step_count += 1
 
@@ -114,6 +119,8 @@ class DataCollectionWrapper(EnvironmentWrapper):
         step_data["terminated"] = terminated
         step_data["truncated"] = truncated
         self.current_traj_history.append(step_data)
+        # ic(self.current_traj_history)
+        # pkl.dump(self.current_traj_history, open("/home/kodogyu/projects/Research/SATELLITE/feasibility_test/behavior_cloning/data/pkl/current_traj.pkl", "wb"))
 
         self.current_obs = next_obs
 
@@ -126,6 +133,7 @@ class DataCollectionWrapper(EnvironmentWrapper):
         Returns:
             dict: Environment observation space after reset occurs
         """
+        # ic(self.current_traj_history)
         if len(self.current_traj_history) > 0:
             self.flush_current_traj()
 
@@ -147,6 +155,8 @@ class DataCollectionWrapper(EnvironmentWrapper):
         """
         # Only save successful demos and if actually recording
         success = self.env.is_success()["task"] or not self.only_successes
+        ic(success)
+        # ic(self.current_traj_history)
         if success and self.hdf5_file is not None:
             traj_grp_name = f"demo_{self.traj_count}"
             process_traj_to_hdf5(self.current_traj_history, self.hdf5_file, traj_grp_name)
@@ -154,6 +164,20 @@ class DataCollectionWrapper(EnvironmentWrapper):
         else:
             # Remove this demo
             self.step_count -= len(self.current_traj_history)
+
+        # Clear trajectory buffer
+        self.current_traj_history = []
+        # exit()
+
+    # 무조건 기록
+    def flush_current_traj_no_check(self):
+        """
+        Flush current trajectory data without checking for success
+        """
+        if self.hdf5_file is not None:
+            traj_grp_name = f"demo_{self.traj_count}"
+            process_traj_to_hdf5(self.current_traj_history, self.hdf5_file, traj_grp_name)
+            self.traj_count += 1
 
         # Clear trajectory buffer
         self.current_traj_history = []

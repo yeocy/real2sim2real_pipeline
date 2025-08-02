@@ -20,6 +20,7 @@ python 4_evaluate_policy.py \
 
 # Necessary to make sure robomimic registers these modules
 import digital_cousins
+import our_method
 
 import argparse
 import os
@@ -49,11 +50,13 @@ from robomimic.algo import RolloutPolicy
 from robomimic.scripts.playback_dataset import DEFAULT_CAMERAS
 
 import omnigibson as og
+from icecream import ic
+ic.configureOutput(includeContext=True)
 
 # Modify default cameras
 DEFAULT_CAMERAS[EB.EnvType.OMNIGIBSON_TYPE] = [None]    # None corresponds to viewer camera
 
-def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5, return_obs=False, camera_names=None, real=False, rate_measure=None):
+def rollout(policy, env, horizon, terminate_on_success, render=False, video_writer=None, video_skip=5, return_obs=False, camera_names=None, real=False, rate_measure=None):
     """
     Helper function to carry out rollouts. Supports on-screen rendering, off-screen rendering to a video, 
     and returns the rollout trajectory.
@@ -92,6 +95,11 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
         # hack that is necessary for robosuite tasks for deterministic action playback
         obs = env.reset_to(state_dict)
 
+    #! Debugging
+    target_obj = env.env.cabs[env.env._current_idx]
+    target_joint = target_obj.joints["j_link_1"]
+    ic(target_joint.upper_limit, target_joint.lower_limit)
+
     results = {}
     video_count = 0  # video frame counter
     total_reward = 0.
@@ -103,7 +111,8 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
         traj.update(dict(obs=[], next_obs=[]))
     try:
         for step_i in range(horizon):
-
+            # ic(obs)
+            # exit()
             # get action from policy
             t1 = time.time()
             act = policy(ob=obs)
@@ -151,7 +160,9 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
                 traj["next_obs"].append(ObsUtils.unprocess_obs_dict(next_obs))
 
             # break if done or if success
-            if done or success:
+            if terminate_on_success and (success or done):
+                ic(success, done)
+                print("terminating rollout on success")
                 break
 
             # update for next iter
@@ -231,6 +242,12 @@ def run_trained_agent(args):
         # read horizon from config
         rollout_horizon = config.experiment.rollout.horizon
 
+    # terminate on success
+    terminate_on_success = args.terminate_on_success
+    if terminate_on_success is None:
+        # read from config
+        terminate_on_success = config.experiment.rollout.terminate_on_success
+
     eval_idx = ckpt_dict["env_metadata"]['env_kwargs']['og_config']['wrapper']['eval_idx']
 
     # Set target object to rollout policy
@@ -257,6 +274,7 @@ def run_trained_agent(args):
     if (algo_name == "diffusion_policy") and EnvUtils.is_real_robot_gprs_env(env_meta=ckpt_dict["env_metadata"]):
         ckpt_dict["env_metadata"]["env_kwargs"]["absolute_actions"] = True
 
+    # ic(ckpt_dict)
     # create environment from saved checkpoint
     env, _ = FileUtils.env_from_checkpoint(
         ckpt_dict=ckpt_dict, 
@@ -308,13 +326,18 @@ def run_trained_agent(args):
         data_grp = data_writer.create_group("data")
         total_samples = 0
 
+    #! Apply Skill Settings
+    apply_OpenAndGrabBowl_settings(env)
+
     rollout_stats = []
+    ic(config.experiment.rollout)
     for i in tqdm(range(rollout_num_episodes)):
         try:
             stats, traj = rollout(
                 policy=policy, 
                 env=env, 
                 horizon=rollout_horizon, 
+                terminate_on_success=terminate_on_success,
                 render=args.render, 
                 video_writer=video_writer, 
                 video_skip=args.video_skip, 
@@ -380,13 +403,62 @@ def run_trained_agent(args):
     if write_dataset:
         # global metadata
         data_grp.attrs["total"] = total_samples
-        data_grp.attrs["env_args"] = json.dumps(env.serialize(), indent=4) # environment info
+        # ic(env.serialize())
+        # data_grp.attrs["env_args"] = json.dumps(env.serialize(), indent=4) # environment info
+        serialized_env = env.serialize()
+        serialized_env['env_kwargs']['external_cam_rot_randomization'] = serialized_env['env_kwargs']['external_cam_rot_randomization'].tolist()  # tensor to ndarray
+        serialized_env['env_kwargs']['external_cam_xyz_randomization'] = serialized_env['env_kwargs']['external_cam_xyz_randomization'].tolist()  # tensor to ndarray
+        # ic(serialized_env)
+        data_grp.attrs["env_args"] = json.dumps(serialized_env, indent=4) # environment info
         data_writer.close()
         print("Wrote dataset trajectories to {}".format(args.dataset_path))
 
     # Shutdown OG at the end
     og.shutdown()
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+def apply_OpenAndGrabBowl_settings(env):
+    # Target object settings
+    target_object_name = "shelf_cabinet_7"
+    target_link_name = "link_1"
+    
+    # Target object
+    # target_obj = env.env.scene.object_registry("name", target_object_name)
+    target_obj = env.env.cabs[env.env._current_idx]
+    ic(target_obj)
+    ic(target_obj.links)
+    target_link = target_obj.links[target_link_name]
+    ic(target_link)
+    ic(target_link.prim_path)
+    ic(target_obj.joints)
+
+    # Target Joint
+    for jnt in target_obj.joints.values():
+            if jnt.body1 == target_link.prim_path:
+                joint = jnt
+    assert joint is not None, f"Found no parent joint for link {target_link.name}!"
+
+    joint_axis_to_idx = {num: i for i, num in enumerate("XYZ")}
+    joint_axis_idx = joint_axis_to_idx[joint.axis]
+    ic(joint.axis, joint_axis_idx)
+    target_joint = joint
+
+    # Set joint limits
+    joint_limits = (target_joint.lower_limit, target_joint.upper_limit)
+    ic(joint_limits)
+    lower_limit, upper_limit = max(joint_limits[0], target_joint.lower_limit), min(joint_limits[1], target_joint.upper_limit)
+
+    target_joint.upper_limit = upper_limit * target_obj.scale[joint_axis_idx]
+    ic(target_joint.upper_limit)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -445,6 +517,16 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="(optional) override maximum horizon of rollout from the one in the checkpoint",
+    )
+
+    # whether to terminate rollout on success
+    parser.add_argument(
+        "--terminate_on_success",
+        type=str2bool,
+        nargs='?',
+        const=True,
+        default=None,
+        help="(optional) override rollout termination on success from the one in the checkpoint",
     )
 
     # Env Name (to override the one stored in model checkpoint)

@@ -6,25 +6,28 @@ from omnigibson.utils.sampling_utils import raytest_batch
 import omnigibson.lazy as lazy
 from our_method.skills.skill_base import ManipulationSkill
 import torch as th
-from enum import IntEnum
+from enum import IntEnum, auto
 
+from icecream import ic
+ic.configureOutput(includeContext=True)
 
 # Specific stage of the skill
-class OpenOrCloseStep(IntEnum):
-    CABINET_APPROACH = 0
-    CABINET_CONVERGE = 1
-    CABINET_GRASP = 2
-    CABINET_ARTICULATE = 3
-    CABINET_UNGRASP = 4
-    CABINET_RETREAT = 5
-    ROBOT_RETURN_TO_INITIAL = 6
-    TARGET_APPROACH = 7
-    TARGET_CONVERGE = 8
-    TARGET_GRASP = 9
-    TARGET_UP = 10
-    TARGET_PLACE = 11
-    TARGET_UNGRASP = 12
-    TARGET_RELEASE = 13
+class OpenandGrabStep(IntEnum):
+    CABINET_APPROACH = auto()
+    CABINET_CONVERGE = auto()
+    CABINET_GRASP = auto()
+    CABINET_ARTICULATE = auto()
+    CABINET_UNGRASP = auto()
+    CABINET_RETREAT = auto()
+    ROBOT_RETURN_TO_INITIAL = auto()
+    TARGET_APPROACH_HOVER = auto()
+    TARGET_APPROACH = auto()
+    TARGET_CONVERGE = auto()
+    TARGET_GRASP = auto()
+    TARGET_UP = auto()
+    TARGET_PLACE = auto()
+    TARGET_UNGRASP = auto()
+    TARGET_RELEASE = auto()
 
 
 class OpenandGrabSkill(ManipulationSkill):
@@ -165,6 +168,7 @@ class OpenandGrabSkill(ManipulationSkill):
         # Stop, make the target object disable gravity only, then set it into the sky to shoot rays
         with og.sim.stopped():
             self._target_obj.disable_gravity()
+            self._target_child_obj.disable_gravity()
 
         # 캐비닛을 공중으로 옮기고 link AABB 계산
         # Store the pose, move target obj into space,
@@ -304,12 +308,13 @@ class OpenandGrabSkill(ManipulationSkill):
                 radius=0.01,
                 rgba=[0, 1.0, 1.0, 1.0],
             )
-            self._scene.import_object(self._marker)
+            self._scene.add_object(self._marker)
             self._progress_traj_markers = {}
 
         # Stop sim and make target object non-visual only
         with og.sim.stopped():
             self._target_obj.enable_gravity()
+            self._target_child_obj.enable_gravity()
 
         # Restore state
         og.sim.load_state(state, serialized=False)
@@ -552,25 +557,25 @@ class OpenandGrabSkill(ManipulationSkill):
         self.target_step = False
         self.target_approach = 0.0
         # (1) Move to approach pose
-        if step == OpenOrCloseStep.CABINET_APPROACH:
+        if step == OpenandGrabStep.CABINET_APPROACH:
             n_steps = n_approach_steps
             joint_to_grasp_pos = self._joint_to_approach_pos
             grasp = False
 
         # (2) Approach the handle
-        elif step == OpenOrCloseStep.CABINET_CONVERGE:
+        elif step == OpenandGrabStep.CABINET_CONVERGE:
             n_steps = n_converge_steps
             joint_to_grasp_pos = self._joint_to_handle_pos
             grasp = False
 
         # (3) Grasp the handle
-        elif step == OpenOrCloseStep.CABINET_GRASP:
+        elif step == OpenandGrabStep.CABINET_GRASP:
             n_steps = n_grasp_steps
             no_op = True
             grasp = True
 
         # (4) Open the link
-        elif step == OpenOrCloseStep.CABINET_ARTICULATE:
+        elif step == OpenandGrabStep.CABINET_ARTICULATE:
             n_steps = n_articulate_steps
             joint_to_grasp_pos = self._joint_to_handle_pos
             cur_jnt_val = self._target_joint.get_state()[0][0]
@@ -584,20 +589,21 @@ class OpenandGrabSkill(ManipulationSkill):
             grasp = True
 
         # (5) Release grasp
-        elif step == OpenOrCloseStep.CABINET_UNGRASP:
+        elif step == OpenandGrabStep.CABINET_UNGRASP:
             n_steps = n_grasp_steps
             no_op = True
             grasp = False
 
         # (6) Retreat from grasp
-        elif step == OpenOrCloseStep.CABINET_RETREAT:
+        elif step == OpenandGrabStep.CABINET_RETREAT:
             n_steps = n_approach_steps
             joint_to_grasp_pos = self._joint_to_approach_pos
             grasp = False
-        elif step == OpenOrCloseStep.ROBOT_RETURN_TO_INITIAL:
+        elif step == OpenandGrabStep.ROBOT_RETURN_TO_INITIAL:
             assert self._initial_eef_pos is not None and self._initial_eef_quat is not None
             target_pos = self._initial_eef_pos
             target_quat = self._initial_eef_quat
+            ic(target_pos, target_quat)
 
             cmds = self.interpolate_to_pose(
                 target_pos=target_pos,
@@ -609,11 +615,25 @@ class OpenandGrabSkill(ManipulationSkill):
 
             buffer_cmds = th.ones((5, 7)) * cmds[-1].view(1, -1)
             cmds = th.concatenate([cmds, buffer_cmds], dim=0)
+            ic(cmds)
 
             return cmds, None  # 👈 여기서 바로 return!
 
         # (7) Approach Target Object
-        elif step == OpenOrCloseStep.TARGET_APPROACH:
+        elif step == OpenandGrabStep.TARGET_APPROACH_HOVER:
+            self.target_step = True
+            self.target_approach = 0.0
+            n_steps = n_approach_steps
+
+            joint_to_grasp_pos = self._joint_to_approach_target_pos
+
+            
+            cur_eef_pos = self._robot.get_eef_position()
+            ic(cur_eef_pos)
+            joint_to_grasp_pos[2] = cur_eef_pos[2]
+
+            grasp = False
+        elif step == OpenandGrabStep.TARGET_APPROACH:
             self.target_step = True
             self.target_approach = 0.2
             n_steps = n_approach_steps
@@ -623,41 +643,48 @@ class OpenandGrabSkill(ManipulationSkill):
             joint_to_grasp_pos = self._joint_to_approach_target_pos
             grasp = False
         # (8) Converge to Target Object
-        elif step == OpenOrCloseStep.TARGET_CONVERGE:
+        elif step == OpenandGrabStep.TARGET_CONVERGE:
             self.target_step = True
             n_steps = n_converge_steps
-            # joint_to_grasp_pos = self._joint_to_handle_pos
-            # joint_to_grasp_pos[2] += 0.2
-            # print("joint_to_grasp_pos: ",joint_to_grasp_pos)
-            joint_to_grasp_pos = self._joint_to_approach_target_pos
+            # # joint_to_grasp_pos = self._joint_to_handle_pos
+            # # joint_to_grasp_pos[2] += 0.2
+            # # print("joint_to_grasp_pos: ",joint_to_grasp_pos)
+            # joint_to_grasp_pos = self._joint_to_approach_target_pos
+
+            converge_offset = 0.05
+            child_aabb_lo, child_aabb_hi = self._target_child_obj.aabb
+            joint_to_grasp_pos[0] = child_aabb_lo[0]
+            joint_to_grasp_pos[1] = (child_aabb_lo[1] + child_aabb_hi[1]) / 2.0
+            joint_to_grasp_pos[2] = child_aabb_hi[2] - converge_offset
+
             grasp = False
         # (9) Grasp the Target Object
-        elif step == OpenOrCloseStep.TARGET_GRASP:
+        elif step == OpenandGrabStep.TARGET_GRASP:
             self.target_step = True
             n_steps = n_grasp_steps
             no_op = True
             grasp = True
         # (10) UP the Target Object
-        elif step == OpenOrCloseStep.TARGET_UP:
+        elif step == OpenandGrabStep.TARGET_UP:
             self.target_step = True
             self.target_approach = 0.4
             n_steps = n_articulate_steps
             joint_to_grasp_pos = self._joint_to_approach_target_pos
             grasp = True
         # (11) Move to Target Place
-        elif step == OpenOrCloseStep.TARGET_PLACE:
+        elif step == OpenandGrabStep.TARGET_PLACE:
             self.target_step = True
             self.target_approach = 0.0
             n_steps = n_approach_steps*2
             joint_to_grasp_pos = th.tensor([-0.8, -0.21, 1.026], dtype=th.float)
             grasp = True
         # (12) Release grasp
-        elif step == OpenOrCloseStep.TARGET_UNGRASP:
+        elif step == OpenandGrabStep.TARGET_UNGRASP:
             self.target_step = True
             n_steps = n_grasp_steps
             no_op = True
             grasp = False
-        elif step == OpenOrCloseStep.TARGET_RELEASE:
+        elif step == OpenandGrabStep.TARGET_RELEASE:
             self.target_step = True
             self.target_approach = 0.4
             n_steps = n_approach_steps
@@ -672,6 +699,8 @@ class OpenandGrabSkill(ManipulationSkill):
 
         grasp_val = -1.0 if grasp else 1.0
         null_cmds = None
+        ic(delta_jnt_vals)
+
         # If we're doing a no_op, don't move the EEF
         if no_op:
             # 움직이지 않고 고정된 pose에서만 grasp만 수행
@@ -688,6 +717,7 @@ class OpenandGrabSkill(ManipulationSkill):
                     return_mat=True,
                 )
             else:
+                ic(joint_to_grasp_pos)
                 _, target_mat = self.compute_grasp_pose(
                     joint_to_grasp_pos=joint_to_grasp_pos,
                     delta_jnt_val=0.0,
@@ -696,6 +726,7 @@ class OpenandGrabSkill(ManipulationSkill):
                 target_pos = joint_to_grasp_pos + th.tensor([0.0, 0.0, self.target_approach], dtype=th.float)
                 
 
+            ic(target_pos, target_mat)
             target_pos_in_robot_frame, target_aa_in_robot_frame = \
                 self.get_pose_in_robot_frame(pos=target_pos, mat=target_mat, return_mat=False, include_eef_offset=not maintain_current_orientation)
 
@@ -707,6 +738,7 @@ class OpenandGrabSkill(ManipulationSkill):
                 target_quat_in_robot_frame = self._robot.get_relative_eef_orientation()
 
             # Compute commands
+            ic(target_pos_in_robot_frame, target_quat_in_robot_frame)
             cmds = self.interpolate_to_pose(
                 target_pos=target_pos_in_robot_frame,
                 target_quat=target_quat_in_robot_frame,
@@ -738,6 +770,7 @@ class OpenandGrabSkill(ManipulationSkill):
 
         buffer_cmds = th.ones((n_buffer_steps, 7)) * cmds[-1].view(1, -1)
         cmds = th.concatenate([cmds, buffer_cmds], dim=0)
+        ic(cmds)
 
         if null_cmds is not None:
             buffer_null_cmds = th.ones((n_buffer_steps, null_cmds.shape[-1])) * null_cmds[-1].view(1, -1)
@@ -746,7 +779,7 @@ class OpenandGrabSkill(ManipulationSkill):
         # Possibly visualize
         if self._visualize:
             for marker_prim in self._progress_traj_markers.values():
-                og.sim.remove_object(marker_prim)
+                self._scene.remove_object(marker_prim)
             self._progress_traj_markers = dict()
             for i in range(len(cmds)):
                 marker_name = f"marker_{i}"
@@ -757,7 +790,7 @@ class OpenandGrabSkill(ManipulationSkill):
                     radius=0.01,
                     rgba=[1.0, 0, 0, 1.0],
                 )
-                og.sim.import_object(self._progress_traj_markers[marker_name])
+                self._scene.add_object(self._progress_traj_markers[marker_name])
 
                 if i == len(cmds) - 1:
                     last_act = cmds[-1]
@@ -847,7 +880,7 @@ class OpenandGrabSkill(ManipulationSkill):
 
     @property
     def steps(self):
-        return OpenOrCloseStep
+        return OpenandGrabStep
     
     @property
     def visualize_traj(self):

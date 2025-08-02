@@ -2,7 +2,8 @@ import os
 
 # Make sure robomimic registers these models
 import digital_cousins.utils.robomimic_utils
-import digital_cousins.envs
+# import digital_cousins.envs
+import our_method.envs
 
 # Set hardcoded-macros
 ROOT_DIR = os.path.dirname(__file__)

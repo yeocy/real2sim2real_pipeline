@@ -25,6 +25,9 @@ import digital_cousins
 from digital_cousins.utils.processing_utils import NumpyTorchEncoder, process_depth_linear, compute_point_cloud_from_depth, shrink_mask
 import digital_cousins.utils.transform_utils as NT
 
+from icecream import ic
+ic.configureOutput(includeContext=True)
+
 
 def get_env_class(env_meta=None, env_type=None, env=None):
     env_type = EU.get_env_type(env_meta=env_meta, env_type=env_type, env=env)
@@ -114,6 +117,7 @@ def process_omni_obs(
 
                 if pc_prune_depth_background:
                     pc_seg_ids[mod] = mod_data["seg_instance_id"].detach().cpu().numpy()
+                    ic(pc_seg_ids)
                 skip_data = True
                 break
             mod_data = mod_data[str_key]
@@ -154,18 +158,22 @@ def process_omni_obs(
         robot_to_world_tf = np.linalg.inv(NT.pose2mat(robot.get_position_orientation()))
 
         # Additionally prune to only include the desired segment strings
+        ic(include_segment_strs)
         if include_segment_strs is not None:
             valid_inst_ids = []
             for idx, prim_path in VisionSensor.INSTANCE_ID_REGISTRY.items():
                 print(f"prim_path: {prim_path}")
                 # Check over all inclusion strings, if not included in any, continue
                 for include_str in include_segment_strs:
+                    ic(include_str)
                     if include_str in prim_path:
                         valid_inst_ids.append(idx)
                         break
             valid_inst_ids = np.array(valid_inst_ids)
+            ic(valid_inst_ids)
 
         for pc_name, depth_linear in pc_depths.items():
+            ic(pc_name)
             # Grab sensor
             group, sensor_name, _ = pc_name.split("::")
             sensor = robot.sensors[sensor_name] if "robot" in group else external_sensors[sensor_name]
@@ -193,7 +201,9 @@ def process_omni_obs(
                 grid_limits=None,
             ).reshape(-1, 3)
             if include_segment_strs is not None:
+                ic(pc_seg_ids)
                 seg_ids = pc_seg_ids[pc_name]
+                ic(seg_ids)
                 seg_idxs = np.in1d(seg_ids.flatten(), valid_inst_ids).reshape(seg_ids.shape)
                 foreground_idxs = seg_idxs if foreground_idxs is None else (foreground_idxs & seg_idxs)
             if pc_prune_depth_background and foreground_idxs is not None:
@@ -203,10 +213,13 @@ def process_omni_obs(
                 pcs.append(pc)
             else:
                 step_obs_data[pc_name] = pc
+            ic(foreground_idxs)
 
         # Combine all point clouds if requested
         if combine_pc:
             step_obs_data["combined::point_cloud"] = np.concatenate(pcs, axis=0)
+    ic(step_obs_data)
+    exit()
 
     return step_obs_data
 
@@ -416,6 +429,7 @@ class EnvOmniGibson(EB.EnvBase):
                 - bool: truncated, i.e. whether this episode ended due to a time limit etc.
                 - dict: info, i.e. dictionary with any useful information
         """
+        ic("step")
         obs, r, terminated, truncated, info = self.env.step(action)
 
         # Keep iterating until EEF error is below some threshold

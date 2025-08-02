@@ -170,6 +170,9 @@ class RealSceneGenerator:
 
             """)
 
+        # print(f"n_scenes: {n_scenes}, n_cousins: {n_cousins}, n_objects: {n_objects}")
+        # exit()
+
         ###### Step 1 결과 로드 ######
         # Load relevant input information
         with open(step_1_output_path, "r") as f:
@@ -249,6 +252,8 @@ class RealSceneGenerator:
                 # Infer cousin category and model
                 # Assumes path is XXX/.../<CATEGORY>/model/<MODEL>/<MODEL>_<ANGLE>
                 cousin_info = obj_info["cousins"][obj_cousin_idx]
+                if self.verbose:
+                    print(f"Using cousin {cousin_info['category']} / {cousin_info['model']} for {obj_name}...")
 
                 # Import the cousin asset, stepping to make sure it's initialized properly
                 with og.sim.stopped():
@@ -288,7 +293,10 @@ class RealSceneGenerator:
                     verbose=self.verbose,
                 )
                 # if obj_idx == 4:
-                self.take_photo(n_render_steps=500)
+                img_before_align_obj_with_wall = self.take_photo(n_render_steps=500)
+                img_before_align_obj_with_wall = Image.fromarray(img_before_align_obj_with_wall)
+                # img_before_align_obj_with_wall.save(f"{scene_save_dir}/scene_{scene_count}_{obj_name}_before_align_obj_with_wall.png")
+
                 wall_mount_fpaths = detected_categories["mount"][obj_idx]["wall"]
                 if wall_mount_fpaths is not None:
                     # 📌 오브젝트를 주어진 벽(wall)에 맞춰서 회전시키고, 벽과 간격 없이 딱 붙도록 크기도 조정한 다음,
@@ -303,8 +311,11 @@ class RealSceneGenerator:
                             wall_is_vertical=True,
                             resize_only=mount_wall_idx > 0,
                         )
-                if obj_idx == 4:
-                    self.take_photo(n_render_steps=1000)
+                # if obj_idx == 4:
+                img_after_align_obj_with_wall = self.take_photo(n_render_steps=500)
+                img_after_align_obj_with_wall = Image.fromarray(img_after_align_obj_with_wall)
+                # img_after_align_obj_with_wall.save(f"{scene_save_dir}/scene_{scene_count}_{obj_name}_after_align_obj_with_wall.png")
+
                 # Save information and current visualization
                 obj_save_dir = f"{scene_save_dir}/{obj_name}"
                 Path(obj_save_dir).mkdir(parents=True, exist_ok=True)

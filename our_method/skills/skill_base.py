@@ -61,6 +61,8 @@ class SyntheticSkill:
         robot_mat = OT.quat2mat(robot_quat)
         cam_pos_global = robot_pos + robot_mat @ cam_pos_in_robot_frame
         cam_quat_global = OT.mat2quat(robot_mat @ OT.quat2mat(cam_quat_in_robot_frame))
+        print(f"#### robot_pos: {robot_pos}, robot_quat: {robot_quat}, robot_mat: {robot_mat}")
+        print(f"#### cam_pos_in_robot_frame: {cam_pos_in_robot_frame}, cam_quat_in_robot_frame: {cam_quat_in_robot_frame}, cam_pos_global: {cam_pos_global}, cam_quat_global: {cam_quat_global}")
 
         og.sim.viewer_camera.set_position_orientation(cam_pos_global, cam_quat_global)
 

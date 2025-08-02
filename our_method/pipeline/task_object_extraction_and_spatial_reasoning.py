@@ -91,6 +91,7 @@ class TaskObjectExtractionAndSpatialReasoning:
         annotated_image = self.image_bbox_annotations(real_scene_img_path, detected_categories_info)
         annotated_image_path = os.path.join(save_dir, "annotated_image.png")
         cv2.imwrite(annotated_image_path, annotated_image)
+        # exit()
 
         # GPT
         if self.verbose:

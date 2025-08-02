@@ -26,6 +26,8 @@ from our_method.utils.processing_utils import NumpyTorchEncoder, process_depth_l
 import our_method.utils.transform_utils as NT
 
 import matplotlib.pyplot as plt
+from icecream import ic
+ic.configureOutput(includeContext=True)
 
 depth_count = 0
 def get_env_class(env_meta=None, env_type=None, env=None):
@@ -66,7 +68,9 @@ def apply_depth_threshold(depth_img, threshold, rgb=None, depth_fill_value=5):
         np.ndarray: Mask, where nonzero values define the pixels considered "too far"
     """
     # Create masks of pixels where the depth value is greater than the threshold
-    mask = depth_img >= np.inf
+    # mask = depth_img >= np.inf
+    mask = depth_img > threshold
+
 
     if rgb is not None:
         # Set the RGB values to black where the mask is True
@@ -89,6 +93,7 @@ def process_omni_obs(
         combine_pc=True,
         include_segment_strs=None,
         postprocess_for_eval=False,
+        save_segmented_pcs=False,
 ):
     global depth_count
     step_obs_data = {}
@@ -113,8 +118,12 @@ def process_omni_obs(
     # include_segment_strs, external_sensors, obs_key, 등등 이해하기
     # =====================================
 
+    external_sensor = external_sensors['external_cam0'] if 'external_cam0' in external_sensors else None
+    # ic(external_sensor.get_position_orientation())
+
     for mod in obs_modalities:
         mod_data = obs
+        ic(mod_data, mod)
 
         skip_data = False
         for str_key in mod.split("::"):
@@ -130,12 +139,13 @@ def process_omni_obs(
                 # # 정규화 (0~1 범위로)
                 # depth_img_norm = (depth_img - depth_img.min()) / (depth_img.max() - depth_img.min() + 1e-8)
 
-                # plt.imsave(f"images/{depth_count}_depth.png", depth_img_norm, cmap="gray")
+                # plt.imsave(f"/home/kodogyu/projects/Research/SATELLITE/feasibility_test/behavior_cloning/data/imgs/depth_img/{depth_count}_depth.png", depth_img_norm, cmap="gray")
                 # depth_count += 1
 
                     
                 if pc_prune_depth_background:
                     pc_seg_ids[mod] = mod_data["seg_instance_id"].detach().cpu().numpy()
+                    # ic(pc_seg_ids)
                 skip_data = True
                 break
             mod_data = mod_data[str_key]
@@ -171,22 +181,45 @@ def process_omni_obs(
 
     # Process point cloud data
     if len(pc_depths) > 0:
+
+        # Extract and save segmented point clouds if requested
+        # ic(save_segmented_pcs, len(pc_seg_ids))
+        if save_segmented_pcs and len(pc_seg_ids) > 0:
+            cam_to_img_tf = NT.pose2mat(([0, 0, 0], NT.euler2quat([np.pi, 0, 0])))
+            robot_to_world_tf = np.linalg.inv(NT.pose2mat(robot.get_position_orientation()))
+            
+            segmented_pcs = extract_segmented_point_clouds(
+                pc_seg_ids=pc_seg_ids,
+                depth_linear=pc_depths,
+                sensor=external_sensors,
+                robot=robot,
+                cam_to_img_tf=cam_to_img_tf,
+                robot_to_world_tf=robot_to_world_tf,
+                include_segment_strs=include_segment_strs,
+                save_dir="/home/kodogyu/projects/Research/SATELLITE/real2sim2real_pipeline/our_method/etc_data/segmented_point_clouds"
+            )
+
         pcs = []
         cam_to_img_tf = NT.pose2mat(([0, 0, 0], NT.euler2quat([np.pi, 0, 0])))
         robot_to_world_tf = np.linalg.inv(NT.pose2mat(robot.get_position_orientation()))
 
         # Additionally prune to only include the desired segment strings
+        # ic(include_segment_strs)
         if include_segment_strs is not None:
             valid_inst_ids = []
             for idx, prim_path in VisionSensor.INSTANCE_ID_REGISTRY.items():
                 # print(f"prim_path: {prim_path}")
                 # Check over all inclusion strings, if not included in any, continue
                 for include_str in include_segment_strs:
+                    # ic(include_str)
                     if include_str in prim_path:
                         valid_inst_ids.append(idx)
                         break
             valid_inst_ids = np.array(valid_inst_ids)
+            # ic(valid_inst_ids)
+
         for pc_name, depth_linear in pc_depths.items():
+            # ic(pc_name)
             # Grab sensor
             group, sensor_name, _ = pc_name.split("::")
             sensor = robot.sensors[sensor_name] if "robot" in group else external_sensors[sensor_name]
@@ -213,8 +246,13 @@ def process_omni_obs(
                 visualize_every=0,
                 grid_limits=None,
             ).reshape(-1, 3)
+            # np.save("/home/kodogyu/projects/Research/SATELLITE/real2sim2real_pipeline/our_method/etc_data/point_clouds/" + pc_name.replace("::", "_") + ".npy", pc)
+            # print(f"Saved point cloud for {pc_name}: {len(pc)} points -> /home/kodogyu/projects/Research/SATELLITE/real2sim2real_pipeline/our_method/etc_data/point_clouds/{pc_name.replace('::', '_')}.npy")
+
             if include_segment_strs is not None:
+                # ic(pc_seg_ids)
                 seg_ids = pc_seg_ids[pc_name]
+                # ic(seg_ids)
                 seg_idxs = np.in1d(seg_ids.flatten(), valid_inst_ids).reshape(seg_ids.shape)
                 foreground_idxs = seg_idxs if foreground_idxs is None else (foreground_idxs & seg_idxs)
             if pc_prune_depth_background and foreground_idxs is not None:
@@ -224,13 +262,149 @@ def process_omni_obs(
                 pcs.append(pc)
             else:
                 step_obs_data[pc_name] = pc
+            # ic(foreground_idxs)
 
         # Combine all point clouds if requested
         if combine_pc:
             step_obs_data["combined::point_cloud"] = np.concatenate(pcs, axis=0)
 
+    # ic(step_obs_data)
+    # exit()
+
+
     return step_obs_data
 
+def extract_segmented_point_clouds(pc_seg_ids, depth_linear, sensor, robot, cam_to_img_tf, robot_to_world_tf, include_segment_strs=None, save_dir="segmented_pcs"):
+    """
+    Extract individual point clouds for each segment ID and save them separately.
+    
+    Args:
+        pc_seg_ids (dict): Dictionary mapping modality names to segmentation ID arrays
+        depth_linear (dict): Dictionary mapping modality names to depth arrays
+        sensor (dict): Dictionary of external sensors
+        robot: Robot object
+        cam_to_img_tf: Camera to image transformation matrix
+        robot_to_world_tf: Robot to world transformation matrix
+        include_segment_strs (list): List of segment strings to include
+        save_dir (str): Directory to save the point clouds
+    
+    Returns:
+        dict: Dictionary mapping seg_id to point cloud arrays
+    """
+    import os
+    from collections import defaultdict
+    
+    # Create save directory if it doesn't exist
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    segmented_pcs = defaultdict(list)
+    
+    # Get valid instance IDs if segment strings are specified
+    valid_inst_ids = None
+    if include_segment_strs is not None:
+        valid_inst_ids = []
+        for idx, prim_path in VisionSensor.INSTANCE_ID_REGISTRY.items():
+            # 1. All
+            # ic(idx, prim_path)
+            valid_inst_ids.append(idx)
+
+            # 2. Conditional
+            # for include_str in include_segment_strs:
+            #     if include_str in prim_path:
+            #         valid_inst_ids.append(idx)
+            #         break
+        valid_inst_ids = np.array(valid_inst_ids)
+
+    # ic(valid_inst_ids)
+
+    for pc_name, seg_ids in pc_seg_ids.items():
+        if pc_name not in depth_linear:
+            continue
+            
+        depth = depth_linear[pc_name]
+        
+        # Get sensor information
+        group, sensor_name, _ = pc_name.split("::")
+        # ic(group, sensor_name)
+        # Fix: Handle sensor dictionary properly
+        if "robot" in group:
+            current_sensor = robot.sensors[sensor_name]
+        else:
+            # sensor is a dictionary of external sensors
+            current_sensor = sensor[sensor_name]
+        
+        # Get sensor pose and intrinsics
+        sensor_pose = current_sensor.get_position_orientation()
+        K = current_sensor.intrinsic_matrix.cpu().numpy()
+        world_to_cam_tf = OT.pose2mat(sensor_pose).cpu().numpy()
+        
+        # Compute full point cloud for this camera
+        full_pc = compute_point_cloud_from_depth(
+            depth=depth,
+            K=K,
+            cam_to_img_tf=cam_to_img_tf,
+            world_to_cam_tf=robot_to_world_tf @ world_to_cam_tf,
+            visualize_every=0,
+            grid_limits=None,
+        ).reshape(-1, 3)
+        # ic(len(full_pc), full_pc.shape)
+        
+        # Get unique segment IDs
+        unique_seg_ids = np.unique(seg_ids.flatten())
+        # ic(unique_seg_ids)
+        
+        for seg_id in unique_seg_ids:
+            # Skip background or invalid IDs
+            if seg_id == 0:
+                continue
+                
+            # Filter by valid instance IDs if specified
+            if valid_inst_ids is not None and seg_id not in valid_inst_ids:
+                continue
+            
+            # Create mask for this segment ID
+            seg_mask = (seg_ids == seg_id)
+            
+            # Extract points for this segment
+            seg_pc = full_pc[seg_mask.flatten()]
+            # ic(seg_pc.shape)
+            
+            if len(seg_pc) > 0:
+                # Store in dictionary
+                segmented_pcs[seg_id].append(seg_pc)
+                
+                # Get segment name from registry
+                seg_name = VisionSensor.INSTANCE_ID_REGISTRY.get(seg_id, f"unknown_{seg_id}")
+                seg_name = seg_name.split('/')[-1] if '/' in seg_name else seg_name
+                
+                # Save individual point cloud
+                save_path = os.path.join(save_dir, f"seg_{seg_id}_{seg_name}_{pc_name.replace('::', '_')}.npy")
+                np.save(save_path, seg_pc)
+                
+                print(f"Saved point cloud for seg_id {seg_id} ({seg_name}): {len(seg_pc)} points -> {save_path}")
+            else:
+                print(f"No points found for seg_id {seg_id} ({seg_name}) in {pc_name}, skipping save.")
+
+    # Combine point clouds from multiple cameras for each segment ID
+    combined_segmented_pcs = {}
+    for seg_id, pc_list in segmented_pcs.items():
+        if len(pc_list) > 1:
+            combined_pc = np.concatenate(pc_list, axis=0)
+        else:
+            combined_pc = pc_list[0]
+        
+        combined_segmented_pcs[seg_id] = combined_pc
+        
+        # Save combined point cloud
+        seg_name = VisionSensor.INSTANCE_ID_REGISTRY.get(seg_id, f"unknown_{seg_id}")
+        seg_name = seg_name.split('/')[-1] if '/' in seg_name else seg_name
+        save_path = os.path.join(save_dir, f"combined_seg_{seg_id}_{seg_name}.npy")
+        np.save(save_path, combined_pc)
+        
+        print(f"Saved combined point cloud for seg_id {seg_id}: {len(combined_pc)} points -> {save_path}")
+    
+    return combined_segmented_pcs
 
 class EnvOmniGibson(EB.EnvBase):
     """
@@ -406,36 +580,53 @@ class EnvOmniGibson(EB.EnvBase):
         # (tensor([-0.2655, -0.3029,  1.8610]), tensor([ 0.3617, -0.2475, -0.5075,  0.7419]))
         # {'external_cam0': (tensor([-0.2655, -0.3029,  1.8610]), tensor([ 0.3617, -0.2475, -0.5075,  0.7419]))}
 
+        # # Load eef pc if requested
+        # self.finger_pcs = dict()
+        # self.eef2finger_tfs = dict()
+        # if self.include_eef_pc:
+        #     robot = self.env.robots[0]
+        #     # Make sure this is franka mounted, since that's the only robot we have the finger models for
+        #     # assert isinstance(robot, FrankaMounted), "Only FrankaMounted robot is supported for @include_eef_pc!"
+        #     for link in robot.finger_links[robot.default_arm]:
+        #         link_name = link.body_name
+        #         if link_name == "LEFT_FINGER_PROX":
+        #             filename = "gen3_lite_finray_finger_left_finger_prox.npy"
+        #         elif link_name == "RIGHT_FINGER_PROX":
+        #             filename = "gen3_lite_finray_finger_right_finger_prox.npy"
+        #         elif link_name == "LEFT_FINGER_DIST":
+        #             filename = "gen3_lite_finray_finger_left_finger_dist.npy"
+        #         elif link_name == "RIGHT_FINGER_DIST":
+        #             filename = "gen3_lite_finray_finger_right_finger_dist.npy"
+        #         else:
+        #             raise ValueError(f"Unknown link name: {link_name}")
+                
+        #         pc = th.tensor(np.load(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/{filename}"), dtype=th.float)
+        #         # pc = th.tensor(np.load(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/gen3_lite_finray_finger.npy"), dtype=th.float)
+        #         self.finger_pcs[link.visual_meshes["visuals"]] = pc
+
+        #     with open(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/tfs/gen3_lite_eef2finger_tfs.json", "r") as f:
+        #         eef2finger_tfs = json.load(f)
+
+        #     for name, tf in eef2finger_tfs.items():
+        #         self.eef2finger_tfs[name] = th.tensor(tf, dtype=th.float)
+
         # Load eef pc if requested
         self.finger_pcs = dict()
         self.eef2finger_tfs = dict()
         if self.include_eef_pc:
             robot = self.env.robots[0]
             # Make sure this is franka mounted, since that's the only robot we have the finger models for
-            # assert isinstance(robot, FrankaMounted), "Only FrankaMounted robot is supported for @include_eef_pc!"
+            assert isinstance(robot, FrankaMounted), "Only FrankaMounted robot is supported for @include_eef_pc!"
             for link in robot.finger_links[robot.default_arm]:
                 link_name = link.body_name
-                if link_name == "LEFT_FINGER_PROX":
-                    filename = "gen3_lite_finray_finger_left_finger_prox.npy"
-                elif link_name == "RIGHT_FINGER_PROX":
-                    filename = "gen3_lite_finray_finger_right_finger_prox.npy"
-                elif link_name == "LEFT_FINGER_DIST":
-                    filename = "gen3_lite_finray_finger_left_finger_dist.npy"
-                elif link_name == "RIGHT_FINGER_DIST":
-                    filename = "gen3_lite_finray_finger_right_finger_dist.npy"
-                else:
-                    raise ValueError(f"Unknown link name: {link_name}")
-                
-                pc = th.tensor(np.load(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/{filename}"), dtype=th.float)
-                # pc = th.tensor(np.load(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/gen3_lite_finray_finger.npy"), dtype=th.float)
+                pc = th.tensor(np.load(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/point_cloud/finray_finger.npy"), dtype=th.float)
                 self.finger_pcs[link.visual_meshes["visuals"]] = pc
 
-            with open(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/tfs/gen3_lite_eef2finger_tfs.json", "r") as f:
+            with open(f"{our_method.ASSET_DIR}/robots/{robot.__class__.__name__}/tfs/eef2finger_tfs.json", "r") as f:
                 eef2finger_tfs = json.load(f)
 
             for name, tf in eef2finger_tfs.items():
                 self.eef2finger_tfs[name] = th.tensor(tf, dtype=th.float)
-
 
     def wrap_env(self):
         if not self.wrap_during_initialization:
@@ -456,6 +647,7 @@ class EnvOmniGibson(EB.EnvBase):
                 - bool: truncated, i.e. whether this episode ended due to a time limit etc.
                 - dict: info, i.e. dictionary with any useful information
         """
+        # ic("step")
         obs, r, terminated, truncated, info = self.env.step(action)
 
         # Keep iterating until EEF error is below some threshold
@@ -592,6 +784,7 @@ class EnvOmniGibson(EB.EnvBase):
         Returns:
             array or None: If rendering to frame, returns the rendered frame. Otherwise, returns None
         """
+        # ic(VisionSensor.SENSORS)
         if mode == "human":
             assert self.render_onscreen, "Rendering has not been enabled for onscreen!"
             og.sim.render()
@@ -626,13 +819,18 @@ class EnvOmniGibson(EB.EnvBase):
             combine_pc=self.combine_pc,
             include_segment_strs=self.include_segment_strs,
             postprocess_for_eval=self.postprocess_visual_obs,
+            save_segmented_pcs=False,  # Set to True to save segmented point clouds
         )
+        # ic(di)
+        # ic(di.keys())
 
         # Prune down to desired total pc size
+        # ic(self.combine_pc)
         if self.combine_pc:
             combined_pc = th.tensor(di["combined::point_cloud"], dtype=th.float)
 
             # Additionally include EEF if requested
+            # ic(self.include_eef_pc)
             if self.include_eef_pc:
                 finger_pcs = []
                 robot_pose = OT.pose2mat(robot.get_position_orientation())
@@ -652,6 +850,11 @@ class EnvOmniGibson(EB.EnvBase):
                     combined_pc = th.concatenate([combined_pc, th.zeros((n_normal_pts, 1))], dim=1)
                 combined_pc = th.concatenate([combined_pc, combined_finger_pc], dim=0)
 
+        # while True:
+        #     og.sim.step()
+        #     continue
+
+            # ic(self.max_pc, len(combined_pc))
             if len(combined_pc) < self.max_pc:
                 n_copies = int(np.ceil(self.max_pc / len(combined_pc)))
                 combined_pc = th.concatenate([combined_pc] * n_copies, dim=0)

@@ -20,7 +20,7 @@ class GPT:
             self,
             api_key,
             version="4o",
-            max_retries=3,
+            max_retries=5,
             log_dir_tail="",
     ):
         """
@@ -34,6 +34,7 @@ class GPT:
         self.version = version
         self.max_retries = max_retries
         self.log_dir_tail = log_dir_tail
+        self.sleep_time = 10  # seconds to wait before retrying
 
     def __call__(self, payload, verbose=False):
         """
@@ -72,8 +73,8 @@ class GPT:
                 attempts += 1
                 print(f"Error querying GPT-{self.version} API: {e}")
                 if attempts < self.max_retries:
-                    print(f"Retrying in 5 seconds...")
-                    time.sleep(5)
+                    print(f"Retrying in {self.sleep_time} seconds...")
+                    time.sleep(self.sleep_time)
                 else:
                     print(f"Failed to query GPT-{self.version} API after {self.max_retries} attempts.")
                     return None

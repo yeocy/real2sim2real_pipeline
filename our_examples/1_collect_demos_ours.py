@@ -14,7 +14,8 @@ python 1_collect_demos.py \
 --seed 0
 
 """
-from our_method.envs.robomimic.skill_collection_wrapper import SkillCollectionKinovaWrapper
+# from our_method.envs.robomimic.skill_collection_wrapper import SkillCollectionKinovaWrapper
+from our_method.envs.robomimic.skill_collection_wrapper import SkillCollectionWrapper
 from our_method.envs.robomimic.env_og import EnvOmniGibson
 
 import omnigibson as og
@@ -24,6 +25,13 @@ import numpy as np
 import torch as th
 import argparse
 import json
+from datetime import datetime
+
+from icecream import ic
+
+def time_format():
+    return f'{datetime.now()}|> '
+ic.configureOutput(includeContext=True, prefix=time_format)
 
 # Hardcode macro values so that open is detected properly
 macros.object_states.open_state.JOINT_THRESHOLD_BY_TYPE[JointType.JOINT_REVOLUTE] = 1.0 / 10
@@ -33,6 +41,7 @@ USE_OSC = False                                                 # Whether to use
 USE_DELTA_CMDS = False                                           # Whether to use delta commands or not
 DIST_USE_FROM_HANDLE = True                                     # Whether to calculate distance from target object handle or center of its bbox
 VISUALIZE_SKILL = False                                         # Whether to visualize skill during demo collection or not
+# VISUALIZE_SKILL = True                                         # Whether to visualize skill during demo collection or not
 XYZ_RANDOMIZATION = np.array([0.03, 0.03, 0.03])                # (x,y,z) randomization to apply to target object
 Z_ROT_RANDOMIZATION = np.pi / 30                                # z-rotation randomization to apply to target object                          # z-rotation randomization to apply to target object
 EXTERNAL_CAM_XYZ_RANDOMIZATION = np.ones(3) * 0.01              # (x,y,z) randomization to apply to camera between episodes
@@ -70,35 +79,35 @@ def main(args):
     bbox_randomizations = np.array([bbox_train_randomization] * n_cousins)
     bbox_randomizations[eval_cousin_id] = 0
 
-    # Set robot params
-    robot_params = {
-        "model_name": "KinovaGen3Lite",      # Only currently works for FrankaPanda, FrankaMounted models
-        "robot_name": "robot0",
-        "reset_qpos": th.tensor([0.0, 0.3491, 2.6180, -1.5359, -0.6981, -1.5184, 0.0, 0.0, 0.0, 0.0]),  # 0  20  150  -88  -40  -87          # "reset_qpos": th.tensor([0.0, -0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        "eef_z_offset": 0.14,
-        # "open_qpos": None,              # If specified, joint values defining an open state for the robot gripper
-        "open_qpos": th.tensor([0.96, 0.96, -0.5, -0.5]),              # If specified, joint values defining an open state for the robot gripper
-        # "open_qpos": th.tensor([0.95, 0.95, -0.49, -0.49]),              # If specified, joint values defining an open state for the robot gripper # 0, 1: RIGHT_BOTTOM, 2 : Left DIST, 3 : RIGHT_DIST, 
-        "closed_qpos": th.tensor([-0.09, -0.09, 0.209, 0.209]),              # If specified, joint values defining an open state for the robot gripper
-        "root_link": "BASE",
-        # "vis_local_position": th.tensor([-0.3, 0.3, 0.8]),
-        "vis_local_position": th.tensor([0.0765683, 0.54672388, 1.01939066]),
-        # "vis_local_orientation": th.tensor([-0.30369818, -0.05854882, 0.00282494, 0.95096344]), # X, Y, Z, W
-        "vis_local_orientation": th.tensor([-0.05854882, 0.30369818, 0.95096344, -0.00282494]), # X, Y, Z, W
-        # "vis_local_orientation": th.tensor([-0.00282494, 0.95096344, -0.30369818, 0.05854882]),
-    }
-
     # # Set robot params
     # robot_params = {
-    #     "model_name": "FrankaMounted",      # Only currently works for FrankaPanda, FrankaMounted models
+    #     "model_name": "KinovaGen3Lite",      # Only currently works for FrankaPanda, FrankaMounted models
     #     "robot_name": "robot0",
-    #     "reset_qpos": th.tensor([-0.0027, -1.3000, -0.0012, -2.0000, -0.0082, 2.1875, 0.8032, 0.0400, 0.0400]),
-    #     "eef_z_offset": 0.180,
-    #     "open_qpos": None,              # If specified, joint values defining an open state for the robot gripper
-    #     "root_link": "panda_base",
-    #     "vis_local_position": th.tensor([-0.26549, -0.30288, 1.0 + 0.861]),
-    #     "vis_local_orientation": th.tensor([0.36165891, -0.24745751, -0.50752921, 0.74187715]),
+    #     "reset_qpos": th.tensor([0.0, 0.3491, 2.6180, -1.5359, -0.6981, -1.5184, 0.0, 0.0, 0.0, 0.0]),  # 0  20  150  -88  -40  -87          # "reset_qpos": th.tensor([0.0, -0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+    #     "eef_z_offset": 0.14,
+    #     # "open_qpos": None,              # If specified, joint values defining an open state for the robot gripper
+    #     "open_qpos": th.tensor([0.96, 0.96, -0.5, -0.5]),              # If specified, joint values defining an open state for the robot gripper
+    #     # "open_qpos": th.tensor([0.95, 0.95, -0.49, -0.49]),              # If specified, joint values defining an open state for the robot gripper # 0, 1: RIGHT_BOTTOM, 2 : Left DIST, 3 : RIGHT_DIST, 
+    #     "closed_qpos": th.tensor([-0.09, -0.09, 0.209, 0.209]),              # If specified, joint values defining an open state for the robot gripper
+    #     "root_link": "BASE",
+    #     # "vis_local_position": th.tensor([-0.3, 0.3, 0.8]),
+    #     "vis_local_position": th.tensor([0.0765683, 0.54672388, 1.01939066]),
+    #     # "vis_local_orientation": th.tensor([-0.30369818, -0.05854882, 0.00282494, 0.95096344]), # X, Y, Z, W
+    #     "vis_local_orientation": th.tensor([-0.05854882, 0.30369818, 0.95096344, -0.00282494]), # X, Y, Z, W
+    #     # "vis_local_orientation": th.tensor([-0.00282494, 0.95096344, -0.30369818, 0.05854882]),
     # }
+
+    # Set robot params
+    robot_params = {
+        "model_name": "FrankaMounted",      # Only currently works for FrankaPanda, FrankaMounted models
+        "robot_name": "robot0",
+        "reset_qpos": th.tensor([-0.0027, -1.3000, -0.0012, -2.0000, -0.0082, 2.1875, 0.8032, 0.0400, 0.0400]),
+        "eef_z_offset": 0.180,
+        "open_qpos": None,              # If specified, joint values defining an open state for the robot gripper
+        "root_link": "panda_base",
+        "vis_local_position": th.tensor([-0.26549, -0.30288, 1.0 + 0.861]),
+        "vis_local_orientation": th.tensor([0.36165891, -0.24745751, -0.50752921, 0.74187715]),
+    }
 
     # Define skill kwargs
     skill_kwargs = dict(
@@ -158,6 +167,79 @@ def main(args):
         "type": "Scene",
         "use_floor_plane": True,
     }
+    # cfg["robots"] = [{
+    #     "type": robot_params["model_name"],
+    #     "name": robot_params["robot_name"],
+    #     "position": np.ones(3) * 100.0,
+    #     "orientation": None,
+    #     "obs_modalities": ["rgb", "depth_linear", "seg_instance_id", "proprio"],
+    #     "scale": 1.0,
+    #     "self_collision": False,
+    #     "action_normalize": True if USE_DELTA_CMDS else False,
+    #     "action_type": "continuous",
+    #     # "grasping_mode": "physical",
+    #     "grasping_mode": "sticky",
+    #     "proprio_obs": ["eef_0_pos", "eef_0_quat", "gripper_0_qpos"],
+    #     "reset_joint_pos": robot_params["reset_qpos"],
+    #     "sensor_config": {
+    #           "VisionSensor": {
+    #             "sensor_kwargs": {
+    #               "image_height": 128,
+    #               "image_width": 128,
+    #             },
+    #         },
+    #     },
+    #     "controller_config": {
+    #         "arm_0": {
+    #             "name": "OperationalSpaceController" if USE_OSC else "InverseKinematicsController",
+    #             "mode": "pose_delta_ori" if USE_DELTA_CMDS else "absolute_pose",
+    #             #  "control_limits": {
+    #             #                 "position": [
+    #             #                     [-3.14, -3.14, -3.14, -3.14, -3.14, -3.14],  # 최소 위치 (rad)
+    #             #                     [3.14,  3.14,  3.14,  3.14,  3.14,  3.14],   # 최대 위치 (rad)
+    #             #                 ],
+    #             #                 "velocity": [
+    #             #                     [-1.6, -1.6, -1.6, -1.6, -1.6, -3.2],  # 최소 속도 (rad/s)
+    #             #                     [1.6,  1.6,  1.6,  1.6,  1.6,  3.2],   # 최대 속도 (rad/s)
+    #             #                 ],
+    #             #                 "effort": [
+    #             #                     [-10.0, -14.0, -10.0, -7.0, -7.0, -7.0],  # 최소 effort (Nm)
+    #             #                     [10.0,  14.0,  10.0,  7.0,  7.0,  7.0],   # 최대 effort (Nm)
+    #             #                 ],
+    #             #                 "has_limit": [True, True, True, True, True, True],
+    #             #             },
+    #             # "dof_idx": [0, 1, 2, 3, 4, 5],
+    #             "command_input_limits": "default" if USE_DELTA_CMDS else None,
+    #             "command_output_limits": controller_output_limits if USE_DELTA_CMDS else None,
+
+
+    #             # "kp": 200.0,  # 비례게인 (stiffness), 필요 시 조정
+    #             # "damping_ratio": 1.0,  # critical damping
+    #         },
+    #         "gripper_0": {
+    #             "name": "MultiFingerGripperController",
+    #             "mode": "smooth",
+    #             # "mode": "binary",
+    #              "control_limits": {
+    #                             "Position": [
+    #                                 [-2.7600, -2.7600, -2.7600, -2.6700, -2.6700, -2.6700, -0.09, -0.09, -0.209, -0.209],  # 최소 위치 (rad)
+    #                                 [2.7600, 2.7600, 2.7600, 2.6700, 2.6700, 2.6700, 0.9600, 0.9600,  0.49, 0.49],   # 최대 위치 (rad)
+    #                             ],
+    #                             # "velocity": [
+    #                             #     [-1.6, -1.6, -1.6, -1.6, -1.6, -3.2],  # 최소 속도 (rad/s)
+    #                             #     [1.6,  1.6,  1.6,  1.6,  1.6,  3.2],   # 최대 속도 (rad/s)
+    #                             # ],
+    #                             # "effort": [
+    #                             #     [-10.0, -14.0, -10.0, -7.0, -7.0, -7.0],  # 최소 effort (Nm)
+    #                             #     [10.0,  14.0,  10.0,  7.0,  7.0,  7.0],   # 최대 effort (Nm)
+    #                             # ],
+    #                             # "has_limit": [True, True, True, True, True, True],
+    #                         },
+    #             "open_qpos": robot_params["open_qpos"],
+    #             "closed_qpos": robot_params["closed_qpos"],
+    #         },
+    #     },
+    # }]
     cfg["robots"] = [{
         "type": robot_params["model_name"],
         "name": robot_params["robot_name"],
@@ -168,8 +250,7 @@ def main(args):
         "self_collision": False,
         "action_normalize": True if USE_DELTA_CMDS else False,
         "action_type": "continuous",
-        # "grasping_mode": "physical",
-        "grasping_mode": "sticky",
+        "grasping_mode": "physical",
         "proprio_obs": ["eef_0_pos", "eef_0_quat", "gripper_0_qpos"],
         "reset_joint_pos": robot_params["reset_qpos"],
         "sensor_config": {
@@ -184,50 +265,13 @@ def main(args):
             "arm_0": {
                 "name": "OperationalSpaceController" if USE_OSC else "InverseKinematicsController",
                 "mode": "pose_delta_ori" if USE_DELTA_CMDS else "absolute_pose",
-                #  "control_limits": {
-                #                 "position": [
-                #                     [-3.14, -3.14, -3.14, -3.14, -3.14, -3.14],  # 최소 위치 (rad)
-                #                     [3.14,  3.14,  3.14,  3.14,  3.14,  3.14],   # 최대 위치 (rad)
-                #                 ],
-                #                 "velocity": [
-                #                     [-1.6, -1.6, -1.6, -1.6, -1.6, -3.2],  # 최소 속도 (rad/s)
-                #                     [1.6,  1.6,  1.6,  1.6,  1.6,  3.2],   # 최대 속도 (rad/s)
-                #                 ],
-                #                 "effort": [
-                #                     [-10.0, -14.0, -10.0, -7.0, -7.0, -7.0],  # 최소 effort (Nm)
-                #                     [10.0,  14.0,  10.0,  7.0,  7.0,  7.0],   # 최대 effort (Nm)
-                #                 ],
-                #                 "has_limit": [True, True, True, True, True, True],
-                #             },
-                # "dof_idx": [0, 1, 2, 3, 4, 5],
                 "command_input_limits": "default" if USE_DELTA_CMDS else None,
                 "command_output_limits": controller_output_limits if USE_DELTA_CMDS else None,
-
-
-                # "kp": 200.0,  # 비례게인 (stiffness), 필요 시 조정
-                # "damping_ratio": 1.0,  # critical damping
             },
             "gripper_0": {
                 "name": "MultiFingerGripperController",
-                "mode": "smooth",
-                # "mode": "binary",
-                 "control_limits": {
-                                "Position": [
-                                    [-2.7600, -2.7600, -2.7600, -2.6700, -2.6700, -2.6700, -0.09, -0.09, -0.209, -0.209],  # 최소 위치 (rad)
-                                    [2.7600, 2.7600, 2.7600, 2.6700, 2.6700, 2.6700, 0.9600, 0.9600,  0.49, 0.49],   # 최대 위치 (rad)
-                                ],
-                                # "velocity": [
-                                #     [-1.6, -1.6, -1.6, -1.6, -1.6, -3.2],  # 최소 속도 (rad/s)
-                                #     [1.6,  1.6,  1.6,  1.6,  1.6,  3.2],   # 최대 속도 (rad/s)
-                                # ],
-                                # "effort": [
-                                #     [-10.0, -14.0, -10.0, -7.0, -7.0, -7.0],  # 최소 effort (Nm)
-                                #     [10.0,  14.0,  10.0,  7.0,  7.0,  7.0],   # 최대 effort (Nm)
-                                # ],
-                                # "has_limit": [True, True, True, True, True, True],
-                            },
+                "mode": "binary",
                 "open_qpos": robot_params["open_qpos"],
-                "closed_qpos": robot_params["closed_qpos"],
             },
         },
     }]
@@ -241,7 +285,9 @@ def main(args):
     cfg["wrapper"] = {
         # "type": "OpenCabinetWrapper",
         # "type": "PickCupInTheCabinetWrapper",
-        "type": "PickCupInTheCabinetKinovaWrapper",
+        # "type": "PickCupInTheCabinetKinovaWrapper",
+        "type": "OpenRefrigeratorWrapper",
+        "max_steps": 100,
         "eef_z_offset": robot_params["eef_z_offset"],
         "cab_categories": cousin_category_names,
         "cab_models": cousin_model_names,
@@ -273,9 +319,11 @@ def main(args):
         "scene_target_parent_obj_name": args.target_parent_obj,
         "scene_target_child_obj_name": args.target_child_obj,
     }
+    ic(cfg["wrapper"])
 
     # Create the robomimic-compatible environment
     # ACDC Scene 생성
+    ic("ACDC Scene 생성")
     env = EnvOmniGibson(
         env_name="test_env",
         obs_modalities=[
@@ -285,7 +333,8 @@ def main(args):
             f"{robot_params['robot_name']}::proprio",
         ],
         combine_pc=True,
-        include_segment_strs=["cabinet","pencil_case"],
+        # include_segment_strs=["cabinet"],
+        include_segment_strs=["refrigerator"],
         include_eef_pc=True,
         embed_eef_pc=True,
         max_pc=2048,
@@ -294,7 +343,7 @@ def main(args):
         render=True,
         wrap_during_initialization=True,
         robot_cam_depth_threshold=10,
-        external_cam_depth_threshold=100,
+        external_cam_depth_threshold=10,
         external_cam_xyz_randomization=EXTERNAL_CAM_XYZ_RANDOMIZATION,
         external_cam_rot_randomization=EXTERNAL_CAM_ROT_RANDOMIZATION,
         prune_depth_background=True,
@@ -304,20 +353,21 @@ def main(args):
 
     og.sim.viewer_camera.set_position_orientation(*scene_info["cam_pose"])
     
-    # # Wrap with skill data collection
-    # env = SkillCollectionWrapper(
-    #     env=env,
-    #     path=args.dataset_path,
-    #     only_successes=True,
-    #     use_delta_commands=USE_DELTA_CMDS,
-    # )
+    ic("Wrap with skill data collection")
     # Wrap with skill data collection
-    env = SkillCollectionKinovaWrapper(
+    env = SkillCollectionWrapper(
         env=env,
         path=args.dataset_path,
         only_successes=True,
         use_delta_commands=USE_DELTA_CMDS,
     )
+    # # Wrap with skill data collection
+    # env = SkillCollectionKinovaWrapper(
+    #     env=env,
+    #     path=args.dataset_path,
+    #     only_successes=True,
+    #     use_delta_commands=USE_DELTA_CMDS,
+    # )
 
     # Execute the skill
     video_count = 0
@@ -326,6 +376,7 @@ def main(args):
     np.random.seed(args.seed)
     th.manual_seed(args.seed)
 
+    ic(f"Collecting {args.n_demos_per_model} demos per model, excluding eval model {cousin_model_names[eval_cousin_id]}")
     for i, model in enumerate(cousin_model_names):
         if i == eval_cousin_id:
             # Skip this one, since it's the eval model
@@ -336,6 +387,7 @@ def main(args):
             env.env.env.set_cabinet_idx(idx=i)
             env.reset()
             env.collect_demo()
+            ic(env.env.is_success())
             if env.env.is_success()["task"]:
                 n_cab_successes += 1
                 buffer_traj_count += 1

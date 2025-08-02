@@ -21,6 +21,7 @@ from our_method.pipeline.task_object_extraction_and_spatial_reasoning import Tas
 from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
 from our_method.pipeline.task_object_resizing import TaskObjectResizing
+from our_method.pipeline.visualize_scene import VisualizeScene
 import omnigibson as og
 
 class ACDC:
@@ -53,6 +54,7 @@ class ACDC:
             run_step_6=False,
             run_step_7=False,
             run_task_object_resizing=False,
+            run_visualize_scene_imgs=False,
             task_proposals=False,
             step_1_output_path=None,
             step_2_output_path=None,
@@ -61,6 +63,7 @@ class ACDC:
             task_spatial_reasoning_output_path=None,
             task_object_retrieval_path=None,
             task_object_resizing_path=None,
+            scene_info_path=None,
             gpt_api_key=None,
             gpt_version=None,
             goal_task = None,
@@ -194,6 +197,8 @@ class ACDC:
 
                         """)
 
+                print(f'Step 3 Config: {config["pipeline"]["RealSceneGenerator"]["call"]}')
+
                 step_3 = RealSceneGenerator(
                     verbose=config["pipeline"]["verbose"],
                 )
@@ -288,7 +293,7 @@ class ACDC:
 {"#" * 50}
 
                         """)
-                print(f'TaskObjectExtractionAndSpatialReasoning Config: {config["pipeline"]["TaskObjectExtractionAndSpatialReasoning"]["call"]}')
+                # print(f'TaskObjectExtractionAndSpatialReasoning Config: {config["pipeline"]["TaskObjectExtractionAndSpatialReasoning"]["call"]}')
                 step_4_and_5 = TaskObjectExtractionAndSpatialReasoning(
                     verbose=config["pipeline"]["verbose"],
                 )
@@ -377,7 +382,18 @@ class ACDC:
                 )
                 if not success:
                     raise ValueError("Failed ACDC Step 7!")
-                
+
+        if run_visualize_scene_imgs:
+            step_visualize = VisualizeScene(
+                verbose=config["pipeline"]["verbose"],
+            )
+
+            success = step_visualize(
+                scene_info_path=scene_info_path,
+            )
+
+            if not success:
+                raise ValueError("Failed ACDC Step 7!")
 def main(args):
 
     # Create ACDC and run

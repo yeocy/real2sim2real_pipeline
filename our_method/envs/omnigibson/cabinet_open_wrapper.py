@@ -4,8 +4,9 @@ import random
 import json
 
 import torch as th
-from digital_cousins.envs.omnigibson.skill_wrapper import SkillWrapper
-from digital_cousins.skills.open_or_close_skill import OpenOrCloseSkill
+from our_method.envs.omnigibson.skill_wrapper import SkillWrapper
+from our_method.skills.open_or_close_skill import OpenOrCloseSkill
+
 import omnigibson as og
 from omnigibson.objects import DatasetObject
 from omnigibson.prims.material_prim import MaterialPrim
@@ -13,6 +14,8 @@ from omnigibson.utils.asset_utils import get_all_object_category_models
 import omnigibson.utils.transform_utils as OT
 from omnigibson.object_states import ToggledOn
 
+from icecream import ic
+ic.configureOutput(includeContext=True)
 
 class OpenCabinetWrapper(SkillWrapper):
     """
@@ -110,6 +113,7 @@ class OpenCabinetWrapper(SkillWrapper):
         # This is the name of lowest object (on the floor) in the subgraph where cabinets are located
         self.obj_root_in_cab_subgraph = None
         if self.scene_info is not None:
+            # ic(self.scene_graph, self.scene_target_obj_name)
             obj_root_in_cab_subgraph = self.scene_graph[self.scene_target_obj_name]["objBeneath"]
             if "wall" in self.scene_graph[self.scene_target_obj_name]["mount"] and "floor" not in self.scene_graph[self.scene_target_obj_name]["mount"]:
                 self.obj_root_in_cab_subgraph = None
@@ -210,6 +214,8 @@ class OpenCabinetWrapper(SkillWrapper):
                         pose_A=th.tensor(obj_info["tf_from_cam"], dtype=th.float),
                         pose_A_in_B=cam_pose_mat,
                     ))
+                    obj_pos[2] += 3  # 모든 object의 z축 위치를 3만큼 올려줌
+                    ic(obj_pos)
                     obj.set_position_orientation(th.tensor(obj_pos, dtype=th.float), th.tensor(obj_quat, dtype=th.float))
 
                     # If this is the scene target object, make invisible
@@ -315,6 +321,7 @@ class OpenCabinetWrapper(SkillWrapper):
 
             self.robot.set_position_orientation(*default_robot_pose)
             self._default_robot_poses.append(default_robot_pose)
+            ic(self._default_robot_poses)
 
             with og.sim.stopped():
                 cab.set_position_orientation(position=th.ones(3) * (100 + i * 5.0))

@@ -6,11 +6,16 @@ task = "Pick up the water bottle on the table"
 object = 'water_bottle'
 
 #! Directory
-ours_base_dir = "<path/to/ours/acdc_output>"
-robogen_base_dir = "<path/to/RoboGen>"
-robogen_base_dir = f"{robogen_base_dir}/<path/to/robogen_task_config.yaml>"
-urdf_base_dir = "<path/to/urdf_dir>"
-
+# ours_base_dir = "<path/to/ours/acdc_output>"
+# robogen_base_dir = "<path/to/RoboGen>"
+# robogen_base_dir = f"{robogen_base_dir}/<path/to/robogen_task_config.yaml>"
+# urdf_base_dir = "<path/to/urdf_dir>"
+ours_base_dir = "/home/kodogyu/projects/Research/SATELLITE/real2sim2real_pipeline/our_method_test/maniskill_hab/acdc_output"
+robogen_base_dir = "/home/kodogyu/github_repos/RoboGen"
+# robogen_config_path = f"{robogen_base_dir}/data/generated_task_from_ours/Pick_up_the_water_bottle_on_the_table_water_bottle__2025-04-20-19-13-08/Pick_up_the_water_bottle_on_the_table_The_robot_arm_needs_to_approach_the_water_bottle_on_the_table_grasp_it_securely_and_then_lift_it_up_from_the_table.yaml"
+# robogen_config_path = f"{robogen_base_dir}/data/generated_from_experiments/exp_RAL/exp_1/robogen_exp_config1.yaml"
+robogen_config_path = None
+urdf_base_dir = "/home/kodogyu/projects/Research/SATELLITE/real2sim2real_pipeline/our_method_test/urdf"
 
 def step1():
     # Run Subtask decomposition
@@ -36,6 +41,16 @@ def step2():
               --camera_position={cam_position_str} --camera_orientation {cam_orientation_str} \
               --use_gpt_spatial_relationship 0")
 
+def transport_configurations():
+    # Transport Configurations
+    cam_pose = ours_config_to_robogen_config(ours_base_dir=ours_base_dir, urdf_base_dir=urdf_base_dir, robogen_config_path=robogen_config_path)
+    # os.system(f"python ours_config_to_robogen_config.py --ours_base_dir {ours_base_dir} --robogen_config_path {robogen_config_path}")
+    print(f"cam_pose: {cam_pose}")
+    cam_position_str = str(cam_pose[0]).replace(" ", "")
+    cam_orientation_str = str(cam_pose[1]).replace(" ", "")
+    print(f"cam_position_str: {cam_position_str}")
+    print(f"cam_orientation_str: {cam_orientation_str}")
+
 def continue_learning(cam_position_str, cam_orientation_str):
     restore_state_file = "data/generated_task_from_ours/Pick_up_the_water_bottle_on_the_table_water_bottle__2025-04-20-19-13-08/task_Pick_up_the_water_bottle_on_the_table/primitive_states/2025-04-20-19-50-40/grasp_the_water_bottle/state_147.pkl"
     substep = 1
@@ -52,5 +67,6 @@ def continue_learning(cam_position_str, cam_orientation_str):
 if __name__ == "__main__":
     # step1()
     # step2()
-    continue_learning(cam_position_str="[-1.0188654760225047,-1.3939319681343485,1.7417502443113455]",
-                      cam_orientation_str="[0.4685056303627537,-0.0067159416974899196,0.0,0.8834349837115999]")
+    # continue_learning(cam_position_str="[-1.0188654760225047,-1.3939319681343485,1.7417502443113455]",
+    #                   cam_orientation_str="[0.4685056303627537,-0.0067159416974899196,0.0,0.8834349837115999]")
+    transport_configurations()

@@ -2,10 +2,12 @@ from copy import deepcopy
 from collections.abc import Iterable
 import random
 import json
+from datetime import datetime
 
 import torch as th
 from digital_cousins.envs.omnigibson.skill_wrapper import SkillWrapper
-from digital_cousins.skills.open_or_close_skill import OpenOrCloseSkill
+# from digital_cousins.skills.open_or_close_skill import OpenOrCloseSkill
+from our_method.skills.move import MoveSkill
 import omnigibson as og
 from omnigibson.objects import DatasetObject
 from omnigibson.prims.material_prim import MaterialPrim
@@ -14,9 +16,12 @@ import omnigibson.utils.transform_utils as OT
 from omnigibson.object_states import ToggledOn
 
 from icecream import ic
-ic.configureOutput(includeContext=True)
 
-class OpenCabinetWrapper(SkillWrapper):
+def time_format():
+    return f'{datetime.now()}|> '
+ic.configureOutput(includeContext=True, prefix=time_format)
+
+class OpenRefrigeratorWrapper(SkillWrapper):
     """
     An OmniGibson environment wrapper for instantiating a specific OpenCabinet task
 
@@ -78,7 +83,7 @@ class OpenCabinetWrapper(SkillWrapper):
             randomize_cabinet_pose=True,
             randomize_agent_pose=False,
             task_activity_name=None,
-            task_obj_bddl_name="cabinet.n.01_1",
+            task_obj_bddl_name="electric_refrigerator.n.01_1",
             custom_bddl=None,
             max_steps=500,
             skill_kwargs=None,
@@ -87,6 +92,7 @@ class OpenCabinetWrapper(SkillWrapper):
             visualize_skill=False,
             scene_info=None,
             scene_target_obj_name=None,
+            scene_target_parent_obj_name=None,
             non_target_objs_visual_only=True,
     ):  
         # Store values
@@ -100,7 +106,8 @@ class OpenCabinetWrapper(SkillWrapper):
         
         # Values used to randomize other objects
         self.scene_info = scene_info
-        self.scene_target_obj_name = scene_target_obj_name
+        # self.scene_target_obj_name = scene_target_obj_name
+        self.scene_target_obj_name = scene_target_parent_obj_name
         self.non_target_objs_visual_only = non_target_objs_visual_only
         self.scene_graph = None
         if self.scene_info is not None:
@@ -212,7 +219,6 @@ class OpenCabinetWrapper(SkillWrapper):
                         pose_A=th.tensor(obj_info["tf_from_cam"], dtype=th.float),
                         pose_A_in_B=cam_pose_mat,
                     ))
-                    obj_pos[2] += 3
                     obj.set_position_orientation(th.tensor(obj_pos, dtype=th.float), th.tensor(obj_quat, dtype=th.float))
 
                     # If this is the scene target object, make invisible
@@ -228,6 +234,7 @@ class OpenCabinetWrapper(SkillWrapper):
             # Set this object to be very far away
             target_obj.set_position_orientation(position=th.ones(3) * -300.0)
 
+        ic("Starting to load refrigerators...")
         for i, (cab_category, cab_model, cab_link, cab_bbox, randomize_tex) in \
                 enumerate(zip(cab_categories, cab_models, cab_links, self._default_cab_bboxs, self._randomize_textures)):
             with og.sim.stopped():
@@ -236,7 +243,7 @@ class OpenCabinetWrapper(SkillWrapper):
 
                 # Skip the object loading if it is the original target object (i.e.: model)
                 cab = DatasetObject(
-                    name=f"cabinet{i}",
+                    name=f"refrigerator{i}",
                     category=cab_category,
                     model=cab_model,
                     bounding_box=cab_bbox,
@@ -292,11 +299,13 @@ class OpenCabinetWrapper(SkillWrapper):
                 if joint_name[2:] != self.target_links[i]:
                     joint.friction = 10.0   # Usually < 0.1
 
+            ic("Creating skill")
             # Create the skill
-            skill = OpenOrCloseSkill(
+            skill = MoveSkill(
                 robot=self.robot,
                 eef_z_offset=eef_z_offset,
                 target_obj=cab,
+                target_child_obj=cab,
                 target_link=link,
                 handle_dist=handle_dist,
                 approach_dist=approach_dist,
@@ -304,6 +313,7 @@ class OpenCabinetWrapper(SkillWrapper):
                 visualize=visualize_skill,
                 visualize_cam_pose=visualize_cam_pose,
             )
+            ic("Skill created")
 
             # Compute the base pose to set the robot at
             default_robot_pos, default_robot_quat = skill.compute_robot_base_pose(
@@ -352,6 +362,7 @@ class OpenCabinetWrapper(SkillWrapper):
         task_config["predefined_problem"] = self.default_bddl if custom_bddl is None else custom_bddl
         task_config["online_object_sampling"] = True
         task_config["termination_config"] = {"max_steps": max_steps}
+        ic(task_config)
         env.update_task(task_config=task_config)
 
         # Reset all target objects and robot, then update initial state
@@ -571,23 +582,23 @@ class OpenCabinetWrapper(SkillWrapper):
             str: The default BDDL for this task wrapper
         """
         return """
-        (define (problem open_cabinet-0)
+        (define (problem open_refrigerator-0)
             (:domain omnigibson)
 
             (:objects
-                cabinet.n.01_1 - cabinet.n.01
+                electric_refrigerator.n.01_1 - electric_refrigerator.n.01
                 agent.n.01_1 - agent.n.01
             )
 
             (:init
-                (inroom cabinet.n.01_1 none)
+                (inroom electric_refrigerator.n.01_1 none)
                 (not
-                    (open cabinet.n.01_1)
+                    (open electric_refrigerator.n.01_1)
                 )
             )
 
             (:goal
-                (open cabinet.n.01_1)
+                (open electric_refrigerator.n.01_1)
             )
         )
         """

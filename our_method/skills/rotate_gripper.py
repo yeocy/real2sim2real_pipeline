@@ -6,20 +6,22 @@ from omnigibson.utils.sampling_utils import raytest_batch
 import omnigibson.lazy as lazy
 from our_method.skills.skill_base import ManipulationSkill
 import torch as th
-from enum import IntEnum
+from enum import IntEnum, auto
 
+from icecream import ic
+ic.configureOutput(includeContext=True)
 
 # Specific stage of the skill
-class OpenOrCloseStep(IntEnum):
-    APPROACH = 0
-    CONVERGE = 1
-    GRASP = 2
-    ARTICULATE = 3
-    UNGRASP = 4
-    RETREAT = 5
+class RotateGripperStep(IntEnum):
+    ROTATE_Zp = auto()
+    ROTATE_Yp = auto()
+    ROTATE_Xp = auto()
+    ROTATE_Xm = auto()
+    ROTATE_Ym = auto()
+    ROTATE_Zm = auto()
 
 
-class OpenOrCloseSkill(ManipulationSkill):
+class RotateGripperSkill(ManipulationSkill):
     """
     Class for opening / closing an articulated object. It is assumed the articulated object has a handle to grasp, which
     will automatically be detected.
@@ -29,6 +31,7 @@ class OpenOrCloseSkill(ManipulationSkill):
             self,
             robot,
             target_obj,
+            target_child_obj,
             target_link,
             eef_z_offset=0.093,
             handle_dist=0.02,
@@ -64,10 +67,12 @@ class OpenOrCloseSkill(ManipulationSkill):
 
         # Store target obj information
         self._target_obj = target_obj
+        self._target_child_obj = target_child_obj
         self._target_link = target_link
         self._handle_dist = handle_dist
         self._handle_offset = th.zeros(3) if handle_offset is None else th.tensor(handle_offset, dtype=th.float)
         self._approach_dist = approach_dist
+        # self._approach_dist = 0.5
         self._flip_xy_scale_if_not_x_oriented = flip_xy_scale_if_not_x_oriented
 
         # Other info that will be filled in later
@@ -82,10 +87,13 @@ class OpenOrCloseSkill(ManipulationSkill):
         self._joint_rel_mat = None                  # (3, 3)-array
         self._joint_to_handle_pos = None            # 3-array
         self._joint_to_approach_pos = None          # 3-array
+        self._joint_to_approach_target_pos = None
         self._approach_idx = None                   # {0, 1}
         self._approach_sign = None                  # {-1, 1}
         self._link_to_grasp_pos = None              # 3-array
         self._update_grasp_pose = None             # Lambda function that internally updates joint_to_handle/approach_pos based on current obj scale
+        self.target_step = False
+        self._eef_z_offset = eef_z_offset
 
         # Call super
         super().__init__(
@@ -110,48 +118,50 @@ class OpenOrCloseSkill(ManipulationSkill):
         assert eef_controller._mode == "binary", f"Skill {self.__class__.__name__} requires mode 'binary' for EEF controller!"
         assert not eef_controller._inverted, f"Skill {self.__class__.__name__} requires inverted=False for EEF controller!"
 
-        # Close all joints, move the target object into space, and Infer whether cabinet is X-oriented
-        # (front corresponds to X-axis), or Y-oriented (front corresponds to Y-axis)
-        # We infer by setting all joints to slightly non-zero values and measuring the change in AABB.
-        # If X changes, then it is likely X-facing. If Y changes, then it is likely Y-facing
-        # Object가 X축 기준인지 Y축 기준인지 확인
-        self._target_obj.set_position_orientation(th.ones(3) * -100.0, th.tensor([0, 0, 0, 1.0], dtype=th.float))
-        self._target_obj.set_joint_positions(th.zeros(self._target_obj.n_joints), drive=False)
-        self._target_obj.keep_still()
-        og.sim.step()
-        original_aabb_extent = self._target_obj.aabb_extent
-        joint_vals = self._target_obj.joint_lower_limits + 0.1 * (self._target_obj.joint_upper_limits - self._target_obj.joint_lower_limits)
-        self._target_obj.set_joint_positions(joint_vals, drive=False)
-        og.sim.step()
-        new_aabb_extent = self._target_obj.aabb_extent
-        aabb_extent_diff = new_aabb_extent - original_aabb_extent
-        self._is_x_oriented = aabb_extent_diff[0] > aabb_extent_diff[1]
-        ##################################################################################################
+        # # Close all joints, move the target object into space, and Infer whether cabinet is X-oriented
+        # # (front corresponds to X-axis), or Y-oriented (front corresponds to Y-axis)
+        # # We infer by setting all joints to slightly non-zero values and measuring the change in AABB.
+        # # If X changes, then it is likely X-facing. If Y changes, then it is likely Y-facing
+        # # Object가 X축 기준인지 Y축 기준인지 확인
+        # self._target_obj.set_position_orientation(th.ones(3) * -100.0, th.tensor([0, 0, 0, 1.0], dtype=th.float))
+        # self._target_obj.set_joint_positions(th.zeros(self._target_obj.n_joints), drive=False)
+        # self._target_obj.keep_still()
+        # og.sim.step()
+        # original_aabb_extent = self._target_obj.aabb_extent
+        # joint_vals = self._target_obj.joint_lower_limits + 0.1 * (self._target_obj.joint_upper_limits - self._target_obj.joint_lower_limits)
+        # self._target_obj.set_joint_positions(joint_vals, drive=False)
+        # og.sim.step()
+        # new_aabb_extent = self._target_obj.aabb_extent
+        # aabb_extent_diff = new_aabb_extent - original_aabb_extent
+        # self._is_x_oriented = aabb_extent_diff[0] > aabb_extent_diff[1]
+        # ##################################################################################################
 
-        # XY 비율 보정
-        if not self._is_x_oriented and self._flip_xy_scale_if_not_x_oriented:
-            # Flip xy scale
-            with og.sim.stopped():
-                xy_extent_ratio = original_aabb_extent[1] / original_aabb_extent[0] 
-                obj_scale = self._target_obj.scale
-                self._target_obj.scale = obj_scale * th.tensor([xy_extent_ratio, 1 / xy_extent_ratio, 1.0], dtype=th.float)
+        # # XY 비율 보정
+        # if not self._is_x_oriented and self._flip_xy_scale_if_not_x_oriented:
+        #     # Flip xy scale
+        #     with og.sim.stopped():
+        #         xy_extent_ratio = original_aabb_extent[1] / original_aabb_extent[0] 
+        #         obj_scale = self._target_obj.scale
+        #         self._target_obj.scale = obj_scale * th.tensor([xy_extent_ratio, 1 / xy_extent_ratio, 1.0], dtype=th.float)
 
-        # Z축 회전 보정 행렬
-        # If Y-oriented, we rotate the cabinet by 90 deg wrt the Z-axis
-        self._obj_z_rot_offset = OT.quat2mat(th.tensor([0, 0, 0, 1.0], dtype=th.float) if self._is_x_oriented else th.tensor([0, 0, 0.707, 0.707], dtype=th.float))
+        # # Z축 회전 보정 행렬
+        # # If Y-oriented, we rotate the cabinet by 90 deg wrt the Z-axis
+        # self._obj_z_rot_offset = OT.quat2mat(th.tensor([0, 0, 0, 1.0], dtype=th.float) if self._is_x_oriented else th.tensor([0, 0, 0.707, 0.707], dtype=th.float))
+        self._obj_z_rot_offset = OT.quat2mat(th.tensor([0, 0, 0, 1.0], dtype=th.float))
 
-        # Get the corresponding parent joint
-        # 조인트 연결 정보 찾기
-        joint = None
-        for jnt in self._target_obj.joints.values():
-            if jnt.body1 == self._target_link.prim_path:
-                joint = jnt
-        assert joint is not None, f"Found no parent joint for link {self._target_link.name}!"
-        self._target_joint = joint
+        # # Get the corresponding parent joint
+        # # 조인트 연결 정보 찾기
+        # joint = None
+        # for jnt in self._target_obj.joints.values():
+        #     if jnt.body1 == self._target_link.prim_path:
+        #         joint = jnt
+        # assert joint is not None, f"Found no parent joint for link {self._target_link.name}!"
+        # self._target_joint = joint
 
         # Stop, make the target object disable gravity only, then set it into the sky to shoot rays
         with og.sim.stopped():
             self._target_obj.disable_gravity()
+            self._target_child_obj.disable_gravity()
 
         # 캐비닛을 공중으로 옮기고 link AABB 계산
         # Store the pose, move target obj into space,
@@ -173,59 +183,59 @@ class OpenOrCloseSkill(ManipulationSkill):
                 link_lo = th.minimum(link_lo, child_lo)
                 link_hi = th.maximum(link_hi, child_hi)
 
-        # Densely shoot rays from the front of the target obj, and record the nearest hitting ones -- this is assumed
-        # to be the corresponding handle
-        sampling_width = 0.0025
-        sampling_offset = 0.1
-        hit_depth_tolerance = 0.005
-        n_y = int(link_extent[1] / sampling_width)
-        n_z = int(link_extent[2] / sampling_width)
-        xs = th.tensor([link_hi[0]])
-        ys = th.linspace(link_lo[1], link_hi[1], n_y)
-        zs = th.linspace(link_lo[2], link_hi[2], n_z)
-        starts = th.stack([arr.flatten() for arr in th.meshgrid(xs, ys, zs)]).T
-        starts[:, 0] += sampling_offset
-        ends = starts - th.tensor([sampling_offset + link_extent[0], 0, 0], dtype=th.float)
+        # # Densely shoot rays from the front of the target obj, and record the nearest hitting ones -- this is assumed
+        # # to be the corresponding handle
+        # sampling_width = 0.0025
+        # sampling_offset = 0.1
+        # hit_depth_tolerance = 0.005
+        # n_y = int(link_extent[1] / sampling_width)
+        # n_z = int(link_extent[2] / sampling_width)
+        # xs = th.tensor([link_hi[0]])
+        # ys = th.linspace(link_lo[1], link_hi[1], n_y)
+        # zs = th.linspace(link_lo[2], link_hi[2], n_z)
+        # starts = th.stack([arr.flatten() for arr in th.meshgrid(xs, ys, zs)]).T
+        # starts[:, 0] += sampling_offset
+        # ends = starts - th.tensor([sampling_offset + link_extent[0], 0, 0], dtype=th.float)
 
-        #  Ray를 쏴서 핸들 위치 탐색
-        results = raytest_batch(
-            start_points=starts,
-            end_points=ends,
-            only_closest=True,
-            ignore_bodies=None,
-            ignore_collisions=None,
-        )
+        # #  Ray를 쏴서 핸들 위치 탐색
+        # results = raytest_batch(
+        #     start_points=starts,
+        #     end_points=ends,
+        #     only_closest=True,
+        #     ignore_bodies=None,
+        #     ignore_collisions=None,
+        # )
 
-        # Sort results based on hit distance
-        sorted_hits = sorted([result for result in results if result["hit"]], key=lambda x: x["distance"])
+        # # Sort results based on hit distance
+        # sorted_hits = sorted([result for result in results if result["hit"]], key=lambda x: x["distance"])
         
-        min_dist = sorted_hits[0]["distance"]
-        pruned_positions = []
-        for hit in sorted_hits:
-            if hit["distance"] > (min_dist + hit_depth_tolerance):
-                break
-            pruned_positions.append(hit["position"])
+        # min_dist = sorted_hits[0]["distance"]
+        # pruned_positions = []
+        # for hit in sorted_hits:
+        #     if hit["distance"] > (min_dist + hit_depth_tolerance):
+        #         break
+        #     pruned_positions.append(hit["position"])
 
-        # Get the mean position -- this will be the tip of the grasping point
-        pruned_positions = th.stack(pruned_positions, dim=0)
-        grasp_pos_canonical_rotated = pruned_positions.mean(dim=0)
+        # # Get the mean position -- this will be the tip of the grasping point
+        # pruned_positions = th.stack(pruned_positions, dim=0)
+        # grasp_pos_canonical_rotated = pruned_positions.mean(dim=0)
 
-        # 기본 스케일 기준의 grasp 위치 저장
-        # Compute default values, storing them for later dynamic re-scaling computations
-        self._default_scale = self._target_obj.scale
-        self._default_obj_to_grasp_pos = grasp_pos_canonical_rotated - obj_pos_offset
+        # # 기본 스케일 기준의 grasp 위치 저장
+        # # Compute default values, storing them for later dynamic re-scaling computations
+        # self._default_scale = self._target_obj.scale
+        # self._default_obj_to_grasp_pos = grasp_pos_canonical_rotated - obj_pos_offset
 
         # Reset the cabinet to be "normal" facing, and visualize the cabinet again
         self._target_obj.set_position_orientation(orientation=th.tensor([0, 0, 0, 1.0], dtype=th.float))
 
-        # 부모 링크 기준에서 joint의 상대 pose를 계산
-        # joint가 움직이는 방향 인덱스(X/Y/Z)를 저장
-        # Compute the pose of the joint in the cabinet base frame
-        parent_link = self._target_obj.links[joint.body0.split("/")[-1]]
-        joint_rel_pos = th.tensor(joint.get_attribute("physics:localPos0"), dtype=th.float) * parent_link.scale
-        self._joint_rel_mat = OT.quat2mat(th.tensor(lazy.omni.isaac.core.utils.rotations.gf_quat_to_np_array(joint.get_attribute("physics:localRot0")), dtype=th.float)[[1, 2, 3, 0]])
-        joint_axis_to_idx = {num: i for i, num in enumerate("XYZ")}
-        self._joint_axis_idx = joint_axis_to_idx[joint.axis]
+        # # 부모 링크 기준에서 joint의 상대 pose를 계산
+        # # joint가 움직이는 방향 인덱스(X/Y/Z)를 저장
+        # # Compute the pose of the joint in the cabinet base frame
+        # parent_link = self._target_obj.links[joint.body0.split("/")[-1]]
+        # joint_rel_pos = th.tensor(joint.get_attribute("physics:localPos0"), dtype=th.float) * parent_link.scale
+        # self._joint_rel_mat = OT.quat2mat(th.tensor(lazy.omni.isaac.core.utils.rotations.gf_quat_to_np_array(joint.get_attribute("physics:localRot0")), dtype=th.float)[[1, 2, 3, 0]])
+        # joint_axis_to_idx = {num: i for i, num in enumerate("XYZ")}
+        # self._joint_axis_idx = joint_axis_to_idx[joint.axis]
 
         # Grasp Offset 계산
         # Create a grasp offset to move the grasp marker into the actual handle
@@ -242,33 +252,45 @@ class OpenOrCloseSkill(ManipulationSkill):
         approach_offset[self._approach_idx] += self._approach_dist * self._approach_sign
 
 
+        # # Grasp Pose 계산 함수 정의 및 실행
+        # # Define lambda function for updating grasp pose based on internal scale
+        # # TODO: Parent link pos itself might need to be scaled accordingly if it's not the root link frame
+        # parent_link_pos, parent_link_ori = parent_link.get_position_orientation()
+        # def pose_updater():
+        #     # Get this with respect to the world frame (so undo-ing the cab z rotation)
+        #     scale = self._target_obj.scale
+        #     scale_frac = scale / self._default_scale
+        #     grasp_pos_canonical = obj_pos_offset + self._obj_z_rot_offset.T @ (self._default_obj_to_grasp_pos) * scale_frac
 
-        # Grasp Pose 계산 함수 정의 및 실행
-        # Define lambda function for updating grasp pose based on internal scale
-        # TODO: Parent link pos itself might need to be scaled accordingly if it's not the root link frame
-        parent_link_pos, parent_link_ori = parent_link.get_position_orientation()
-        def pose_updater():
-            # Get this with respect to the world frame (so undo-ing the cab z rotation)
-            scale = self._target_obj.scale
-            scale_frac = scale / self._default_scale
-            grasp_pos_canonical = obj_pos_offset + self._obj_z_rot_offset.T @ (self._default_obj_to_grasp_pos) * scale_frac
+        #     # Calculate joint position to grasping position in the joint frame
+        #     joint_world_pos = OT.quat2mat(parent_link_ori) @ (joint_rel_pos * scale_frac) + parent_link_pos
 
-            # Calculate joint position to grasping position in the joint frame
-            joint_world_pos = OT.quat2mat(parent_link_ori) @ (joint_rel_pos * scale_frac) + parent_link_pos
-            self._joint_to_handle_pos = self._joint_rel_mat.T @ OT.quat2mat(parent_link_ori).T @ (
-                        grasp_pos_canonical - joint_world_pos + handle_offset)
-            self._joint_to_approach_pos = self._joint_rel_mat.T @ OT.quat2mat(parent_link_ori).T @ (
-                        grasp_pos_canonical - joint_world_pos + approach_offset)
+        #     # print("\n[DEBUG] Computing joint_to_approach_pos")
+        #     # print(f"self._joint_rel_mat.T:\n{self._joint_rel_mat.T}")
+        #     # print(f"OT.quat2mat(parent_link_ori).T:\n{OT.quat2mat(parent_link_ori).T}")
+        #     # print(f"grasp_pos_canonical:\n{grasp_pos_canonical}")
+        #     # print(f"joint_world_pos:\n{joint_world_pos}")
+        #     # print(f"approach_offset:\n{approach_offset}")
 
-        # grasp pose 계산 함수 정의 및 실행
-        self._update_grasp_pose = pose_updater
-        self._update_grasp_pose()
+        #     self._joint_to_handle_pos = self._joint_rel_mat.T @ OT.quat2mat(parent_link_ori).T @ (
+        #                 grasp_pos_canonical - joint_world_pos + handle_offset)
+        #     self._joint_to_approach_pos = self._joint_rel_mat.T @ OT.quat2mat(parent_link_ori).T @ (
+        #                 grasp_pos_canonical - joint_world_pos + approach_offset)
+            
+        #     child_pos, _ = self._target_child_obj.get_position_orientation()
 
-        # Determine whether this handle is horizontal or vertical based on the positions
-        # (len(z) > (y) --> vertical, otherwise horizontal)
-        # 핸들이 수직인지 수평인지 판단
-        handle_extent = pruned_positions.max(dim=0)[0] - pruned_positions.min(dim=0)[0]
-        self._is_vertical_handle = handle_extent[2] > handle_extent[1]
+        #     self._joint_to_approach_target_pos = child_pos
+            
+        # # grasp pose 계산 함수 정의 및 실행
+        # self._update_grasp_pose = pose_updater
+        # self._update_grasp_pose()
+
+
+        # # Determine whether this handle is horizontal or vertical based on the positions
+        # # (len(z) > (y) --> vertical, otherwise horizontal)
+        # # 핸들이 수직인지 수평인지 판단
+        # handle_extent = pruned_positions.max(dim=0)[0] - pruned_positions.min(dim=0)[0]
+        # self._is_vertical_handle = handle_extent[2] > handle_extent[1]
 
         # Visualize with marker if requested
         if self._visualize:
@@ -285,9 +307,12 @@ class OpenOrCloseSkill(ManipulationSkill):
         # Stop sim and make target object non-visual only
         with og.sim.stopped():
             self._target_obj.enable_gravity()
+            self._target_child_obj.enable_gravity()
 
         # Restore state
         og.sim.load_state(state, serialized=False)
+        self._initial_eef_pos, self._initial_eef_quat = self._robot.get_relative_eef_pose(mat=False)
+        ic(self._initial_eef_pos, self._initial_eef_quat)
 
     def compute_grasp_pose(self, joint_to_grasp_pos, delta_jnt_val=0.0, return_mat=False):
         """
@@ -309,6 +334,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         # 현재 link pos, quat 받아옴
         link_pos, link_quat = self._target_link.get_position_orientation()
         link_mat = OT.quat2mat(link_quat)
+        ic(link_pos, link_quat, link_mat)
 
         # Assume x points out from the cabinet, y points right, z points up
         # Then transform (in the drawer's local frame) to have robot gripper point towards it is to rotate it -90 degrees wrt
@@ -316,31 +342,62 @@ class OpenOrCloseSkill(ManipulationSkill):
         # 문 손잡이가 수직이면 self._is_vertical_handle = True  회전 X
         # 문 손잡이가 수평이면 self._is_vertical_handle = False 회전 O
         gripper_yaw = 0.0 if self._is_vertical_handle else th.pi / 2
-        grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float))
+        ic(gripper_yaw)
 
-        # Revolute vs Prismatic
-        if self._target_joint.is_revolute:
-            # Joint angle corresponds to angle, so convert into modified pose in the global frame
-            jnt_vec = th.zeros(3)
-            jnt_vec[self._joint_axis_idx] = delta_jnt_val
-            jnt_tf = OT.euler2mat(jnt_vec)
-            new_grasp_pos_parent_frame = self._joint_rel_mat @ jnt_tf @ joint_to_grasp_pos
-            new_grasp_mat_global_frame = OT.quat2mat(OT.axisangle2quat((self._joint_rel_mat @ jnt_vec))) @ grasp_mat
+        ic(self._obj_z_rot_offset)
+        ic(self._obj_z_rot_offset.T)
+
+        # print(OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float)))
+        if self.target_step:
+            grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([0, 0, -th.pi / 2], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi, 0], dtype=th.float))
+            # grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([th.pi, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi, 0], dtype=th.float))
+
+            # 아래 방향을 보도록 gripper 회전
+            # grasp_mat = OT.euler2mat(th.tensor([0, 0, -th.pi / 2], dtype=th.float)) @ grasp_mat
+            grasp_mat = OT.euler2mat(th.tensor([0, 0, 0], dtype=th.float)) @ grasp_mat
+            ic(grasp_mat)
         else:
-            # Joint val corresponds to linear motion, so convert into modified pose in the global frame
-            jnt_delta = th.zeros(3)
-            jnt_delta[self._joint_axis_idx] = delta_jnt_val
-            new_grasp_pos_parent_frame = self._joint_rel_mat @ (joint_to_grasp_pos + jnt_delta)
-            new_grasp_mat_global_frame = grasp_mat
+            # ic(self._obj_z_rot_offset)
+            # ic(self._obj_z_rot_offset.T)
+            # ic(OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float)))
+            # ic(OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float)))
+            # ic(link_mat @ OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float)))
+            # ic(self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float)))
+            grasp_mat = self._obj_z_rot_offset.T @ link_mat @ OT.euler2mat(th.tensor([gripper_yaw, 0, 0], dtype=th.float)) @ OT.euler2mat(th.tensor([0, -th.pi / 2, 0], dtype=th.float))
+            ic(grasp_mat)
+        
+        # self._obj_z_rot_offset = OT.quat2mat(th.tensor([0, 0, 0, 1.0], dtype=th.float) if self._is_x_oriented else th.tensor([0, 0, 0.707, 0.707], dtype=th.float))
+        # print(OT.euler2mat(th.tensor([th.pi, -th.pi/2, 0]))
+        # exit()
+            
+        # # Revolute vs Prismatic
+        # if self._target_joint.is_revolute:
+        #     # Joint angle corresponds to angle, so convert into modified pose in the global frame
+        #     jnt_vec = th.zeros(3)
+        #     jnt_vec[self._joint_axis_idx] = delta_jnt_val
+        #     ic(jnt_vec)
+        #     jnt_tf = OT.euler2mat(jnt_vec)
+        #     ic(jnt_tf)
+        #     new_grasp_pos_parent_frame = self._joint_rel_mat @ jnt_tf @ joint_to_grasp_pos
+        #     new_grasp_mat_global_frame = OT.quat2mat(OT.axisangle2quat((self._joint_rel_mat @ jnt_vec))) @ grasp_mat
+        #     ic(new_grasp_pos_parent_frame, new_grasp_mat_global_frame)
+        # else:
+        #     # Joint val corresponds to linear motion, so convert into modified pose in the global frame
+        #     jnt_delta = th.zeros(3)
+        #     jnt_delta[self._joint_axis_idx] = delta_jnt_val
+        #     new_grasp_pos_parent_frame = self._joint_rel_mat @ (joint_to_grasp_pos + jnt_delta)
+        #     new_grasp_mat_global_frame = grasp_mat
+        #     ic(new_grasp_pos_parent_frame, new_grasp_mat_global_frame)
         # new_grasp_mat_global_frame : 로봇이 도착해야하는 손목의 matrix
         # new_grasp_pos_parent_frame : 타겟 link의 local 좌표계 기준에서의 grasp 위치
 
         # grasp 위치(포지션)를 global 좌표계로 변환
-        new_grasp_pos_global_frame = OT.quat2mat(link_quat) @ new_grasp_pos_parent_frame + link_pos
+        new_grasp_pos_global_frame = OT.quat2mat(link_quat) @ th.tensor([0, 0, 0], dtype=th.float) + link_pos
+        ic(new_grasp_pos_global_frame)
 
-        return new_grasp_pos_global_frame, (new_grasp_mat_global_frame if return_mat else OT.mat2quat(new_grasp_mat_global_frame))
+        return new_grasp_pos_global_frame, (grasp_mat if return_mat else OT.mat2quat(grasp_mat))
 
-    def compute_robot_base_pose(self, dist_use_from_handle=True, dist_out_from_handle=0.2, dist_right_of_handle=-0.2, dist_up_from_handle=-0.8):
+    def compute_robot_base_pose(self, dist_use_from_handle=False, dist_out_from_handle=0.2, dist_right_of_handle=-0.2, dist_up_from_handle=-0.8):
         """
         Computes the pose to set the robot's base at given a relative distance from @self._target_link's handle. Note
         that this will automatically take into account @self._target_obj's orientation (with respect to global frame
@@ -381,7 +438,7 @@ class OpenOrCloseSkill(ManipulationSkill):
 
             target_ori_mat = OT.quat2mat(self._target_obj.get_orientation())
             robot_base_pos = self._target_obj.aabb_center + target_ori_mat @ robot_base_pos_offset
-            robot_base_quat = OT.mat2quat(target_ori_mat @ self._obj_z_rot_offset.T @ OT.euler2mat([0, 0, th.pi]))
+            robot_base_quat = OT.mat2quat(target_ori_mat @ self._obj_z_rot_offset.T @ OT.euler2mat(th.tensor([0, 0, th.pi], dtype=th.float)))
 
         return robot_base_pos, robot_base_quat
 
@@ -451,8 +508,8 @@ class OpenOrCloseSkill(ManipulationSkill):
         # (4) Articulate (open / close) the link
         # (5) Release grasp
 
-        # Update grasp poses
-        self._update_grasp_pose()
+        # # Update grasp poses
+        # self._update_grasp_pose()
         # If visualize, set camera to visualize:
         if self._visualize:
             self.set_camera_to_visualize()
@@ -461,63 +518,163 @@ class OpenOrCloseSkill(ManipulationSkill):
         joint_to_grasp_pos = None
         delta_jnt_vals = None
 
+        if step == RotateGripperStep.ROTATE_Xp:
+            n_steps = 30
+            ic(n_steps)
+            gripper_length = self._eef_z_offset
+
+            # 현재 EEF 위치
+            current_global_eef_pos, current_global_eef_orientation = self.get_global_current_eef_pose(quat=True)
+            ic(current_global_eef_pos, current_global_eef_orientation)
+
+            # Translation
+            target_pos = current_global_eef_pos.clone()
+            # gripper 길이만큼 z 방향으로 이동 
+            gripper_offset = th.tensor([0, 0, gripper_length], dtype=th.float)  # (robot frame 기준)
+            target_pos += OT.quat2mat(current_global_eef_orientation) @ gripper_offset  # world frame 기준으로 이동
+            ic(target_pos)
+
+            # Rotation
+            delta_orientation = OT.euler2mat(th.tensor([th.pi / 4, 0, 0], dtype=th.float))
+            ic(delta_orientation, OT.quat2axisangle(OT.mat2quat(delta_orientation)))
+            target_mat = delta_orientation @ OT.quat2mat(current_global_eef_orientation)
+            ic(target_mat, OT.quat2axisangle(OT.mat2quat(target_mat)))
+
+            grasp = False
+
+        elif step == RotateGripperStep.ROTATE_Xm:
+            n_steps = 30
+            ic(n_steps)
+            gripper_length = self._eef_z_offset
+            
+            # 현재 gripper pose
+            current_global_eef_pos, current_global_eef_orientation = self.get_global_current_eef_pose(quat=True)
+
+            # Translation
+            target_pos = current_global_eef_pos.clone()
+            # gripper 길이만큼 z 방향으로 이동 
+            gripper_offset = th.tensor([0, 0, gripper_length], dtype=th.float)  # (robot frame 기준)
+            target_pos += OT.quat2mat(current_global_eef_orientation) @ gripper_offset  # world frame 기준으로 이동
+            ic(target_pos)
+
+            # Rotation
+            delta_orientation = OT.euler2mat(th.tensor([-th.pi / 4, 0, 0], dtype=th.float))
+            ic(delta_orientation, OT.quat2axisangle(OT.mat2quat(delta_orientation)))
+            target_mat = OT.quat2mat(current_global_eef_orientation) @ delta_orientation  # robot frame 기준 회전
+            ic(target_mat, OT.quat2axisangle(OT.mat2quat(target_mat)))
+
+            grasp = False
+
+        # () Converge to Target Object
+        elif step == RotateGripperStep.ROTATE_Yp:
+            n_steps = 30
+            ic(n_steps)
+            gripper_length = self._eef_z_offset
+            
+            # 현재 gripper pose
+            current_global_eef_pos, current_global_eef_orientation = self.get_global_current_eef_pose(quat=True)
+
+            # Translation
+            target_pos = current_global_eef_pos.clone()
+            # gripper 길이만큼 z 방향으로 이동 
+            gripper_offset = th.tensor([0, 0, gripper_length], dtype=th.float)  # (robot frame 기준)
+            target_pos += OT.quat2mat(current_global_eef_orientation) @ gripper_offset  # world frame 기준으로 이동
+            ic(target_pos)
+
+            # Rotation
+            delta_orientation = OT.euler2mat(th.tensor([0, th.pi / 4, 0], dtype=th.float))
+            ic(delta_orientation, OT.quat2axisangle(OT.mat2quat(delta_orientation)))
+            target_mat = OT.quat2mat(current_global_eef_orientation) @ delta_orientation  # robot frame 기준 회전
+            ic(target_mat, OT.quat2axisangle(OT.mat2quat(target_mat)))
+
+            grasp = False
+
+        # () Grasp the Target Object
+        elif step == RotateGripperStep.ROTATE_Ym:
+            n_steps = 30
+            ic(n_steps)
+            gripper_length = self._eef_z_offset
+            
+            # 현재 gripper pose
+            current_global_eef_pos, current_global_eef_orientation = self.get_global_current_eef_pose(quat=True)
+
+            # Translation
+            target_pos = current_global_eef_pos.clone()
+            # gripper 길이만큼 z 방향으로 이동 
+            gripper_offset = th.tensor([0, 0, gripper_length], dtype=th.float)  # (robot frame 기준)
+            target_pos += OT.quat2mat(current_global_eef_orientation) @ gripper_offset  # world frame 기준으로 이동
+            ic(target_pos)
+
+            # Rotation
+            delta_orientation = OT.euler2mat(th.tensor([0, -th.pi / 4, 0], dtype=th.float))
+            ic(delta_orientation, OT.quat2axisangle(OT.mat2quat(delta_orientation)))
+            target_mat = OT.quat2mat(current_global_eef_orientation) @ delta_orientation  # robot frame 기준 회전
+            ic(target_mat, OT.quat2axisangle(OT.mat2quat(target_mat)))
+
+            grasp = False
         
-        # (1) Move to approach pose
-        if step == OpenOrCloseStep.APPROACH:
-            n_steps = n_approach_steps*2
-            joint_to_grasp_pos = self._joint_to_approach_pos
+        # () UP the Target Object
+        elif step == RotateGripperStep.ROTATE_Zp:
+            n_steps = 30
+            ic(n_steps)
+            gripper_length = self._eef_z_offset
+            
+            # 현재 로봇 joints
+            for joint_name, joint in self._robot.joints.items():
+                ic(joint_name, joint.get_state())
+
+            # 현재 gripper pose
+            current_global_eef_pos, current_global_eef_orientation = self.get_global_current_eef_pose(quat=True)
+
+            # Translation
+            target_pos = current_global_eef_pos.clone()
+            # gripper 길이만큼 robot frame의 z 방향으로 이동 
+            gripper_offset = th.tensor([0, 0, gripper_length], dtype=th.float)  # (robot frame 기준)
+            target_pos += OT.quat2mat(current_global_eef_orientation) @ gripper_offset  # world frame 기준으로 이동
+            ic(target_pos)
+
+            # Rotation
+            delta_orientation = OT.euler2mat(th.tensor([0, 0, th.pi / 4], dtype=th.float))
+            ic(delta_orientation, OT.quat2axisangle(OT.mat2quat(delta_orientation)))
+            target_mat = OT.quat2mat(current_global_eef_orientation) @ delta_orientation  # robot frame 기준 회전
+            ic(target_mat, OT.quat2axisangle(OT.mat2quat(target_mat)))
+
             grasp = False
+        
+        elif step == RotateGripperStep.ROTATE_Zm:
+            n_steps = 30
+            ic(n_steps)
+            gripper_length = self._eef_z_offset
+            
+            # 현재 gripper pose
+            current_global_eef_pos, current_global_eef_orientation = self.get_global_current_eef_pose(quat=True)
 
-        # (2) Approach the handle
-        elif step == OpenOrCloseStep.CONVERGE:
-            n_steps = n_converge_steps
-            joint_to_grasp_pos = self._joint_to_handle_pos
+            # Translation
+            target_pos = current_global_eef_pos.clone()
+            # gripper 길이만큼 z 방향으로 이동 
+            gripper_offset = th.tensor([0, 0, gripper_length], dtype=th.float)  # (robot frame 기준)
+            target_pos += OT.quat2mat(current_global_eef_orientation) @ gripper_offset  # world frame 기준으로 이동
+            ic(target_pos)
+
+            # Rotation
+            delta_orientation = OT.euler2mat(th.tensor([0, 0, -th.pi / 4], dtype=th.float))
+            ic(delta_orientation, OT.quat2axisangle(OT.mat2quat(delta_orientation)))
+            target_mat = OT.quat2mat(current_global_eef_orientation) @ delta_orientation  # robot frame 기준 회전
+            ic(target_mat, OT.quat2axisangle(OT.mat2quat(target_mat)))
+
             grasp = False
-
-        # (3) Grasp the handle
-        elif step == OpenOrCloseStep.GRASP:
-            n_steps = n_grasp_steps
-            no_op = True
-            grasp = True
-
-        # (4) Open the link
-        elif step == OpenOrCloseStep.ARTICULATE:
-            n_steps = n_articulate_steps
-            joint_to_grasp_pos = self._joint_to_handle_pos
-            cur_jnt_val = self._target_joint.get_state()[0][0]
-            joint_limits = (self._target_joint.lower_limit, self._target_joint.upper_limit) if joint_limits is None else joint_limits
-            lower_limit, upper_limit = max(joint_limits[0], self._target_joint.lower_limit), min(joint_limits[1], self._target_joint.upper_limit)
-            end_limit = (upper_limit if max_open_val is None else max_open_val) if should_open else lower_limit
-            # Should be normalized to 0 as the starting point
-            # joint값의 변화량
-            delta_jnt_vals = th.tensor([cur_jnt_val + (end_limit - cur_jnt_val) * i / n_steps for i in range(n_steps)], dtype=th.float) - cur_jnt_val
-
-            grasp = True
-
-        # (5) Release grasp
-        elif step == OpenOrCloseStep.UNGRASP:
-            n_steps = n_grasp_steps
-            no_op = True
-            grasp = False
-
-        # (6) Retreat from grasp
-        elif step == OpenOrCloseStep.RETREAT:
-            n_steps = n_converge_steps
-            joint_to_grasp_pos = self._joint_to_approach_pos
-            grasp = False
-
+        
         else:
             raise ValueError(f"Got unknown OpenOrCloseStep: {step}")
         
-        print(f"step: {step}")
-        print(f"joint_to_grasp_pos (raw tensor): {joint_to_grasp_pos}")
-
         # Possibly override grasp value
         if grasp_override_val is not None:
             grasp = grasp_override_val
 
         grasp_val = -1.0 if grasp else 1.0
         null_cmds = None
+        ic(delta_jnt_vals)
+
         # If we're doing a no_op, don't move the EEF
         if no_op:
             # 움직이지 않고 고정된 pose에서만 grasp만 수행
@@ -526,13 +683,7 @@ class OpenOrCloseSkill(ManipulationSkill):
         # else if delta joint vals is None, then we assume we want to converge to a static set point -- so we generate a
         # linearly-interpolated trajectory to the desired waypoint
         elif delta_jnt_vals is None:
-            # 특정 위치로 이동만 할 때 
-            target_pos, target_mat = self.compute_grasp_pose(
-                joint_to_grasp_pos=joint_to_grasp_pos,
-                delta_jnt_val=0.0,
-                return_mat=True,
-            )
-            print("target_mat", target_mat)
+            ic(target_pos, target_mat)
             target_pos_in_robot_frame, target_aa_in_robot_frame = \
                 self.get_pose_in_robot_frame(pos=target_pos, mat=target_mat, return_mat=False, include_eef_offset=not maintain_current_orientation)
 
@@ -544,6 +695,7 @@ class OpenOrCloseSkill(ManipulationSkill):
                 target_quat_in_robot_frame = self._robot.get_relative_eef_orientation()
 
             # Compute commands
+            ic(target_pos_in_robot_frame, target_quat_in_robot_frame)
             cmds = self.interpolate_to_pose(
                 target_pos=target_pos_in_robot_frame,
                 target_quat=target_quat_in_robot_frame,
@@ -575,6 +727,7 @@ class OpenOrCloseSkill(ManipulationSkill):
 
         buffer_cmds = th.ones((n_buffer_steps, 7)) * cmds[-1].view(1, -1)
         cmds = th.concatenate([cmds, buffer_cmds], dim=0)
+        ic(cmds)
 
         if null_cmds is not None:
             buffer_null_cmds = th.ones((n_buffer_steps, null_cmds.shape[-1])) * null_cmds[-1].view(1, -1)
@@ -583,29 +736,36 @@ class OpenOrCloseSkill(ManipulationSkill):
         # Possibly visualize
         if self._visualize:
             for marker_prim in self._progress_traj_markers.values():
-                self._scene.remove_object(marker_prim)
-            self._progress_traj_markers = dict()
-            for i in range(len(cmds)):
-                marker_name = f"marker_{i}"
-                self._progress_traj_markers[marker_name] = PrimitiveObject(
-                    name=f"open_close_skill_{self._target_obj.name}_{marker_name}",
-                    primitive_type="Sphere",
-                    visual_only=True,
-                    radius=0.01,
-                    rgba=[1.0, 0, 0, 1.0],
-                )
-                self._scene.add_object(self._progress_traj_markers[marker_name])
+                # self._scene.remove_object(marker_prim)
+                marker_prim.visible = False
+            # self._progress_traj_markers = dict()
+            if len(self._progress_traj_markers) < len(cmds):
+                # 기존에 있던 marker들은 지우지 않고, 새로운 marker들만 추가
+                # for i in range(len(cmds)):
+                for i in range(len(self._progress_traj_markers), len(cmds)):
+                    marker_name = f"marker_{i}"
+                    self._progress_traj_markers[marker_name] = PrimitiveObject(
+                        name=f"open_close_skill_{self._target_obj.name}_{marker_name}",
+                        primitive_type="Sphere",
+                        visual_only=True,
+                        radius=0.01,
+                        rgba=[1.0, 0, 0, 1.0],
+                    )
+                    self._scene.add_object(self._progress_traj_markers[marker_name])
 
-                if i == len(cmds) - 1:
-                    last_act = cmds[-1]
-                    target_pos, target_aa = last_act[:3], last_act[3:6]
-                    target_orientation = OT.quat2mat(OT.axisangle2quat(target_aa))
-                    self.visualize_marker(eef_pos=target_pos, eef_mat=target_orientation)
+                    # if i == len(cmds) - 1:
+                    #     last_act = cmds[-1]
+                    #     target_pos, target_aa = last_act[:3], last_act[3:6]
+                    #     target_orientation = OT.quat2mat(OT.axisangle2quat(target_aa))
+                    #     self.visualize_marker(eef_pos=target_pos, eef_mat=target_orientation)
 
             self.visualize_traj_by_markers(cmds=cmds)
 
+        #####################
+        # Step by step 실행 #
+        #####################
         if step_by_step:
-            if step in OpenOrCloseStep:
+            if step in RotateGripperStep:
                 # 기존 무한 루프 대신 사용자 입력 대기로 변경
                 self.wait_for_user_input(
                     step_name=step.name,
@@ -648,6 +808,7 @@ class OpenOrCloseSkill(ManipulationSkill):
             pos_in_robot_frame (bool): whether the inputted @eef_pos and @eef_mat is specified in the robot frame or
                 in global frame
         """
+        # start_idx = len(self._progress_traj_markers) - len(cmds)
         for i, act in enumerate(cmds):
             marker_name = f"marker_{i}"
             cur_act = cmds[i]
@@ -656,6 +817,7 @@ class OpenOrCloseSkill(ManipulationSkill):
             if pos_in_robot_frame:
                 cur_target_pos, _ = self.get_pose_in_world_frame(pos=cur_target_pos, mat=cur_target_orientation, return_mat=False)
             self._progress_traj_markers[marker_name].set_position_orientation(position=cur_target_pos)
+            self._progress_traj_markers[marker_name].visible = True
 
     def generate_no_ops(self, n_steps, return_aa=False):
         """
@@ -688,8 +850,32 @@ class OpenOrCloseSkill(ManipulationSkill):
         Resets the target object to its default state
         """
         self._target_obj.keep_still()
-        self._target_obj.set_joint_positions(th.zeros(self._target_obj.n_joints), drive=False)
+        if self._target_obj.n_joints > 0:
+            self._target_obj.set_joint_positions(th.zeros(self._target_obj.n_joints), drive=False)
 
+    def get_global_current_eef_pose(self, quat=True):
+        """
+        Returns the current end effector pose in the global frame
+
+        Args:
+            mat (bool): Whether to return the pose as a matrix or as a quaternion
+
+        Returns:
+            torch.tensor: (x,y,z) position and (x,y,z,w) quaternion if @mat is True, otherwise (ax, ay, az) axis-angle
+                orientation
+        """
+        cur_rel_eef_pos, cur_rel_eef_quat = self._robot.get_relative_eef_pose(mat=False)
+        robot_pos, robot_quat = self._robot.get_position_orientation()
+
+        cur_eef_pos = OT.quat2mat(robot_quat) @ cur_rel_eef_pos + robot_pos
+        cur_eef_quat = OT.quat_multiply(robot_quat, cur_rel_eef_quat)
+        if quat:
+            cur_eef_orientation = cur_eef_quat
+        else:
+            cur_eef_orientation = OT.quat2axisangle(cur_eef_quat)
+
+        return cur_eef_pos, cur_eef_orientation
+    
     def wait_for_user_input(self, step_name="current step", message=None):
         """
         Wait for user input while keeping the simulation running
@@ -729,7 +915,7 @@ class OpenOrCloseSkill(ManipulationSkill):
 
     @property
     def steps(self):
-        return OpenOrCloseStep
+        return [RotateGripperStep.ROTATE_Zp, RotateGripperStep.ROTATE_Yp, RotateGripperStep.ROTATE_Xp]
     
     @property
     def visualize_traj(self):

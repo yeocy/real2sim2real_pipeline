@@ -10,7 +10,7 @@ from enum import IntEnum
 
 
 # Specific stage of the skill
-class OpenOrCloseStep(IntEnum):
+class OpenandGrabStep(IntEnum):
     CABINET_APPROACH = 0
     CABINET_CONVERGE = 1
     CABINET_GRASP = 2
@@ -562,25 +562,25 @@ class OpenandGrabSkill(ManipulationSkill):
         self.target_step = False
         self.target_approach = 0.0
         # (1) Move to approach pose
-        if step == OpenOrCloseStep.CABINET_APPROACH:
+        if step == OpenandGrabStep.CABINET_APPROACH:
             n_steps = n_approach_steps
             joint_to_grasp_pos = self._joint_to_approach_pos
             grasp = False
 
         # (2) Approach the handle
-        elif step == OpenOrCloseStep.CABINET_CONVERGE:
+        elif step == OpenandGrabStep.CABINET_CONVERGE:
             n_steps = n_converge_steps
             joint_to_grasp_pos = self._joint_to_handle_pos
             grasp = False
 
         # (3) Grasp the handle
-        elif step == OpenOrCloseStep.CABINET_GRASP:
+        elif step == OpenandGrabStep.CABINET_GRASP:
             n_steps = n_grasp_steps
             no_op = True
             grasp = True
 
         # (4) Open the link
-        elif step == OpenOrCloseStep.CABINET_ARTICULATE:
+        elif step == OpenandGrabStep.CABINET_ARTICULATE:
             n_steps = n_articulate_steps
             joint_to_grasp_pos = self._joint_to_handle_pos
             cur_jnt_val = self._target_joint.get_state()[0][0]
@@ -594,17 +594,17 @@ class OpenandGrabSkill(ManipulationSkill):
             grasp = True
 
         # (5) Release grasp
-        elif step == OpenOrCloseStep.CABINET_UNGRASP:
+        elif step == OpenandGrabStep.CABINET_UNGRASP:
             n_steps = n_grasp_steps
             no_op = True
             grasp = False
 
         # (6) Retreat from grasp
-        elif step == OpenOrCloseStep.CABINET_RETREAT:
+        elif step == OpenandGrabStep.CABINET_RETREAT:
             n_steps = n_approach_steps
             joint_to_grasp_pos = self._joint_to_approach_pos_2
             grasp = False
-        elif step == OpenOrCloseStep.ROBOT_RETURN_TO_INITIAL:
+        elif step == OpenandGrabStep.ROBOT_RETURN_TO_INITIAL:
             assert self._initial_eef_pos is not None and self._initial_eef_quat is not None
             target_pos = th.tensor([0.3, 0.0, 0.5], dtype=th.float32)
             # tensor([ 0.0570, -0.0100,  0.8732])
@@ -627,7 +627,7 @@ class OpenandGrabSkill(ManipulationSkill):
             return cmds, None  # 👈 여기서 바로 return!
 
         # (7) Approach Target Object
-        elif step == OpenOrCloseStep.TARGET_APPROACH:
+        elif step == OpenandGrabStep.TARGET_APPROACH:
             self.target_step = True
             self.target_approach = 0.2
             n_steps = n_approach_steps
@@ -637,7 +637,7 @@ class OpenandGrabSkill(ManipulationSkill):
             joint_to_grasp_pos = self._joint_to_approach_target_pos
             grasp = False
         # (8) Converge to Target Object
-        elif step == OpenOrCloseStep.TARGET_CONVERGE:
+        elif step == OpenandGrabStep.TARGET_CONVERGE:
             self.target_step = True
             n_steps = n_converge_steps
             self.target_approach = 0.02
@@ -647,45 +647,45 @@ class OpenandGrabSkill(ManipulationSkill):
             joint_to_grasp_pos = self._joint_to_approach_target_pos
             grasp = False
         # (9) Grasp the Target Object
-        elif step == OpenOrCloseStep.TARGET_GRASP:
+        elif step == OpenandGrabStep.TARGET_GRASP:
             self.target_step = True
             n_steps = n_grasp_steps
             no_op = True
             grasp = True
         # (10) UP the Target Object
-        elif step == OpenOrCloseStep.TARGET_UP:
+        elif step == OpenandGrabStep.TARGET_UP:
             self.target_step = True
             self.target_approach = 0.26
             n_steps = n_articulate_steps
             joint_to_grasp_pos = self._joint_to_approach_target_pos
             grasp = True
         # (11) Move to Target Place
-        elif step == OpenOrCloseStep.TARGET_PLACE_1:
+        elif step == OpenandGrabStep.TARGET_PLACE_1:
             self.target_step = True
             self.target_approach = 0.26
             n_steps = n_approach_steps
             joint_to_grasp_pos = th.tensor([-0.7, -0.21, 1.026], dtype=th.float)
             grasp = True
-        elif step == OpenOrCloseStep.TARGET_PLACE_2:
+        elif step == OpenandGrabStep.TARGET_PLACE_2:
             self.target_step = True
             self.target_approach = 0.0
             n_steps = n_approach_steps
             joint_to_grasp_pos = th.tensor([-0.7, -0.20, 1.026], dtype=th.float)
             grasp = True
         # (12) Release grasp
-        elif step == OpenOrCloseStep.TARGET_UNGRASP:
+        elif step == OpenandGrabStep.TARGET_UNGRASP:
             self.target_step = True
             n_steps = n_grasp_steps
             no_op = True
             grasp = False
-        elif step == OpenOrCloseStep.TARGET_RELEASE:
+        elif step == OpenandGrabStep.TARGET_RELEASE:
             self.target_step = True
             self.target_approach = 0.2
             n_steps = n_approach_steps
             joint_to_grasp_pos = th.tensor([-0.7, -0.20, 1.126], dtype=th.float)
             grasp = False
         else:
-            raise ValueError(f"Got unknown OpenOrCloseStep: {step}")
+            raise ValueError(f"Got unknown OpenandGrabStep: {step}")
         
         # Possibly override grasp value
         if grasp_override_val is not None:
@@ -875,7 +875,7 @@ class OpenandGrabSkill(ManipulationSkill):
 
     @property
     def steps(self):
-        return OpenOrCloseStep
+        return OpenandGrabStep
     
     @property
     def visualize_traj(self):

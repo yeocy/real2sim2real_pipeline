@@ -3,6 +3,9 @@ import omnigibson.utils.transform_utils as OT
 import torch as th
 import h5py
 
+from icecream import ic
+ic.configureOutput(includeContext=True)
+
 h5py.get_config().track_order = True
 
 
@@ -42,7 +45,7 @@ class SkillCollectionWrapper(DataCollectionWrapper):
                 "All arm controller command output limits should be symmetric!"
             self._max_delta_action = arm_controller._command_output_limits[1]
 
-    def collect_demo(self):
+    def collect_demo(self, step_by_step=False):
         """
         Collects a single demonstration of @skill using @robot with any necessary arguments for the skill
         """
@@ -53,6 +56,7 @@ class SkillCollectionWrapper(DataCollectionWrapper):
         # self.env.env : <our_method.envs.omnigibson.pick_cup_in_the_cabinet.PickCupInTheCabinetWrapper object at 0x7f2ec1e3eb30>
 
         # Iterate through all solve steps
+        ic(self.env.env.solve_steps)
         for solve_step in self.env.env.solve_steps:
             skill, skill_step, skill_kwargs, is_valid = self.env.env.get_skill_and_kwargs_at_step(solve_step=solve_step)
             # --- Solve Step: 0 ---
@@ -97,13 +101,13 @@ class SkillCollectionWrapper(DataCollectionWrapper):
             # is_valid: True
             # Executing solve_step: 4 [skill OpenOrCloseSkill step: 4]...
 
-            # print(f"\n# --- Solve Step: {solve_step} ---")
-            # print(f"# skill object: {skill}")
-            # print(f"# skill class: {skill.__class__.__name__}")
-            # print(f"# skill_step: {skill_step}")
-            # print(f"# skill_kwargs: {skill_kwargs}")
-            # print(f"# is_valid: {is_valid}")
-            # print(f"# Executing solve_step: {solve_step} [skill {skill.__class__.__name__} step: {skill_step}]...")
+            print(f"\n# --- Solve Step: {solve_step} ---")
+            print(f"# skill object: {skill}")
+            print(f"# skill class: {skill.__class__.__name__}")
+            print(f"# skill_step: [{skill_step}] {skill_step.name}")
+            print(f"# skill_kwargs: {skill_kwargs}")
+            print(f"# is_valid: {is_valid}")
+            print(f"# Executing solve_step: {solve_step} [skill {skill.__class__.__name__} step: {skill_step}]...")
 
 
             if not is_valid:
@@ -111,7 +115,10 @@ class SkillCollectionWrapper(DataCollectionWrapper):
                 return
 
             print(f"Executing solve_step: {solve_step} [skill {skill.__class__.__name__} step: {skill_step}]...")
-            actions, null_actions = skill.compute_current_subtrajectory(step=skill_step, **skill_kwargs)
+            actions, null_actions = skill.compute_current_subtrajectory(step=skill_step, step_by_step=step_by_step, **skill_kwargs)
+            # print(f"Actions: {actions}")
+            print(f"length of actions: {len(actions)}")
+            print(f"Null Actions: {null_actions}")
             # === Skill Subtrajectory Outputs ===
             # Step: OpenOrCloseStep.APPROACH
             # Actions:
@@ -217,23 +224,33 @@ class SkillCollectionWrapper(DataCollectionWrapper):
 
             for i, act in enumerate(actions):
                 action = th.zeros(robot.action_dim)
+                # ic(act)
                 if self.use_delta_commands:
                     robot_pos, robot_aa = act[:3], act[3:6]
                     curr_eef_pos = robot.get_relative_eef_position()
                     curr_eef_quat = robot.get_relative_eef_orientation()
+                    # ic(curr_eef_pos, curr_eef_quat)
                     delta_pos = robot_pos - curr_eef_pos
                     delta_aa = OT.quat2axisangle(OT.quat_distance(OT.axisangle2quat(robot_aa), curr_eef_quat))
+                    delta_quat = OT.axisangle2quat(delta_aa)
+                    # ic(delta_pos, delta_quat, delta_aa)
                     arm_act = th.concatenate([delta_pos, delta_aa]).clip(min=-self._max_delta_action, max=self._max_delta_action) / self._max_delta_action
                 else:
                     arm_act = act[:-1]
                 action[robot.controller_action_idx[arm_name]] = arm_act
                 action[robot.controller_action_idx[eef_name]] = act[-1]
+                ic(action)  # .h5 dataset에 저장되는 action
 
                 # Update null space for arm OSC if null action is specified
                 if null_actions is not None:
                     robot.controllers[f"arm_{robot.default_arm}"].default_joint_pos = null_actions[i]
 
                 obs, r, terminated, truncated, info = self.step(action=action)
+                # user_input = input("Press Enter to continue to next step, or type 'exit' to stop: ")
+                # if user_input.lower() == 'exit':
+                #     print("Exiting skill execution.")
+                #     return
+                # ic(info)
 
 
 class SkillCollectionKinovaWrapper(DataCollectionWrapper):
@@ -327,13 +344,13 @@ class SkillCollectionKinovaWrapper(DataCollectionWrapper):
             # is_valid: True
             # Executing solve_step: 4 [skill OpenOrCloseSkill step: 4]...
 
-            # print(f"\n# --- Solve Step: {solve_step} ---")
-            # print(f"# skill object: {skill}")
-            # print(f"# skill class: {skill.__class__.__name__}")
-            # print(f"# skill_step: {skill_step}")
-            # print(f"# skill_kwargs: {skill_kwargs}")
-            # print(f"# is_valid: {is_valid}")
-            # print(f"# Executing solve_step: {solve_step} [skill {skill.__class__.__name__} step: {skill_step}]...")
+            print(f"\n# --- Solve Step: {solve_step} ---")
+            print(f"# skill object: {skill}")
+            print(f"# skill class: {skill.__class__.__name__}")
+            print(f"# skill_step: {skill_step}")
+            print(f"# skill_kwargs: {skill_kwargs}")
+            print(f"# is_valid: {is_valid}")
+            print(f"# Executing solve_step: {solve_step} [skill {skill.__class__.__name__} step: {skill_step}]...")
 
 
             if not is_valid:
@@ -342,6 +359,9 @@ class SkillCollectionKinovaWrapper(DataCollectionWrapper):
 
             print(f"Executing solve_step: {solve_step} [skill {skill.__class__.__name__} step: {skill_step}]...")
             actions, null_actions = skill.compute_current_subtrajectory(step=skill_step, **skill_kwargs)
+            print(f"Actions: {actions}")
+            print(f"length of actions: {len(actions)}")
+            print(f"Null Actions: {null_actions}")
             # === Skill Subtrajectory Outputs ===
             # Step: OpenOrCloseStep.APPROACH
             # Actions:
@@ -464,3 +484,4 @@ class SkillCollectionKinovaWrapper(DataCollectionWrapper):
                     robot.controllers[f"arm_{robot.default_arm}"].default_joint_pos = null_actions[i]
 
                 obs, r, terminated, truncated, info = self.step(action=action)
+                ic(info)

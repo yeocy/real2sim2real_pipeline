@@ -70,6 +70,7 @@ class TaskObjectResizing:
         # Load meta info
         with open(task_feature_matching_path, "r") as f:
             task_object_retrieval_output_info = json.load(f)
+        print(f"task_object_retrieval_output_info: {task_object_retrieval_output_info}")
 
 
         # Launch omnigibson
@@ -81,12 +82,14 @@ class TaskObjectResizing:
         og.sim.play()
 
 
-
+        print(f"Generating GPT instance")
         gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="_TaskObjResizing")
         json_list = []
         for scenario_obj_num_json_path in task_object_retrieval_output_info:
+            print(f"scenario_obj_num_json_path: {scenario_obj_num_json_path}")
             with open(scenario_obj_num_json_path, "r") as f:
                 task_obj_output_info = json.load(f)
+            print(task_obj_output_info)
             if resizing:
                 # Get current object size
                 obj_size_info = {}
@@ -110,7 +113,7 @@ class TaskObjectResizing:
                     x_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_bottom_in_desired_frame[1])
                     y_dim = np.linalg.norm(bbox_bottom_in_desired_frame[3] - bbox_bottom_in_desired_frame[0])
                     z_dim = np.linalg.norm(bbox_bottom_in_desired_frame[0] - bbox_top_in_desired_frame[0])
-                    # print(f"[{x_dim}, {y_dim}, {z_dim}]")
+                    print(f"[{x_dim}, {y_dim}, {z_dim}]")
 
                     obj_size_info[obj_name] = [x_dim, y_dim, z_dim]
 
@@ -121,9 +124,11 @@ class TaskObjectResizing:
                     object_size_info=obj_size_info,
                     goal_task=task_obj_output_info['task'],
                 )
+                print(f"task_object_resizing_payload: {task_object_resizing_payload}")
 
                 # Query GPT
                 gpt_text_response = gpt(task_object_resizing_payload, verbose=self.verbose)
+                print(f"gpt_text_response: {gpt_text_response}")
 
                 if gpt_text_response is None:
                     # Failed, terminate early

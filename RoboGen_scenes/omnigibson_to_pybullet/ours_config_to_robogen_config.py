@@ -33,7 +33,7 @@ def get_transformation_matrix(position, orientation):
     
     return transform
 
-def ours_config_to_robogen_config(ours_base_dir, urdf_base_dir, robogen_config_path):
+def ours_config_to_robogen_config(ours_base_dir, urdf_base_dir, robogen_config_path=None):
     ########################
     ## Our method configs ##
     ########################
@@ -92,7 +92,7 @@ def ours_config_to_robogen_config(ours_base_dir, urdf_base_dir, robogen_config_p
         obj_cfg['orientation'] = obj_pose[1]
         obj_cfg['scale'] = objects[obj_name]['scale']
         obj_cfg['name'] = obj_name
-        obj_cfg['movable'] = True
+        obj_cfg['movable'] = False
 
         obj_cfg['category'] = objects[obj_name]['category']
         obj_cfg['model'] = objects[obj_name]['model']
@@ -100,6 +100,8 @@ def ours_config_to_robogen_config(ours_base_dir, urdf_base_dir, robogen_config_p
         object_configs[obj_name] = obj_cfg
 
         print(f"[{obj_name}]")
+        print(f"category: {obj_cfg['category']}")
+        print(f"model: {obj_cfg['model']}")
         print(f"position: {obj_pose[0]}")
         print(f"orientation: {obj_pose[1].tolist()}")
         print(f"scale: {objects[obj_name]['scale']}")
@@ -109,16 +111,24 @@ def ours_config_to_robogen_config(ours_base_dir, urdf_base_dir, robogen_config_p
     ###########################
     ##  RoboGen config file  ##
     ###########################
-    with open(robogen_config_path, 'r') as f:
-        robogen_orig_config_ = yaml.safe_load(f)
-    robogen_orig_config = {'obj_configs': []}
-    for orig_config in deepcopy(robogen_orig_config_):
-        if len(orig_config.keys()) > 2:
-            print(f"orig_config.keys(): {orig_config.keys()}")
-            robogen_orig_config['obj_configs'].append(orig_config)
-        else:
-            for cfg_name, cfg_val in orig_config.items():
-                robogen_orig_config[cfg_name] = cfg_val
+    if robogen_config_path is not None:
+        with open(robogen_config_path, 'r') as f:
+            robogen_orig_config_ = yaml.safe_load(f)
+        robogen_orig_config = {'obj_configs': []}
+        for orig_config in deepcopy(robogen_orig_config_):
+            if len(orig_config.keys()) > 2:
+                print(f"orig_config.keys(): {orig_config.keys()}")
+                robogen_orig_config['obj_configs'].append(orig_config)
+            else:
+                for cfg_name, cfg_val in orig_config.items():
+                    robogen_orig_config[cfg_name] = cfg_val
+    else:
+        robogen_orig_config = {
+            'task_name': task_info_json_data['task'],
+            'task_description': "TASK_DESCRIPTION",
+            'solution_path': "SOLUTION_PATH",
+            'obj_configs': []
+        }
     print(f"robogen_orig_config: \n{robogen_orig_config}")
 
     robogen_task_config = []
@@ -162,20 +172,26 @@ def ours_config_to_robogen_config(ours_base_dir, urdf_base_dir, robogen_config_p
     robogen_task_config.append({'task_description': task_description,
                                 'task_name': task_name})
 
-    # # -   distractor_config_path: data/generated_task_from_description/MY_INSTRUCTION/MY_TASK_INSTRUCTION_DESCRIPTION.yaml
-    # task_description_ = task_description.replace(' ', '_')
-    # distractor_config_path = f"{robogen_base_dir_}/{task_name_}/{task_description_}.yaml"
-    # robogen_task_config.append({'distractor_config_path': distractor_config_path})
+    # -   distractor_config_path: data/generated_task_from_description/MY_INSTRUCTION/MY_TASK_INSTRUCTION_DESCRIPTION.yaml
+    task_description_ = task_description.replace(' ', '_')
+    distractor_config_path = f"{robogen_base_dir_}/{task_name_}/{task_description_}.yaml"
+    robogen_task_config.append({'distractor_config_path': distractor_config_path})
 
     # Save
     # robogen_task_config_path = f"{robogen_base_dir}/{task_name_}/{task_name_}.yaml"
-    robogen_task_config_path = os.path.join(os.path.dirname(robogen_config_path), f"_{os.path.basename(robogen_config_path)}")
+    if robogen_config_path is None:
+        yaml_output = yaml.dump(robogen_task_config, default_flow_style=False)
+        print("\n===== YAML Output =====")
+        print(yaml_output)
+        print("=======================\n")
+    else:
+        robogen_task_config_path = os.path.join(os.path.dirname(robogen_config_path), f"_{os.path.basename(robogen_config_path)}")
 
-    os.makedirs(os.path.dirname(robogen_task_config_path), exist_ok=True)
+        os.makedirs(os.path.dirname(robogen_task_config_path), exist_ok=True)
 
-    with open(robogen_task_config_path, 'w') as f:
-        yaml.dump(robogen_task_config, f, default_flow_style=False, sort_keys=False)
-    print(f"Task config file saved at {robogen_task_config_path}")
+        with open(robogen_task_config_path, 'w') as f:
+            yaml.dump(robogen_task_config, f, default_flow_style=False, sort_keys=False)
+        print(f"Task config file saved at {robogen_task_config_path}")
 
     return cam_pose
 
