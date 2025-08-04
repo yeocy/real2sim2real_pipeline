@@ -22,6 +22,7 @@ from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
 from our_method.pipeline.task_object_resizing import TaskObjectResizing
 from our_method.pipeline.visualize_scene import VisualizeScene
+from our_method.pipeline.test_module import TestModule
 import omnigibson as og
 
 class ACDC:
@@ -55,6 +56,7 @@ class ACDC:
             run_step_7=False,
             run_task_object_resizing=False,
             run_visualize_scene_imgs=False,
+            run_test_module=False,
             task_proposals=False,
             step_1_output_path=None,
             step_2_output_path=None,
@@ -394,6 +396,19 @@ class ACDC:
 
             if not success:
                 raise ValueError("Failed ACDC Step 7!")
+
+        if run_test_module:
+            # Run test module
+            step_test_module = TestModule(
+                verbose=config["pipeline"]["verbose"],
+            )
+
+            success = step_test_module(
+                scene_info_path=scene_info_path,
+                step_1_output_path=step_1_output_path,
+            )
+
+
 def main(args):
 
     # Create ACDC and run
