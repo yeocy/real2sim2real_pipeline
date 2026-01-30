@@ -1,11 +1,11 @@
 import argparse
 import json
 import os
-import digital_cousins
+import our_method
 import omnigibson as og
 from omnigibson.macros import gm
 from omnigibson.utils.ui_utils import KeyboardEventHandler
-from digital_cousins.pipeline.generation import SimulatedSceneGenerator
+from our_method.pipeline.generation import SimulatedSceneGenerator
 import omnigibson.lazy as lazy
 
 
@@ -43,7 +43,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scene_info_path", type=str, default=os.path.join(os.path.dirname(digital_cousins.ROOT_DIR), "tests/acdc_output/step_3_output/scene_0/scene_0_info.json"),
+    parser.add_argument("--scene_info_path", type=str, default=os.path.join(os.path.dirname(our_method.ROOT_DIR), "tests/acdc_output/step_3_output/scene_0/scene_0_info.json"),
                         help="Absolute path to acdc output scene info path.")
 
     args = parser.parse_args()

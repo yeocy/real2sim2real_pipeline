@@ -4,6 +4,7 @@ Wrapper environment class to enable using iGibson-based environments used in the
 
 from copy import deepcopy
 import numpy as np
+from regex import P
 import torch as th
 import json
 import os
@@ -182,10 +183,16 @@ def process_omni_obs(
                 # print(f"prim_path: {prim_path}")
                 # Check over all inclusion strings, if not included in any, continue
                 for include_str in include_segment_strs:
+                    # print(include_str)
                     if include_str in prim_path:
+                        # print("#####################################################")
+                        # print(f"prim_path: {prim_path} include_str: {include_str}")
                         valid_inst_ids.append(idx)
                         break
+
             valid_inst_ids = np.array(valid_inst_ids)
+
+        # exit()
         for pc_name, depth_linear in pc_depths.items():
             # Grab sensor
             group, sensor_name, _ = pc_name.split("::")
@@ -215,7 +222,31 @@ def process_omni_obs(
             ).reshape(-1, 3)
             if include_segment_strs is not None:
                 seg_ids = pc_seg_ids[pc_name]
+
+                # import matplotlib
+                # matplotlib.use('Agg')  # GUI 사용 안하고 backend를 Agg로 강제
+                # import matplotlib.pyplot as plt
+
+                # # 예시
+                # plt.figure(figsize=(20, 15))
+                # plt.imshow(seg_ids, cmap='tab20')
+                # plt.colorbar()
+
+                # # 텍스트도 찍을 수 있음
+                # for (i, j), val in np.ndenumerate(seg_ids):
+                #     if i % 10 == 0 and j % 10 == 0:
+                #         plt.text(j, i, f'{val}', ha='center', va='center', fontsize=5, color='black')
+
+                # # 대신 show()가 아니라 파일로 저장
+                # plt.savefig("seg_ids_debug.png", dpi=300)
+                # print("✅ 저장 완료: /tmp/seg_ids_debug.png")
+
+                # print(np.any(seg_ids == valid_inst_ids[0]))
+                # print(np.any(seg_ids == valid_inst_ids[1]))
+                # print(np.any(seg_ids == valid_inst_ids[2]))
+                # print(np.any(seg_ids == valid_inst_ids[3]))
                 seg_idxs = np.in1d(seg_ids.flatten(), valid_inst_ids).reshape(seg_ids.shape)
+                # print(f"seg_idxs: {seg_idxs}")
                 foreground_idxs = seg_idxs if foreground_idxs is None else (foreground_idxs & seg_idxs)
             if pc_prune_depth_background and foreground_idxs is not None:
                 # Prune mask to simulate real
@@ -224,7 +255,6 @@ def process_omni_obs(
                 pcs.append(pc)
             else:
                 step_obs_data[pc_name] = pc
-
         # Combine all point clouds if requested
         if combine_pc:
             step_obs_data["combined::point_cloud"] = np.concatenate(pcs, axis=0)
@@ -456,6 +486,7 @@ class EnvOmniGibson(EB.EnvBase):
                 - bool: truncated, i.e. whether this episode ended due to a time limit etc.
                 - dict: info, i.e. dictionary with any useful information
         """
+
         obs, r, terminated, truncated, info = self.env.step(action)
 
         # Keep iterating until EEF error is below some threshold
@@ -612,7 +643,7 @@ class EnvOmniGibson(EB.EnvBase):
     def get_observation(self, di=None):
         if di is None:
             di, _ = self.env.get_obs()
-    
+
         # Re-structure dict
         robot = self.env.robots[0]
         di = process_omni_obs(

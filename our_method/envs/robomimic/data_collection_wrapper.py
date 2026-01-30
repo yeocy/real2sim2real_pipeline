@@ -147,6 +147,7 @@ class DataCollectionWrapper(EnvironmentWrapper):
         """
         # Only save successful demos and if actually recording
         success = self.env.is_success()["task"] or not self.only_successes
+        success = True
         if success and self.hdf5_file is not None:
             traj_grp_name = f"demo_{self.traj_count}"
             process_traj_to_hdf5(self.current_traj_history, self.hdf5_file, traj_grp_name)

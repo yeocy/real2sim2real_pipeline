@@ -1,7 +1,7 @@
 {
     "algo_name": "bc",
     "experiment": {
-        "name": "default_run",
+        "name": "test_1000",
         "validate": false,
         "logging": {
             "terminal_output_to_txt": true,
@@ -19,7 +19,7 @@
             "on_best_rollout_success_rate": true
         },
         "epoch_every_n_steps": 100,
-        "validation_epoch_every_n_steps": 10,
+        "validation_epoch_every_n_steps": 1000,
         "env": null,
         "additional_envs": null,
         "render": false,
@@ -28,17 +28,17 @@
         "video_skip": 5,
         "rollout": {
             "enabled": true,
-            "n": 25,
+            "n": 10,
             "horizon": 100,
-            "rate": 100,
+            "rate": 500,
             "warmstart": 0,
             "terminate_on_success": true
         }
     },
     "train": {
         "data": "FILL_ME_IN",
-        "output_dir": "default_run",
-        "num_data_workers": 2,
+        "output_dir": "test_1000",
+        "num_data_workers": 8,
         "hdf5_cache_mode": "low_dim",
         "hdf5_use_swmr": true,
         "hdf5_load_next_obs": false,
@@ -87,7 +87,7 @@
         "goal_mode": null,
         "cuda": true,
         "batch_size": 32,
-        "num_epochs": 30000,
+        "num_epochs": 3000,
         "seed": 1
     },
     "algo": {

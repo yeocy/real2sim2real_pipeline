@@ -30,16 +30,18 @@ macros.object_states.open_state.JOINT_THRESHOLD_BY_TYPE[JointType.JOINT_REVOLUTE
 macros.object_states.open_state.JOINT_THRESHOLD_BY_TYPE[JointType.JOINT_PRISMATIC] = 1.0 / 3
 
 USE_OSC = False                                                 # Whether to use OSC or not (use IK otherwise)
-USE_DELTA_CMDS = False                                           # Whether to use delta commands or not
+USE_DELTA_CMDS = True                                           # Whether to use delta commands or not
 DIST_USE_FROM_HANDLE = True                                     # Whether to calculate distance from target object handle or center of its bbox
 VISUALIZE_SKILL = False                                         # Whether to visualize skill during demo collection or not
-XYZ_RANDOMIZATION = np.array([0.03, 0.03, 0.03])                # (x,y,z) randomization to apply to target object
-Z_ROT_RANDOMIZATION = np.pi / 30                                # z-rotation randomization to apply to target object                          # z-rotation randomization to apply to target object
-EXTERNAL_CAM_XYZ_RANDOMIZATION = np.ones(3) * 0.01              # (x,y,z) randomization to apply to camera between episodes
-EXTERNAL_CAM_ROT_RANDOMIZATION = np.pi / 30                     # orientation magnitude randomization to apply to camera between episodes
-DEFAULT_DIST_FROM_HANDLE = np.array([0.51, -0.28, -0.265])           # default offset from the robot base to the target object's handle
+XYZ_RANDOMIZATION = np.array([0.0, 0.0, 0.0])                # (x,y,z) randomization to apply to target object
+# Z_ROT_RANDOMIZATION = np.pi / 30                                # z-rotation randomization to apply to target object                          # z-rotation randomization to apply to target object
+Z_ROT_RANDOMIZATION = 0                                # z-rotation randomization to apply to target object                          # z-rotation randomization to apply to target object
+EXTERNAL_CAM_XYZ_RANDOMIZATION = np.zeros(3) * 0.1              # (x,y,z) randomization to apply to camera between episodes
+# EXTERNAL_CAM_ROT_RANDOMIZATION = 0                     # orientation magnitude randomization to apply to camera between episodes
+EXTERNAL_CAM_ROT_RANDOMIZATION = np.pi / 60                     # orientation magnitude randomization to apply to camera between episodes
+DEFAULT_DIST_FROM_HANDLE = np.array([-0.3, 0.2, 0.0])           # default offset from the robot base to the target object's handle
 # DEFAULT_DIST_FROM_HANDLE = np.array([0.5, 0.1, -1.7])           # default offset from the robot base to the target object's handle
-BBOX_TRAIN_RANDOMIZATION = np.array([0.1, 0.1, 0.1]) * 1.0   # Relative % randomization scaling of target objects' bboxes
+BBOX_TRAIN_RANDOMIZATION = np.array([0.0, 0.0, 0.0])   # Relative % randomization scaling of target objects' bboxes
 STEP_DIVISOR = 5                                                # Minimum physics steps to take (@60Hz) per action
 
 
@@ -51,13 +53,12 @@ def main(args):
     # Aggregate cousins
     eval_cousin_id = args.eval_cousin_id
     obj_info = scene_info["objects"][args.target_parent_obj]
-    cousin_category_names, cousin_model_names, cousin_link_names = [obj_info["category"]], [obj_info["model"]], [args.target_link]
+    cousin_category_names, cousin_model_names = [obj_info["category"]], [obj_info["model"]]
     if args.cousins is not None:
         for cousin_str in args.cousins:
-            cousin_category, cousin_model, cousin_link = cousin_str.split(",")
+            cousin_category, cousin_model = cousin_str.split(",")
             cousin_category_names.append(cousin_category)
             cousin_model_names.append(cousin_model)
-            cousin_link_names.append(cousin_link)
 
     n_cousins = len(cousin_category_names)
     randomize_textures = [True] * n_cousins
@@ -74,7 +75,7 @@ def main(args):
     robot_params = {
         "model_name": "KinovaGen3Lite",      # Only currently works for FrankaPanda, FrankaMounted models
         "robot_name": "robot0",
-        "reset_qpos": th.tensor([0.0, 0.3491, 2.6180, -1.5359, -0.6981, -1.5184, 0.0, 0.0, 0.0, 0.0]),  # 0  20  150  -88  -40  -87          # "reset_qpos": th.tensor([0.0, -0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        "reset_qpos": th.tensor([1.5708, 0.3491, 2.6180, -1.5359, -0.6981, -1.5184, 0.0, 0.0, 0.0, 0.0]),  # 0  20  150  -88  -40  -87          # "reset_qpos": th.tensor([0.0, -0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         "eef_z_offset": 0.14,
         # "open_qpos": None,              # If specified, joint values defining an open state for the robot gripper
         "open_qpos": th.tensor([0.96, 0.96, -0.5, -0.5]),              # If specified, joint values defining an open state for the robot gripper
@@ -82,10 +83,9 @@ def main(args):
         "closed_qpos": th.tensor([-0.09, -0.09, 0.209, 0.209]),              # If specified, joint values defining an open state for the robot gripper
         "root_link": "BASE",
         # "vis_local_position": th.tensor([-0.3, 0.3, 0.8]),
-        "vis_local_position": th.tensor([0.0765683, 0.54672388, 1.01939066]),
+        "vis_local_position": th.tensor([0.00826274, 1.0580069,  0.76899746]),
         # "vis_local_orientation": th.tensor([-0.30369818, -0.05854882, 0.00282494, 0.95096344]), # X, Y, Z, W
-        "vis_local_orientation": th.tensor([-0.05854882, 0.30369818, 0.95096344, -0.00282494]), # X, Y, Z, W
-        # "vis_local_orientation": th.tensor([-0.00282494, 0.95096344, -0.30369818, 0.05854882]),
+        "vis_local_orientation": th.tensor([0.00345505, 0.381173,   0.92448198, 0.00531777]),
     }
 
     # # Set robot params
@@ -106,7 +106,7 @@ def main(args):
         joint_limits=(0.0, np.pi / 4),  # This assumes joint is revolute
         n_approach_steps=int(100 / STEP_DIVISOR),
         n_converge_steps=int(75 / STEP_DIVISOR),
-        n_grasp_steps=int(100 / STEP_DIVISOR),
+        n_grasp_steps=int(75 / STEP_DIVISOR),
         n_articulate_steps=int(125 / STEP_DIVISOR),
         n_buffer_steps=int(5 / STEP_DIVISOR),
     )
@@ -131,10 +131,10 @@ def main(args):
             "modalities": ["rgb", "depth_linear", "seg_instance_id"],
             # "modalities": ["rgb", "depth_linear"],
             "sensor_kwargs": {
-                "image_height": 480,
-                "image_width": 640,
-                "focal_length": 20,
-                # "intrinsic_matrix" : [[614.04736328125, 0.0, 320.4498596191406], [0.0, 614.044677734375, 244.81724548339844], [0.0, 0.0, 1.0]]
+                "image_height": 722.7695922851562,
+                "image_width": 1318.511962890625,
+                "focal_length": 14,
+                # "intrinsic_matrix" : [905.757568359375, 0.0, 659.2559814453125, 0.0, 906.0278930664062, 361.3847961425781, 0.0, 0.0, 1.0]
                 # "focal_length":  614.044677734375,
             },
             "position": robot_params["vis_local_position"],
@@ -168,8 +168,8 @@ def main(args):
         "self_collision": False,
         "action_normalize": True if USE_DELTA_CMDS else False,
         "action_type": "continuous",
-        # "grasping_mode": "physical",
-        "grasping_mode": "sticky",
+        "grasping_mode": "physical",
+        # "grasping_mode": "sticky",
         "proprio_obs": ["eef_0_pos", "eef_0_quat", "gripper_0_qpos"],
         "reset_joint_pos": robot_params["reset_qpos"],
         "sensor_config": {
@@ -241,11 +241,11 @@ def main(args):
     cfg["wrapper"] = {
         # "type": "OpenCabinetWrapper",
         # "type": "PickCupInTheCabinetWrapper",
-        "type": "PickCupInTheCabinetKinovaWrapper",
+        "type": "TableTopWrapper",
         "eef_z_offset": robot_params["eef_z_offset"],
         "cab_categories": cousin_category_names,
         "cab_models": cousin_model_names,
-        "cab_links": cousin_link_names,
+        # "cab_links": cousin_link_names,
         "cab_bboxs": cab_bboxes,
         "eval_idx": eval_cousin_id,
         "handle_dist": 0.005,
@@ -253,7 +253,7 @@ def main(args):
         "dist_out_from_handle": DEFAULT_DIST_FROM_HANDLE[0],
         "dist_right_of_handle": DEFAULT_DIST_FROM_HANDLE[1],
         "dist_up_from_handle": DEFAULT_DIST_FROM_HANDLE[2],
-        # "z_rot_from_handle": -th.pi / 2,
+        "z_rot_from_handle": th.pi/2,
         "xyz_randomization": XYZ_RANDOMIZATION,
         "z_rot_randomization": Z_ROT_RANDOMIZATION,
         "bbox_randomization": bbox_randomizations,
@@ -268,7 +268,7 @@ def main(args):
         ),
         "visualize_skill": VISUALIZE_SKILL,
         "custom_bddl": None,
-        "task_activity_name": "open_cabinet",
+        "task_activity_name": "picking_up_trash",
         "scene_info": scene_info,
         "scene_target_parent_obj_name": args.target_parent_obj,
         "scene_target_child_obj_name": args.target_child_obj,
@@ -285,7 +285,7 @@ def main(args):
             f"{robot_params['robot_name']}::proprio",
         ],
         combine_pc=True,
-        include_segment_strs=["cabinet","pencil_case"],
+        include_segment_strs=["table","box","pencil_case","controllable__kinovagen3lite__robot0"],
         include_eef_pc=True,
         embed_eef_pc=True,
         max_pc=2048,
@@ -293,7 +293,7 @@ def main(args):
         postprocess_visual_obs=False,
         render=True,
         wrap_during_initialization=True,
-        robot_cam_depth_threshold=10,
+        robot_cam_depth_threshold=1,
         external_cam_depth_threshold=100,
         external_cam_xyz_randomization=EXTERNAL_CAM_XYZ_RANDOMIZATION,
         external_cam_rot_randomization=EXTERNAL_CAM_ROT_RANDOMIZATION,
@@ -336,7 +336,8 @@ def main(args):
             env.env.env.set_cabinet_idx(idx=i)
             env.reset()
             env.collect_demo()
-            if env.env.is_success()["task"]:
+            # if env.env.is_success()["task"]:
+            if True:
                 n_cab_successes += 1
                 buffer_traj_count += 1
                 env.flush_current_traj()
@@ -360,8 +361,6 @@ if __name__ == "__main__":
                         help="Name of the object to articulate")
     parser.add_argument("--target_child_obj", type=str, required=True,
                         help="Name of the object to articulate")
-    parser.add_argument("--target_link", type=str, required=True,
-                        help="Name of @target_obj's link to articulate")
     parser.add_argument("--cousins", type=str, nargs="+", default=None,
                         help="If specified, <category>,<model>,<link> string(s) representing cousins to additionally swap out for @target_obj when collecting demos and / or evaluating a trained policy")
     parser.add_argument("--dataset_path", type=str, required=True,

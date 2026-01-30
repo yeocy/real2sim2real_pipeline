@@ -12,7 +12,7 @@ class SkillWrapper(EnvironmentWrapper):
     def __init__(self, env, use_delta_commands=False):
         # Store internal vars
         self.use_delta_commands = use_delta_commands
-
+        
         # Call super
         super().__init__(env=env)
 

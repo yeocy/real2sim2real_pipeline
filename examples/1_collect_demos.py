@@ -4,7 +4,7 @@ Example script for running ACDC to automatically generate simulated scene from s
 Example usage:
 
 python 1_collect_demos.py \
---scene_path ../tests/acdc_output/step_3_output/scene_0/scene_0_info.json \
+--scene_path /home/yeocy/robotics/LLMforMani/Simulation/real2sim2real_pipeline/our_method_test/acdc_output/step_3_output/scene_0/scene_0_info.json \
 --target_obj cabinet_4 \
 --target_link link_1 \
 --cousins bottom_cabinet,bamfsz,link_1 bottom_cabinet_no_top,vdedzt,link_0 \

@@ -304,6 +304,7 @@ class PickCupInTheCabinetKinovaWrapper(SkillWrapper):
                     # visual_only=obj_name == self.scene_target_parent_obj_name or self.scene_target_child_obj_name or self.non_target_objs_visual_only,
                     bounding_box=self.scene_info["objects"][self.scene_target_child_obj_name]["bbox_extent"],
                     fixed_base=not self.scene_info["objects"][self.scene_target_child_obj_name]["mount"]["floor"],
+                    visual_only=True
                 )
                 env.scene.add_object(cab)
                 env.scene.add_object(target_obj)
@@ -496,7 +497,8 @@ class PickCupInTheCabinetKinovaWrapper(SkillWrapper):
         self._current_idx = th.randint(self._n_models, (1,)).item() if self.eval_idx is None else self.eval_idx
         self.cabs[self._current_idx].visible = True
         # self.cabs[self._current_idx].visible = False
-        self.target_objs[self._current_idx].visible = True
+        # self.target_objs[self._current_idx].visible = True
+        self.target_objs[self._current_idx].visible = False
         
 
         # TODO
@@ -647,34 +649,34 @@ class PickCupInTheCabinetKinovaWrapper(SkillWrapper):
         # TODO
         old_state = og.sim.dump_state()
 
-        from omnigibson.object_states import Touching
-        # 이미 충돌 중이면 살짝 위로 밀기
-        if target_obj.states[Touching].get_value(cab_obj):
-            reverse_dir = th.tensor([0, 0, 1.0], dtype=th.float)
-            while target_obj.states[Touching].get_value(cab_obj):
-                og.sim.load_state(old_state)
-                new_pos = target_obj.get_position_orientation()[0] + reverse_dir * step_size
-                target_obj.set_position_orientation(position=new_pos)
-                old_state = og.sim.dump_state()
-                og.sim.step_physics()
-                og.sim.step()
-                og.sim.render()
+        # from omnigibson.object_states import Touching
+        # # 이미 충돌 중이면 살짝 위로 밀기
+        # if target_obj.states[Touching].get_value(cab_obj):
+        #     reverse_dir = th.tensor([0, 0, 1.0], dtype=th.float)
+        #     while target_obj.states[Touching].get_value(cab_obj):
+        #         og.sim.load_state(old_state)
+        #         new_pos = target_obj.get_position_orientation()[0] + reverse_dir * step_size
+        #         target_obj.set_position_orientation(position=new_pos)
+        #         old_state = og.sim.dump_state()
+        #         og.sim.step_physics()
+        #         og.sim.step()
+        #         og.sim.render()
 
-        # 아래로 움직이며 충돌할 때까지 붙이기
-        step_dir = th.tensor([0, 0, -1.0], dtype=th.float)
-        while not target_obj.states[Touching].get_value(cab_obj):
-            og.sim.load_state(old_state)
-            new_pos = target_obj.get_position_orientation()[0] + step_dir * step_size
-            target_obj.set_position_orientation(position=new_pos)
-            old_state = og.sim.dump_state()
-            og.sim.step_physics()
-            og.sim.step()
-            og.sim.render()
+        # # 아래로 움직이며 충돌할 때까지 붙이기
+        # step_dir = th.tensor([0, 0, -1.0], dtype=th.float)
+        # while not target_obj.states[Touching].get_value(cab_obj):
+        #     og.sim.load_state(old_state)
+        #     new_pos = target_obj.get_position_orientation()[0] + step_dir * step_size
+        #     target_obj.set_position_orientation(position=new_pos)
+        #     old_state = og.sim.dump_state()
+        #     og.sim.step_physics()
+        #     og.sim.step()
+        #     og.sim.render()
 
-        # 마지막 1스텝 back해서 살짝 위로 되돌리기
-        og.sim.load_state(old_state)
-        final_pos = target_obj.get_position_orientation()[0] - step_dir * step_size
-        target_obj.set_position_orientation(position=final_pos)
+        # # 마지막 1스텝 back해서 살짝 위로 되돌리기
+        # og.sim.load_state(old_state)
+        # final_pos = target_obj.get_position_orientation()[0] - step_dir * step_size
+        # target_obj.set_position_orientation(position=final_pos)
 
 
         # Adjust z-value only based on scene graph

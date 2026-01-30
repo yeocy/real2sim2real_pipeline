@@ -72,7 +72,7 @@ pipeline:
       gpt_api_key: null
       gpt_version: 4o
       top_k_categories: 5
-      top_k_models: 3
+      top_k_models: 5
       n_digital_cousins: 2
       n_cousins_reselect_cand: 3
       remove_background: false
@@ -99,6 +99,18 @@ pipeline:
 
 
   SimulatedSceneVisualize:
+    call:
+      n_scenes: 1
+      sampling_method: random
+      resolve_collision: true
+      discard_objs: null
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true
+
+  
+  TaskSceneGenerator:
     call:
       n_scenes: 1
       sampling_method: random

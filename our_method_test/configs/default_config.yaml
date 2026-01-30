@@ -1,0 +1,149 @@
+# ACDC Pipeline Default Configuration
+
+# Random seed for reproducibility
+seed: 42
+
+# Path settings
+paths:
+  save_dir: "acdc_output"        # Output directory for ACDC results
+  test_rgb_img_path: "inputs/camera_rgb.png"       # Input test image path
+  test_depth_img_path: "inputs/camera_depth.npy"   # Input test depth image path
+  # test_depth_img_path: null   # Input test depth image path
+  camera_intrinsics_matrix_path: "inputs/camera_info.json"   # Input camera intrinsics matrix path
+  # camera_intrinsics_matrix_path: null   # Input camera intrinsics matrix path
+
+# GPT settings
+gpt:
+  version: "5.1"
+  token_print: true        # Enable token usage printing
+
+# Scene generation settings
+scene:
+  no_resizing: true          # Enable object resizing
+  find_front_view: true      # Enable find_front_view
+
+# Position randomization settings
+position:
+  inside_position_randomization: true  # Enable inside position randomization
+  max_bound: 1.0                       # Maximum bound for position randomization
+
+# Rotation randomization settings
+rotation:
+  rotation_randomization: false  # Enable random rotation around yaw
+  random_degree: 5.0             # Maximum yaw rotation degree
+
+# Distractor settings
+distractor:
+  use_distractor_noise: false     # Add distractor objects in the scene
+  use_distractor_category: 3      # Number of distractor categories
+  distractor_top_k: 1             # Number of distractor objects per category
+
+# Task specification
+task:
+  goal_task: "pick up the jar"
+
+# Pipeline steps to run (set to true to enable)
+pipeline_steps:
+  run_step_1: false  # Step 1: Real-world extraction
+  run_step_2: true   # Step 2: Digital cousin matching
+  run_step_3: true   # Step 3: Scene generation
+  run_visualize_scene: true  # Visualize generated scene
+  run_step_4_and_5: false  # Steps 4 & 5: Task object extraction and spatial reasoning
+  run_step_6: false  # Step 6: Task object retrieval
+  run_task_object_resizing: false  # Task object resizing
+  run_step_7: false  # Step 7: Task-following scene generation
+  run_og_test: false  # OmniGibson test (Note: cannot run with step 3)
+
+# Model configurations (from our_method/configs/default.yaml)
+models:
+  FeatureMatcher:
+    # encoder kwargs
+    encoder: DinoV2Encoder
+    encoder_kwargs: null
+
+    # Grounded SAM v2 kwargs
+    gsam_box_threshold: 0.25
+    gsam_text_threshold: 0.25
+
+# Pipeline configurations (from our_method/configs/default.yaml)
+pipeline:
+  verbose: true
+
+  RealWorldExtractor:
+    call:
+      captions: null
+      depth_model: "UniDepthV2" # "UniDepthV2" or "DepthAnythingV2"
+      filter_backsplash: true
+      infer_aligned_wall: true
+      visualize: false
+
+  DigitalCousinMatcher:
+    call:
+      top_k_categories: 3
+      top_k_models: 6
+      top_k_poses: 3
+      n_digital_cousins: 4
+      n_cousins_reselect_cand: 3
+      remove_background: false
+      gpt_select_cousins: true
+      n_cousins_link_count_threshold: 10
+      start_at_name: null # Object Matching을 중간부터 시작할지 비었을 경우 null으로 작성해야함
+
+  RealSceneGenerator:
+    call:
+      n_scenes: 4
+      sampling_method: random
+      resolve_collision: true
+      discard_objs: null
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true
+      save_camera_info_extrinsic: true
+
+  VisualizeScene:
+    call:
+      scene_idx: 0
+      output: null
+      n_render_steps: 10000000
+      visual_only: false
+
+  TaskObjectExtractionAndSpatialReasoning:
+    call: {}
+
+  TaskObjectRetrieval:
+    call:
+      top_k_categories: 5
+      top_k_models: 5
+      n_digital_cousins: 2
+      n_cousins_reselect_cand: 3
+      remove_background: false
+      gpt_select_cousins: true
+      n_cousins_link_count_threshold: 10
+      start_at_name: null
+  
+  TaskObjectResizing:
+    call: {}
+
+  TaskSceneGenerator:
+    call:
+      n_scenes: 1
+      sampling_method: random
+      resolve_collision: true
+      discard_objs: null
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true
+
+  SimulatedSceneVisualize:
+    call:
+      n_scenes: 1
+      sampling_method: random
+      resolve_collision: true
+      discard_objs: null
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true
+

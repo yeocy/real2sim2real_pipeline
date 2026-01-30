@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 import numpy as np
 import torch as th
 import cv2
@@ -12,6 +14,13 @@ from typing import List
 from torchvision.ops import box_convert
 import supervision as sv
 import multiprocessing
+
+def prepare_output_dir(input_path, save_dir, subdir_name):
+    if save_dir is None:
+        save_dir = os.path.dirname(input_path)
+    save_dir = os.path.join(save_dir, subdir_name)
+    Path(save_dir).mkdir(parents=True, exist_ok=True)
+    return save_dir
 
 def annotate(image_source: np.ndarray, boxes: torch.Tensor, phrases: List[str]) -> np.ndarray:
     """

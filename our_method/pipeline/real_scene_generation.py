@@ -1,38 +1,29 @@
-import torch as th
-import numpy as np
-from pathlib import Path
-from PIL import Image
-from copy import deepcopy
+# Standard Libraries
 import os
 import json
+from pathlib import Path
+from copy import deepcopy
+
+# Third-party Libraries
+import torch as th
+import numpy as np
+from PIL import Image
 import imageio
+from loguru import logger as log
+
+# OmniGibson Libraries
 import omnigibson as og
-from omnigibson.scenes import Scene
 from omnigibson.objects import DatasetObject
 from omnigibson.object_states import Touching
 from omnigibson.object_states import ToggledOn
-import our_method
-from our_method.utils.processing_utils import NumpyTorchEncoder, unprocess_depth_linear, compute_point_cloud_from_depth, \
+
+# Local / Project Utilities
+from our_method.utils.processing_utils import prepare_output_dir, NumpyTorchEncoder, unprocess_depth_linear, compute_point_cloud_from_depth, \
     get_reproject_offset, resize_image
-from our_method.utils.scene_utils import compute_relative_cam_pose_from, align_model_pose, compute_object_z_offset, \
+from our_method.utils.scene_utils import create_scene, take_photo, compute_relative_cam_pose_from, align_model_pose, compute_object_z_offset, \
     compute_obj_bbox_info, align_obj_with_wall, get_vis_cam_trajectory
 import our_method.utils.transform_utils as T
 
-# Set of non-collidable categories
-NON_COLLIDABLE_CATEGORIES = {
-    "towel",
-    "rug",
-    "mirror",
-    "picture",
-    "painting",
-    "window",
-    "art",
-}
-
-CATEGORIES_MUST_ON_FLOOR = {
-    "rug",
-    "carpet"
-}
 
 class RealSceneGenerator:
     """
@@ -51,6 +42,23 @@ class RealSceneGenerator:
     Outputs:
         - Ordered digital cousin (category, model, pose) information per detected object from Step 1
     """
+    
+    # Set of non-collidable categories
+    NON_COLLIDABLE_CATEGORIES = {
+        "towel",
+        "rug",
+        "mirror",
+        "picture",
+        "painting",
+        "window",
+        "art",
+    }
+
+    CATEGORIES_MUST_ON_FLOOR = {
+        "rug",
+        "carpet"
+    }
+    
     SAMPLING_METHODS = {
         "random",
         "ordered",
@@ -65,692 +73,562 @@ class RealSceneGenerator:
             verbose (bool): Whether to display verbose print outs during execution or not
         """
         self.verbose = verbose
+        # Instance variables to be set in __call__ or helper methods
+        self.n_scenes = 0
+        self.sampling_method = "ordered"
+        self.resolve_collision = True
+        self.discard_objs = None
+        self.save_dir = None
+        self.visualize_scene = False
+        self.visualize_scene_tilt_angle = 0
+        self.visualize_scene_radius = 5
+        self.save_visualization = True
+
+        self.step_1_output_path = None
+        self.step_2_output_path = None
+        self.step_2_output_info = None
+        
+        # Loaded data from Step 1 & 2
+        self.n_cousins = 0
+        self.n_objects = 0
+        self.cousins = {}
+        self.rgb = None
+        self.h = 0
+        self.w = 0
+        self.K = None
+        self.z_dir = None
+        self.wall_mask_planes = None
+        self.cam_pos = None
+        self.cam_quat = None
+        self.pc = None
+        self.detected_categories = None
+
 
     def __call__(
             self,
             step_1_output_path,
             step_2_output_path,
+            camera_info=None,
             n_scenes=1,
-            # sampling_method="random",
             sampling_method="ordered",
             resolve_collision=True,
             discard_objs=None,
             save_dir=None,
             visualize_scene=False,
             visualize_scene_tilt_angle=0,
-            visualize_scene_radius=5,
-            save_visualization=True
+            visualize_scene_radius=1,
+            save_visualization=True,
+            save_camera_info_extrinsic=False
     ):
         """
         Runs the simulated scene generator. This does the following steps for all detected objects from Step and all
         matched cousin assets from Step 2:
-
-        1. Compute camera pose and world origin point from step 1 output.
-        2. Separately set each object in correct position and orientation w.r.t. the viewer camera,
-           and save the relative transformation between the object and the camera.
-        3. Put all objects in a single scene.
-        4. Infer objects OnTop relationship. We currently only support OnTop cross-object relationship, so there might
-            be artifacts if an object is 'In' another object, like books in a bookshelf.
-        5. Process collisions and put objects onto the floor or objects beneath to generate a physically plausible scene.
-        6. (Optionally) visualize the reconstructed scene.
-
-        Args:
-            step_1_output_path (str): Absolute path to the output file generated from Step 1 (RealWorldExtractor)
-            step_2_output_path (str): Absolute path to the output file generated from Step 2 (DigitalCousinMatcher)
-            n_scenes (int): Number of scenes to generate. This number cannot be greater than the number of cousins
-                generated from Step 2 if @sampling_method="ordered" or greater than the product of all possible cousin
-                combinations if @sampling_method="random"
-            sampling_method (str): Sampling method to use when generating scenes. "random" will randomly select a cousin
-                for each detected object in Step 1 (total combinations: N_cousins ^ N_objects). "ordered" will
-                sequentially iterate over each detected object and generate scenes with corresponding ordered cousins,
-                i.e.: a scene with all 1st cousins, a scene with all 2nd cousins, etc. (total combinations: N_cousins).
-                Note that in both cases, the first scene generated will always be composed of all the closest (first)
-                cousins. Default is "random"
-            resolve_collision (bool): Whether to depenetrate collisions. When the point cloud is not denoised properly,
-                or the mounting type is wrong, the object can be unreasonably large. Or when two objects in the input image
-                intersect with each other, we may move an object by a non-trivial distance to depenetrate collision, so
-                objects on top may fall down to the floor, and other objects may also need to be moved to avoid collision
-                with this object. Under both cases, we recommend setting @resolve_collision to False to visualize the
-                raw output.
-            discard_objs (str): Names of objects to discard during reconstruction, seperated by comma, i.e., obj_1,obj_2,obj_3.
-                Do not add space between object names.
-            save_dir (None or str): If specified, the absolute path to the directory to save all generated outputs. If
-                not specified, will generate a new directory in the same directory as @step_2_output_path
-            visualize_scene (bool): Whether to visualize the scene after reconstruction. If True, the viewer camera will
-                rotate around the scene's center point with a @visualize_scene_tilt_angle tilt cangle, and a 
-                @visualize_scene_radius radius.
-            visualize_scene_tilt_angle (float): The camera tilt angle in degree when visualizing the reconstructed scene. 
-                This parameter is only used when @visualize_scene is set to True
-            visualize_scene_radius (float): The camera rotating raiud in meters when visualizing the reconstructed scene.
-                This parameter is only used when @visualize_scene is set to True
-            save_visualization (bool): Whether to save the visualization results. This parameter is only used when 
-                @visualize_scene is set to True
-
-        Returns:
-            2-tuple:
-                bool: True if the process completed successfully. If successful, this will write all relevant outputs to
-                    the directory specified in the second output
-                None or str: If successful, this will be the absolute path to the main output file. Otherwise, None
+        ...
         """
-        ###### Step 2 결과 로드 ######
+        # Store all input parameters as instance variables
+        self.step_1_output_path = step_1_output_path
+        self.step_2_output_path = step_2_output_path
+        self.camera_info = camera_info
+        self.n_scenes = n_scenes
+        self.sampling_method = sampling_method
+        self.resolve_collision = resolve_collision
+        self.visualize_scene = visualize_scene
+        self.visualize_scene_tilt_angle = visualize_scene_tilt_angle
+        self.visualize_scene_radius = visualize_scene_radius
+        self.save_visualization = save_visualization
+        self.save_camera_info_extrinsic = save_camera_info_extrinsic
+
         # Load step 2 info
-        with open(step_2_output_path, "r") as f:
-            step_2_output_info = json.load(f)
-
-        ###### 감지된 객체 및 모델 정보 가져오기 ######
-        # Load relevant information from prior steps
-        n_cousins = step_2_output_info["metadata"]["n_cousins"]
-        n_objects = step_2_output_info["metadata"]["n_objects"]
-        cousins = step_2_output_info["objects"]
-
-
-        # Sanity check number of scenes to generate
-        assert sampling_method in self.SAMPLING_METHODS, \
-            f"Got invalid sampling_method! Valid methods: {self.SAMPLING_METHODS}, got: {sampling_method}"\
+        with open(self.step_2_output_path, "r") as f:
+            self.step_2_output_info = json.load(f)
         
-        ###### 저장 디렉토리 설정 ######
-        # Parse save_dir, and create the directory if it doesn't exist
-        if save_dir is None:
-            save_dir = os.path.dirname(step_2_output_path)
-        save_dir = os.path.join(save_dir, "step_3_output")
-        Path(save_dir).mkdir(parents=True, exist_ok=True)
+        # Load relevant information from prior steps
+        self.n_cousins = self.step_2_output_info["metadata"]["n_cousins"]
+        self.cousins = self.step_2_output_info["objects"]
+        self.n_objects = self.step_2_output_info["metadata"]["n_objects"]
 
+        # Sanity check
+        assert self.sampling_method in self.SAMPLING_METHODS, \
+            f"Got invalid sampling_method! Valid methods: {self.SAMPLING_METHODS}, got: {self.sampling_method}"
+        
+        # Setup save directory and discard list
+        self.save_dir = prepare_output_dir(self.step_2_output_path, save_dir, "step_3_output")
         if discard_objs:
-            discard_objs = set(discard_objs.split(","))
+            self.discard_objs = set(discard_objs.split(","))
 
         if self.verbose:
-            print(f"Generating simulated scenes given output {step_2_output_path}...")
+            log.info(f"Generating simulated scenes given output {self.step_2_output_path}...")
+            log.debug("Generating simulated scenes in OmniGibson")
 
-        if self.verbose:
-            print("""
-
-####################################################
-####  Generating simulated scenes in OmniGibson ####
-####################################################
-
-            """)
-
-        ###### Step 1 결과 로드 ######
-        # Load relevant input information
-        with open(step_1_output_path, "r") as f:
-            step_1_output_info = json.load(f)
-
-        with open(step_1_output_info["detected_categories"], "r") as f:
-            detected_categories = json.load(f)
-
-        ###### 3D 포인트 클라우드 & 카메라 정보 불러오기 ######
-        seg_dir = detected_categories["segmentation_dir"]
-        K = np.array(step_1_output_info["K"])
-        rgb = np.array(Image.open(step_1_output_info["input_rgb"]))
-        raw_depth = np.array(Image.open(step_1_output_info["input_depth"]))
-        depth_limits = np.array(step_1_output_info["depth_limits"])
-        depth = unprocess_depth_linear(depth=raw_depth, out_limits=depth_limits)
-        pc = compute_point_cloud_from_depth(depth=depth, K=K)
-
-        z_dir = np.array(step_1_output_info["z_direction"])
-        wall_mask_planes = step_1_output_info["wall_mask_planes"]
-        origin_pos = np.array(step_1_output_info["origin_pos"])
-        cam_pos, cam_quat = compute_relative_cam_pose_from(z_dir=z_dir, origin_pos=origin_pos)
+        # Load input data and compute 3D context
+        self._load_and_setup_environment()
 
         # Launch omnigibson
         og.launch()
 
         # Loop over all sample indices to generate individual scenes
-        for scene_count in range(n_scenes):
+        for scene_count in range(self.n_scenes):
+            log.info(f"[Scene {scene_count + 1} / {self.n_scenes}]")
 
-            print("#" * 30)
-            print(f"[Scene {scene_count + 1} / {n_scenes}]")
-
-            ###### Scene 저장 디렉토리 설정 ######
-            # Make dir for saving this scene
-            scene_save_dir = f"{save_dir}/scene_{scene_count}"
+            scene_save_dir = f"{self.save_dir}/scene_{scene_count}"
             Path(scene_save_dir).mkdir(parents=True, exist_ok=True)
-
    
-            ###### Cousin 모델 선택 ######
-            ###### Random : n_cousins 범위에 따라 0~n_cousins까지 random으로 선택 ######
-            ###### ordered : scene 장면에 따라 순서대로 선택 ######
-            # Parse the index to know what configuration of cousins to use
-            if sampling_method == "random":
-                # Ordering is inferred iteratively
-                cousin_idxs = dict()
-                for i, obj_name in enumerate(cousins.keys()):
-                    cousin_idxs[obj_name] = np.random.randint(0, n_cousins)
-                    # {'cup_0': 1, 'microwave_0': 1, 'refrigerator_0': 1, 'cabinet_0': 1, 'cabinet_1': 1, 'cabinet_2': 1, 'cabinet_3': 0, 'cabinet_4': 1}
-
-            elif sampling_method == "ordered":
-                # Cousin selection is simply the current scene idx
-                cousin_idxs = {obj_name: scene_count for obj_name in cousins.keys()}
-            else:
-                raise ValueError(f"sampling_method {sampling_method} not supported!")
+            # Determine which cousin model to use
+            cousin_idxs = self._select_cousin_indices(scene_count)
             
-            ###### 장면 생성 및 카메라 pos 설정 ######
-            # Create a new scene
-            scene = RealSceneGenerator.create_scene(floor=False)
-            h, w, _ = rgb.shape
-            og.sim.viewer_camera.image_width = w
-            og.sim.viewer_camera.image_height = h
-            og.sim.viewer_camera.set_position_orientation(th.tensor(cam_pos, dtype=th.float), th.tensor(cam_quat, dtype=th.float))
+            # --- 1. Initial Object Processing and Alignment ---
+            scene_info = self._process_individual_objects(
+                scene_count=scene_count,
+                scene_save_dir=scene_save_dir,
+                cousin_idxs=cousin_idxs,
+            )
 
-            ###### Object 배치 및 위치 찾기 & json파일 만들기 ######
-            # Loop over all cousins and load them
-            for obj_idx, (obj_name, obj_cousin_idx) in enumerate(cousin_idxs.items()):
-                if self.verbose:
-                    print("-----------------")
-                    print(f"[Scene {scene_count + 1} / {n_scenes}] [Object {obj_idx + 1} / {n_objects}] generating...")
-                if discard_objs and obj_name in discard_objs:
-                    continue
-                # Load and prune object mask
-                obj_info = step_2_output_info["objects"][obj_name]
-                is_articulated = obj_info["articulated"]
-                obj_mask = np.array(Image.open(f"{seg_dir}/{obj_name}_nonprojected_mask_pruned.png"))
-                pc_obj = pc.reshape(-1, 3)[np.array(obj_mask).flatten().nonzero()[0]]
+            # --- 2. Scene Refinement, Collision, and Final Placement ---
+            self._refine_scene_and_resolve_physics(
+                scene_count=scene_count,
+                scene_save_dir=scene_save_dir,
+                scene_info=scene_info,
+            )
 
-                # Infer cousin category and model
-                # Assumes path is XXX/.../<CATEGORY>/model/<MODEL>/<MODEL>_<ANGLE>
-                cousin_info = obj_info["cousins"][obj_cousin_idx]
+        # Compile final results across all scenes and save to disk
+        step_3_output_path = self._save_step3_outputs()
 
-                # Import the cousin asset, stepping to make sure it's initialized properly
-                with og.sim.stopped():
-                    obj = DatasetObject(
-                        name=obj_name,
-                        category=cousin_info["category"],
-                        model=cousin_info["model"],
-                        visual_only=True
-                    )
-                    scene.add_object(obj)
-                og.sim.step()
+        log.success("Completed Simulated Scene Generation!")
 
-                # Determine the reprojection offset based on the object's pose
-                pan_angle_offset, _ = get_reproject_offset(
-                    pc_obj=deepcopy(pc_obj),
-                    z_dir=z_dir,
-                    xy_dist=2.30,   # from OG dataset generation process
-                    z_dist=0.65    # from OG dataset generation process
-                )
-                # if obj_idx == 4:
-                self.take_photo(n_render_steps=500)
-                # Align the object model to its corresponding point cloud
-                # 3D 포인트 클라우드 pc_obj 와 카메라 정보를 이용해서 오브젝트 obj를:
-                # 올바른 방향(회전) 으로 놓고,
-                # 올바른 위치로 옮기고,
-                # 올바른 크기로 스케일 조정해서
-                # 카메라 기준 상대 pose (4x4 행렬) 을 계산
-                obj_scale, obj_bbox_extent, tf_from_cam = align_model_pose(
-                    obj=obj,
-                    pc_obj=pc_obj,
-                    obj_z_angle=cousin_info["z_angle"] + pan_angle_offset,
-                    obj_ori_offset=cousin_info["ori_offset"],
-                    z_dir=deepcopy(z_dir),
-                    cam_pos=cam_pos,
-                    cam_quat=cam_quat,
-                    is_articulated=is_articulated,
-                    verbose=self.verbose,
-                )
-                # if obj_idx == 4:
-                self.take_photo(n_render_steps=500)
-                wall_mount_fpaths = detected_categories["mount"][obj_idx]["wall"]
-                if wall_mount_fpaths is not None:
-                    # 📌 오브젝트를 주어진 벽(wall)에 맞춰서 회전시키고, 벽과 간격 없이 딱 붙도록 크기도 조정한 다음,
-                    # 📌 그 상태에서 카메라 기준으로 오브젝트의 상대 pose (4x4 변환행렬) 을 반환
-                    for mount_wall_idx, wall_mount_fpath in enumerate(wall_mount_fpaths):
-                        obj_scale, obj_bbox_extent, tf_from_cam = align_obj_with_wall(
-                            obj=obj,
-                            cam_pos=cam_pos,
-                            cam_quat=cam_quat,
-                            wall_normal=wall_mask_planes[wall_mount_fpath]["normal"],
-                            wall_point=wall_mask_planes[wall_mount_fpath]["point"],
-                            wall_is_vertical=True,
-                            resize_only=mount_wall_idx > 0,
-                        )
-                if obj_idx == 4:
-                    self.take_photo(n_render_steps=1000)
-                # Save information and current visualization
-                obj_save_dir = f"{scene_save_dir}/{obj_name}"
-                Path(obj_save_dir).mkdir(parents=True, exist_ok=True)
-                obj_scene_info = {
-                    "category": obj.category,
-                    "model": obj.model,
-                    "scale": obj_scale,
-                    "bbox_extent": obj_bbox_extent,
-                    "tf_from_cam": tf_from_cam,
-                    "mount": detected_categories["mount"][obj_idx],
-                }
-                with open(f"{obj_save_dir}/{obj_name}_scene_info.json", "w+") as f:
-                    json.dump(obj_scene_info, f, indent=4, cls=NumpyTorchEncoder)
+        return True, step_3_output_path
 
-                
-            #     ###### Image 저장 ######
-            #     # # Take photo
-                obj_scene_rgb = self.take_photo()
-            #     # H, W, _ = obj_scene_rgb.shape
+    # --- Private Helper Methods ---
 
-            #     # # Append to non-projcted image, then save
-            #     # nonprojected_rgb = resize_image(np.array(Image.open(f"{seg_dir}/{obj_name}_nonprojected.png")), height=H)
-            #     # obj_rgb = np.concatenate([nonprojected_rgb, obj_scene_rgb], axis=1)
-            #     # Image.fromarray(obj_rgb).save(f"{obj_save_dir}/{obj_name}_scene_visualization.png")
+    def _load_and_setup_environment(self):
+        """Loads input data, computes point cloud, and camera pose."""
+        with open(self.step_1_output_path, "r") as f:
+            step_1_output_info = json.load(f)
 
-            #     # Remove the object from the scene
-                scene.remove_object(obj)
+        with open(step_1_output_info["detected_categories"], "r") as f:
+            self.detected_categories = json.load(f)
 
-            
-            # Store final scene information
-            scene_graph_info_path = f"{scene_save_dir}/scene_{scene_count}_graph.json"
-            scene_info = dict()
-            scene_info["resolution"] = [h, w]
-            scene_info["scene_graph"] = scene_graph_info_path
-            scene_info["cam_pose"] = [cam_pos, cam_quat]
-            scene_info["objects"] = dict()
-            ###### Scene에 포함된 객체 정보 불러오기 ######
-            for obj_name in cousin_idxs.keys():
-                if discard_objs and obj_name in discard_objs:
-                    continue
-                with open(f"{scene_save_dir}/{obj_name}/{obj_name}_scene_info.json", "r") as f:
-                    scene_obj_info = json.load(f)
-                scene_info["objects"][obj_name] = scene_obj_info
+        seg_dir = self.detected_categories["segmentation_dir"]
+        self.K = np.array(step_1_output_info["K"])
+        self.rgb = np.array(Image.open(step_1_output_info["input_rgb"]))
+        raw_depth = np.array(Image.open(step_1_output_info["input_depth"]))
+        depth_limits = np.array(step_1_output_info["depth_limits"])
+        depth = unprocess_depth_linear(depth=raw_depth, out_limits=depth_limits)
+        self.pc = compute_point_cloud_from_depth(depth=depth, K=self.K)
+        self.h, self.w, _ = self.rgb.shape
 
-            # Load the entire scene
-            scene = RealSceneGenerator.load_cousin_scene(scene_info=scene_info, visual_only=True)
+        self.z_dir = np.array(step_1_output_info["z_direction"])
+        self.wall_mask_planes = step_1_output_info["wall_mask_planes"]
+        origin_pos = np.array(step_1_output_info["origin_pos"])
+        if self.save_camera_info_extrinsic:
+            self.w = self.camera_info['intrinsics']['image_width']
+            self.h = self.camera_info['intrinsics']['image_height']
+            self.cam_pos = self.camera_info['camera']['position']
+            self.cam_quat = self.camera_info['camera']['orientation']
+        else:
+            self.cam_pos, self.cam_quat = compute_relative_cam_pose_from(z_dir=self.z_dir, origin_pos=origin_pos)
 
+    def _select_cousin_indices(self, scene_count):
+        """Determines the cousin index for each object based on the sampling method."""
+        if self.sampling_method == "random":
+            cousin_idxs = dict()
+            for obj_name in self.cousins.keys():
+                cousin_idxs[obj_name] = np.random.randint(0, self.n_cousins)
+        elif self.sampling_method == "ordered":
+            cousin_idxs = {obj_name: scene_count for obj_name in self.cousins.keys()}
+        else:
+            raise ValueError(f"sampling_method {self.sampling_method} not supported!")
+        return cousin_idxs
+
+    def _process_individual_objects(
+        self,
+        scene_count, scene_save_dir, cousin_idxs,
+    ):
+        """Loads and aligns each object individually, saving per-object scene info."""
+        scene = create_scene(floor=False)
+        og.sim.viewer_camera.image_width = self.w
+        og.sim.viewer_camera.image_height = self.h
+        og.sim.viewer_camera.set_position_orientation(th.tensor(self.cam_pos, dtype=th.float), th.tensor(self.cam_quat, dtype=th.float))
+        
+        seg_dir = self.detected_categories["segmentation_dir"]
+
+        for obj_idx, (obj_name, obj_cousin_idx) in enumerate(cousin_idxs.items()):
             if self.verbose:
-                print(f"[Scene {scene_count + 1} / {n_scenes}] refining scene graph...")
+                log.info(f"[Scene {scene_count + 1} / {self.n_scenes}] [Object {obj_idx + 1} / {self.n_objects}] generating...")
+            if self.discard_objs and obj_name in self.discard_objs:
+                continue
 
+            obj_info = self.step_2_output_info["objects"][obj_name]
+            is_articulated = obj_info["articulated"]
+            
+            obj_mask = np.array(Image.open(f"{seg_dir}/{obj_name}_nonprojected_mask_pruned.png"))
+            pc_obj = self.pc.reshape(-1, 3)[np.array(obj_mask).flatten().nonzero()[0]]
 
-            ########## 객체들의 상대적인 위치를 기반으로 "Scene Graph" (장면 그래프)를 구성하는 과정 ##########
-            # Infer scene graph based on relative object poses
-            all_obj_bbox_info = dict()
-            for obj_name, obj_info in scene_info["objects"].items():
-                if discard_objs and obj_name in discard_objs:
-                    continue
-                # Grab object and relevant info
-                obj = scene.object_registry("name", obj_name)
-                obj_bbox_info = compute_obj_bbox_info(obj=obj)
-                obj_bbox_info["articulated"] = step_2_output_info["objects"][obj_name]["articulated"]
-                obj_bbox_info["mount"] = obj_info["mount"]
-                all_obj_bbox_info[obj_name] = obj_bbox_info
-            sorted_z_obj_bbox_info = dict(sorted(all_obj_bbox_info.items(), key=lambda x: x[1]['lower'][2]))  # sort by lower corner's height (z)
+            cousin_info = obj_info["cousins"][obj_cousin_idx]
 
-            scene_graph_info = {
-                "floor": {
-                    "objOnTop": [],
-                    "objBeneath": None,  # This must be empty, i.e., no obj is beneath floor
-                    "mount": {
-                        "floor": True,
-                        "wall": False,
-                    },
-                },
-            }
-            ########## 구축한 Scene Graph를 가지고 실제로 배치하는 과정 ##########
-            final_scene_info = deepcopy(scene_info)
-            for name in sorted_z_obj_bbox_info:
-                #### 높이 조정 ####
-                obj_name_beneath, z_offset = compute_object_z_offset(
-                    target_obj_name=name,
-                    sorted_obj_bbox_info=sorted_z_obj_bbox_info,
-                    verbose=self.verbose,
+            # Import the cousin asset
+            with og.sim.stopped():
+                obj = DatasetObject(
+                    name=obj_name, category=cousin_info["category"], model=cousin_info["model"], visual_only=True
                 )
-                obj = scene.object_registry("name", name)
+                scene.add_object(obj)
+            og.sim.step()
 
-                #### 바닥에 꼭 있어야 하는 객체 처리 ####
-                if scene_info["objects"][name]["category"] in CATEGORIES_MUST_ON_FLOOR:
-                    obj_name_beneath = "floor"
-                    z_offset = -sorted_z_obj_bbox_info[name]["lower"][-1]
+            # Determine the reprojection offset
+            pan_angle_offset, _ = get_reproject_offset(
+                pc_obj=deepcopy(pc_obj), z_dir=self.z_dir, xy_dist=2.30, z_dist=0.65
+            )
 
-                # Add information to scene graph info
-                if name not in scene_graph_info.keys():
-                    scene_graph_info[name] = {
-                        "objOnTop": [],
-                        "objBeneath": obj_name_beneath,
-                        "mount": None,
-                    }
+            take_photo(n_render_steps=50)
+            # Align object model to point cloud
+            obj_scale, obj_bbox_extent, tf_from_cam = align_model_pose(
+                obj=obj, pc_obj=pc_obj, obj_z_angle=cousin_info["z_angle"] + pan_angle_offset,
+                obj_ori_offset=cousin_info["ori_offset"], z_dir=deepcopy(self.z_dir),
+                cam_pos=self.cam_pos, cam_quat=self.cam_quat, is_articulated=is_articulated, verbose=self.verbose,
+            )
+            
+            take_photo(n_render_steps=50)
+            wall_mount_fpaths = self.detected_categories["mount"][obj_idx]["wall"]
+            if wall_mount_fpaths is not None:
+                # Align object with the wall
+                for mount_wall_idx, wall_mount_fpath in enumerate(wall_mount_fpaths):
+                    obj_scale, obj_bbox_extent, tf_from_cam = align_obj_with_wall(
+                        obj=obj, cam_pos=self.cam_pos, cam_quat=self.cam_quat,
+                        wall_normal=self.wall_mask_planes[wall_mount_fpath]["normal"],
+                        wall_point=self.wall_mask_planes[wall_mount_fpath]["point"],
+                        wall_is_vertical=True, resize_only=mount_wall_idx > 0,
+                    )
+            take_photo(n_render_steps=100)
+
+            # Save per-object scene info
+            obj_save_dir = f"{scene_save_dir}/{obj_name}"
+            Path(obj_save_dir).mkdir(parents=True, exist_ok=True)
+            obj_scene_info = {
+                "category": obj.category, "model": obj.model, "scale": obj_scale,
+                "bbox_extent": obj_bbox_extent, "tf_from_cam": tf_from_cam,
+                "mount": self.detected_categories["mount"][obj_idx],
+            }
+            with open(f"{obj_save_dir}/{obj_name}_scene_info.json", "w+") as f:
+                json.dump(obj_scene_info, f, indent=4, cls=NumpyTorchEncoder)
+
+            take_photo()
+            scene.remove_object(obj)
+
+        # Compile and return scene info dictionary
+        scene_info = {"resolution": [self.h, self.w], "cam_pose": [self.cam_pos, self.cam_quat], "objects": {}}
+        for obj_name in cousin_idxs.keys():
+            if self.discard_objs and obj_name in self.discard_objs:
+                continue
+            with open(f"{scene_save_dir}/{obj_name}/{obj_name}_scene_info.json", "r") as f:
+                scene_obj_info = json.load(f)
+            scene_info["objects"][obj_name] = scene_obj_info
+        
+        scene_info["scene_graph"] = f"{scene_save_dir}/scene_{scene_count}_graph.json"
+
+        return scene_info
+
+    def _refine_scene_and_resolve_physics(
+        self,
+        scene_count, scene_save_dir, scene_info,
+    ):
+        """Loads full scene, computes scene graph, resolves collisions, and visualizes."""
+        scene = RealSceneGenerator.load_cousin_scene(scene_info=scene_info, visual_only=True)
+        if self.verbose:
+            log.info(f"[Scene {scene_count + 1} / {scene_info['resolution'][0]}] refining scene graph...")
+
+        # --- 1. Infer Scene Graph and Adjust Height (Z-offset) ---
+        scene_graph_info, all_obj_bbox_info, sorted_z_obj_bbox_info, final_scene_info = \
+            self._infer_scene_graph_and_adjust_height(scene, scene_info)
+        
+        # Save scene graph
+        scene_graph_info_path = f"{scene_save_dir}/scene_{scene_count}_graph.json"
+        with open(scene_graph_info_path, "w+") as f:
+            json.dump(scene_graph_info, f, indent=4, cls=NumpyTorchEncoder)
+
+        # --- 2. Collision Resolution (X/Y plane) ---
+        sorted_x_obj_bbox_info = dict(sorted(sorted_z_obj_bbox_info.items(), key=lambda x: x[1]['lower'][0], reverse=True))
+        obj_names = list(sorted_x_obj_bbox_info.keys())
+        
+        if self.resolve_collision:
+            self._resolve_horizontal_collisions(scene_count, scene, obj_names, scene_graph_info, final_scene_info)
+        else:
+            if self.verbose:
+                log.info(f"[Scene {scene_count + 1} / {1}] skip depenetrating collisions.")
+
+        # --- 3. Final Placement (Vertical Drop) ---
+        self._resolve_vertical_placement(scene_count, scene, obj_names, scene_graph_info, all_obj_bbox_info, final_scene_info)
+
+        # Take final physics step, then save visualization + info
+        og.sim.step_physics()
+        
+        # --- 4. Save Final Visualization and Info ---
+        self._save_final_outputs(scene_count, scene_save_dir, final_scene_info)
+        
+        if self.visualize_scene:
+            self._visualize_scene_video(
+                scene, scene_save_dir
+            )
+        
+        # Return final info (though it's saved to disk)
+        return final_scene_info
+
+    def _infer_scene_graph_and_adjust_height(self, scene, scene_info):
+        """Infers object relationships and adjusts object height for vertical plausibility."""
+        all_obj_bbox_info = {}
+        for obj_name, obj_info in scene_info["objects"].items():
+            if self.discard_objs and obj_name in self.discard_objs:
+                continue
+            obj = scene.object_registry("name", obj_name)
+            obj_bbox_info = compute_obj_bbox_info(obj=obj)
+            obj_bbox_info["articulated"] = self.step_2_output_info["objects"][obj_name]["articulated"]
+            obj_bbox_info["mount"] = obj_info["mount"]
+            all_obj_bbox_info[obj_name] = obj_bbox_info
+        sorted_z_obj_bbox_info = dict(sorted(all_obj_bbox_info.items(), key=lambda x: x[1]['lower'][2]))
+
+        scene_graph_info = {"floor": {"objOnTop": [], "objBeneath": None, "mount": {"floor": True, "wall": False}}}
+        final_scene_info = deepcopy(scene_info)
+
+        for name in sorted_z_obj_bbox_info:
+            obj_name_beneath, z_offset = compute_object_z_offset(
+                target_obj_name=name, sorted_obj_bbox_info=sorted_z_obj_bbox_info, verbose=self.verbose,
+            )
+            obj = scene.object_registry("name", name)
+
+            if scene_info["objects"][name]["category"] in self.CATEGORIES_MUST_ON_FLOOR:
+                obj_name_beneath = "floor"
+                z_offset = -sorted_z_obj_bbox_info[name]["lower"][-1]
+
+            # Update Scene Graph
+            scene_graph_info.setdefault(name, {"objOnTop": [], "objBeneath": obj_name_beneath, "mount": None})
+            scene_graph_info.setdefault(obj_name_beneath, {"objOnTop": [], "objBeneath": None, "mount": None})
+            scene_graph_info[name]["objBeneath"] = obj_name_beneath
+            scene_graph_info[obj_name_beneath]["objOnTop"].append(name)
+            scene_graph_info[name]["mount"] = scene_info["objects"][name]["mount"]
+            obj.keep_still()
+
+            # Apply Z-offset
+            if z_offset != 0:
+                mount_type = scene_info["objects"][name]["mount"]
+                if not mount_type["floor"] and z_offset <= 0: continue
+                new_center = sorted_z_obj_bbox_info[name]["center"] + np.array([0.0, 0.0, z_offset])
+                obj.set_bbox_center_position_orientation(position=th.tensor(new_center, dtype=th.float), orientation=None)
+                og.sim.step_physics()
+                sorted_z_obj_bbox_info[name].update(compute_obj_bbox_info(obj=obj))
+
+            # Update relative transformation
+            obj_pos, obj_quat = obj.get_position_orientation()
+            rel_tf = T.relative_pose_transform(obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), self.cam_pos, self.cam_quat)
+            final_scene_info["objects"][name]["tf_from_cam"] = T.pose2mat(rel_tf)
+
+        for obj in scene.objects: obj.keep_still()
+        og.sim.step_physics()
+        return scene_graph_info, all_obj_bbox_info, sorted_z_obj_bbox_info, final_scene_info
+
+    def _resolve_horizontal_collisions(self, scene_count, scene, obj_names, scene_graph_info, final_scene_info):
+        """Resolves collisions between objects in the X/Y plane by moving them apart."""
+        if self.verbose:
+            log.info(f"[Scene {scene_count + 1} / {1}] depenetrating collisions...")
+
+        for obj1_idx, obj1_name in enumerate(obj_names):
+            if any(cat in obj1_name for cat in self.NON_COLLIDABLE_CATEGORIES): continue
+
+            obj1 = scene.object_registry("name", obj1_name)
+            obj1.keep_still()
+            obj1.visual_only = False
+
+            for obj2_name in obj_names[obj1_idx + 1:]:
+                if any(cat in obj2_name for cat in self.NON_COLLIDABLE_CATEGORIES): continue
+                assert obj1_name != obj2_name
+
+                if (obj2_name in scene_graph_info[obj1_name]['objOnTop']) or (scene_graph_info[obj1_name]["objBeneath"] == obj2_name):
+                    continue
+                
+                obj2 = scene.object_registry("name", obj2_name)
+                old_state = og.sim.dump_state()
+                obj2.keep_still()
+                obj2.visual_only = False
+                og.sim.step_physics()
+
+                if obj2.states[Touching].get_value(obj1):
+                    if self.verbose:
+                        log.info(f"Detected collision between {obj1_name} and {obj2_name}")
+                    
+                    obj2_ori_mat = T.quat2mat(obj2.get_position_orientation()[1].cpu().detach().numpy())
+                    obj2_x_dir = obj2_ori_mat[:, 0]
+                    obj2_y_dir = obj2_ori_mat[:, 1]
+                    center_step_size = 0.01
+                    obj2_to_obj1 = (obj1.get_position_orientation()[0] - obj2.get_position_orientation()[0]).cpu().detach().numpy()
+
+                    chosen_axis = obj2_x_dir if abs(np.dot(obj2_x_dir, obj2_to_obj1)) > abs(np.dot(obj2_y_dir, obj2_to_obj1)) else obj2_y_dir
+                    center_step_dir = -chosen_axis if np.dot(chosen_axis, obj2_to_obj1) > 0 else chosen_axis
+
+                    while obj2.states[Touching].get_value(obj1):
+                        og.sim.load_state(old_state)
+                        new_center = obj2.get_position_orientation()[0] + th.tensor(center_step_dir, dtype=th.float) * center_step_size
+                        obj2.set_position_orientation(position=new_center)
+                        old_state = og.sim.dump_state()
+                        og.sim.step_physics()
+
+                    og.sim.load_state(old_state)
+                    obj2.set_position_orientation(position=new_center)
+                    obj_pos, obj_quat = obj2.get_position_orientation()
+                    rel_tf = T.relative_pose_transform(obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), self.cam_pos, self.cam_quat)
+                    final_scene_info["objects"][obj2_name]["tf_from_cam"] = T.pose2mat(rel_tf)
                 else:
-                    scene_graph_info[name]["objBeneath"] = obj_name_beneath
+                    og.sim.load_state(old_state)
+                obj2.visual_only = True
+            obj1.visual_only = True
 
-                if obj_name_beneath not in scene_graph_info.keys():
-                    scene_graph_info[obj_name_beneath] = {
-                        "objOnTop": [name],
-                        "objBeneath": None,
-                        "mount": None,
-                    }
-                else:
-                    scene_graph_info[obj_name_beneath]["objOnTop"].append(name)
+    def _resolve_vertical_placement(self, scene_count, scene, obj_names, scene_graph_info, all_obj_bbox_info, final_scene_info):
+        """Uses physics steps to gently place objects onto the surface beneath them."""
+        if self.verbose:
+            log.info(f"[Scene {scene_count + 1} / {1}] placing all objects down...")
 
-                mount_type = scene_info["objects"][name]["mount"]  # a list
-                scene_graph_info[name]["mount"] = mount_type
-                #### 객체 고정 ####
-                # TODO
-                obj.keep_still()
+        for obj in scene.objects: obj.keep_still()
+        og.sim.step_physics()
+        
+        for obj1_name in obj_names:
+            if any(cat in obj1_name for cat in self.NON_COLLIDABLE_CATEGORIES): continue
+            
+            if scene_graph_info[obj1_name]['objBeneath'] == "floor" or not all_obj_bbox_info[obj1_name]["mount"]["floor"]:
+                continue
+            
+            obj_beneath_name = scene_graph_info[obj1_name]["objBeneath"]
+            obj_beneath = scene.object_registry("name", obj_beneath_name)
 
-                # Modify object pose if z_offset is not 0
-                if z_offset != 0:
-                    if (not mount_type["floor"]) and z_offset <= 0:
-                        # If the object in mounted on the wall, and we want to lower it, omit that
-                        continue
-                    new_center = sorted_z_obj_bbox_info[name]["center"] + np.array([0.0, 0.0, z_offset])
-                    ##### 객체 위치 재설정 ####
-                    obj.set_bbox_center_position_orientation(position=th.tensor(new_center, dtype=th.float), orientation=None)
+            if "no_top" in obj_beneath.category or any(cat in obj_beneath_name for cat in self.NON_COLLIDABLE_CATEGORIES):
+                continue
+            
+            obj1 = scene.object_registry("name", obj1_name)
+            obj_beneath.keep_still()
+            obj_beneath.visual_only = False
+            old_state = og.sim.dump_state()
+
+            obj1.keep_still()
+            obj1.visual_only = False
+            obj1_lower_corner, _ = obj1.aabb
+            obj1_low_z = obj1_lower_corner[-1].item()
+            obj_beneath_lower_corner, _ = obj_beneath.aabb
+            obj_beneath_low_z = obj_beneath_lower_corner[-1].item()
+            center_step_size = 0.005
+            og.sim.step_physics()
+
+            if not obj1.states[Touching].get_value(obj_beneath):
+                while obj1_low_z >= max(0, obj_beneath_low_z) and \
+                    not obj1.states[Touching].get_value(obj_beneath):
+                    og.sim.load_state(old_state)
+                    new_center = obj1.get_position_orientation()[0] + th.tensor([0, 0, -1.0]) * center_step_size
+                    obj1_low_z -= center_step_size
+                    obj1.set_position_orientation(position=new_center)
+                    old_state = og.sim.dump_state()
                     og.sim.step_physics()
 
-                    #### 높이 조정 후 Json BBox 업데이트
-                    # Grab updated obj bbox info
-                    obj_bbox_info = compute_obj_bbox_info(obj=obj)
-                    sorted_z_obj_bbox_info[name].update(obj_bbox_info)
-
-                #### 카메라 기준 변환 행렬 업데이트 ####
-                # Update scene_info
-                obj_pos, obj_quat = obj.get_position_orientation()
-                rel_tf = T.relative_pose_transform(obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), cam_pos, cam_quat)
-                final_scene_info["objects"][name]["tf_from_cam"] = T.pose2mat(rel_tf)
-
-            # Make sure all object aren't moving, then step physics once, then resolve collisions
-            # TODO
-            for obj in scene.objects:
-                obj.keep_still()
-            og.sim.step_physics()
-
-            with open(scene_graph_info_path, "w+") as f:
-                    json.dump(scene_graph_info, f, indent=4, cls=NumpyTorchEncoder)
-
-            for _ in range(3):
-                og.sim.render()
-
-            ##### 좌우 정렬(x축 정렬) ######
-            # Process collisions
-            # x값이 낮은 순서로 정렬
-            sorted_x_obj_bbox_info = dict(sorted(sorted_z_obj_bbox_info.items(), key=lambda x: x[1]['lower'][0], reverse=True))  # sort by lower corner's x
-            obj_names = list(sorted_x_obj_bbox_info.keys())
-
-            if resolve_collision:
-                if self.verbose:
-                    print(f"[Scene {scene_count + 1} / {n_scenes}] depenetrating collisions...")
-
-                # Iterate over all objects; check for collision
-                for obj1_idx, obj1_name in enumerate(obj_names):
-
-                    # 투명하거나 충돌이 필요없는 것들을 검사 제외
-                    # Skip any non-collidable categories
-                    if any(cat in obj1_name for cat in NON_COLLIDABLE_CATEGORIES):
-                        continue
-
-                    # Grab the object, make it collidable
-                    obj1 = scene.object_registry("name", obj1_name)
-                    # TODO
-                    obj1.keep_still()
-                    obj1.visual_only = False
-
-                    # 왼쪽에서 부터 점점 오른쪽하고 충돌 비교
-                    # Check all subsequent downstream objects for collision
-                    for obj2_name in obj_names[obj1_idx + 1:]:
-
-                        # Skip any non-collidable categories
-                        if any(cat in obj2_name for cat in NON_COLLIDABLE_CATEGORIES):
-                            continue
-
-                        # Sanity check to make sure the two objects aren't the same
-                        assert obj1_name != obj2_name
-
-                        # 수직관계로 놓여있을 경우 충돌 제외
-                        # If the objects are related by a vertical relationship, continue -- collision is expected
-                        if (obj2_name in scene_graph_info[obj1_name]['objOnTop']) or (
-                                scene_graph_info[obj1_name]["objBeneath"] == obj2_name):
-                            continue
-                        
-                        ## 충돌 검사 ##
-                        # Grab the object, make it collidable
-                        obj2 = scene.object_registry("name", obj2_name)
-                        old_state = og.sim.dump_state()
-                        # TODO
-                        obj2.keep_still()
-                        obj2.visual_only = False
-                        og.sim.step_physics()
-
-                        obj12_collision = obj2.states[Touching].get_value(obj1)
-                        ##############
-
-                        # If we're in contact, move the object with smaller x value
-                        if obj12_collision:
-                            # Adjust the object with smaller x
-                            if self.verbose:
-                                print(f"Detected collision between {obj1_name} and {obj2_name}")
-                            # Get obj 2's x and y axes
-                            obj2_ori_mat = T.quat2mat(obj2.get_position_orientation()[1].cpu().detach().numpy())
-                            obj2_x_dir = obj2_ori_mat[:, 0]
-                            obj2_y_dir = obj2_ori_mat[:, 1]
-
-                            center_step_size = 0.01  # 1cm
-                            obj2_to_obj1 = (obj1.get_position_orientation()[0] - obj2.get_position_orientation()[0]).cpu().detach().numpy()
-
-                            chosen_axis = obj2_x_dir if abs(np.dot(obj2_x_dir, obj2_to_obj1)) > abs(np.dot(obj2_y_dir, obj2_to_obj1)) else obj2_y_dir
-                            center_step_dir = -chosen_axis if np.dot(chosen_axis, obj2_to_obj1) > 0 else chosen_axis
-
-                            # 충돌이 없을 때까지 이동
-                            while obj2.states[Touching].get_value(obj1):
-                                og.sim.load_state(old_state)
-                                new_center = obj2.get_position_orientation()[0] + th.tensor(center_step_dir, dtype=th.float) * center_step_size
-                                obj2.set_position_orientation(position=new_center)
-                                old_state = og.sim.dump_state()
-                                og.sim.step_physics()
-
-                            # 충돌 해결후 새로운 위치 설정
-                            # Finally, load the collision-free state, update relative transformation
-                            og.sim.load_state(old_state)
-                            obj2.set_position_orientation(position=new_center)
-                            obj_pos, obj_quat = obj2.get_position_orientation()
-                            rel_tf = T.relative_pose_transform(obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), cam_pos, cam_quat)
-                            final_scene_info["objects"][obj2_name]["tf_from_cam"] = T.pose2mat(rel_tf)
-                        else:
-                            # Simply load old state
-                            og.sim.load_state(old_state)
-                        # Make obj2 visual only again so as not collide with any other objects
-                        # obj2.visual_only = False
-                        obj2.visual_only = True
-                    # Make obj1 visual only again so as not collide with any other objects
-                    # obj1.visual_only = False
-                    obj1.visual_only = True
+                og.sim.load_state(old_state)
+                final_position = obj1.get_position_orientation()[0] - th.tensor([0, 0, -1.0]) * center_step_size
+                obj1.set_position_orientation(position=final_position)
+                obj_pos, obj_quat = obj1.get_position_orientation()
+                rel_tf = T.relative_pose_transform(obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), self.cam_pos, self.cam_quat)
+                final_scene_info["objects"][obj1_name]["tf_from_cam"] = T.pose2mat(rel_tf)
             else:
-                if self.verbose:
-                    print(f"[Scene {scene_count + 1} / {n_scenes}] skip depenetrating collisions.")
+                og.sim.load_state(old_state)
 
-            # Put objects down
-            if self.verbose:
-                print(f"[Scene {scene_count + 1} / {n_scenes}] placing all objects down...")
-
-            # TODO
-            for obj in scene.objects:
-                obj.keep_still()
+            obj_beneath.keep_still()
+            obj1.keep_still()
             og.sim.step_physics()
-            # 물리적을 활용해 충돌여부 판단하는 코드
-            for obj1_idx, obj1_name in enumerate(obj_names):
+            obj1.visual_only = True
+            obj_beneath.visual_only = True
 
-                # Skip any non-collidable categories
-                if any(cat in obj1_name for cat in NON_COLLIDABLE_CATEGORIES):
-                    continue
-                
-                # 바닥 위에 있는 객체는 이동시키지 않음
-                # If object is on floor, or mounted on a wall, don't move
-                if scene_graph_info[obj1_name]['objBeneath'] == "floor" or not all_obj_bbox_info[obj1_name]["mount"]["floor"]:
-                    continue
-                
-                # 아래에 있는 객체(obj_beneath) 찾기
-                # Infer object that is beneath obj1
-                obj_beneath_name = scene_graph_info[obj1_name]["objBeneath"]
-                obj_beneath = scene.object_registry("name", obj_beneath_name)
+    def _save_final_outputs(self, scene_count, scene_save_dir, final_scene_info):
+        """Saves the final RGB visualization and scene info JSON."""
+        scene_rgb = take_photo(n_render_steps=10)
+        H, W, _ = scene_rgb.shape
+        resized_rgb = resize_image(self.rgb, height=H)
+        concat_scene_rgb = np.concatenate([scene_rgb[:, :, :3], scene_rgb[:,:,:3]], axis=1)
+        Image.fromarray(concat_scene_rgb).save(f"{scene_save_dir}/scene_{scene_count}_visualization.png")
 
-                # Skip any non-collidable categories, and objects without top
-                if "no_top" in obj_beneath.category or any(cat in obj_beneath_name for cat in NON_COLLIDABLE_CATEGORIES):
-                    continue
-                
-                # 객체 충돌 감지 및 조정 (수직 방향)
-                obj1 = scene.object_registry("name", obj1_name)
-                # TODO
-                obj_beneath.keep_still()
-                obj_beneath.visual_only = False
-                old_state = og.sim.dump_state()
+        with open(f"{scene_save_dir}/scene_{scene_count}_info.json", "w+") as f:
+            json.dump(final_scene_info, f, indent=4, cls=NumpyTorchEncoder)
 
-                # Make both objects collidable, and move until collision occurs
-                # TODO
-                obj1.keep_still()
-                obj1.visual_only = False
-                obj1_lower_corner, _ = obj1.aabb
-                obj1_low_z = obj1_lower_corner[-1].item()
-                obj_beneath_lower_corner, _ = obj_beneath.aabb
-                obj_beneath_low_z = obj_beneath_lower_corner[-1].item()
-                center_step_size = 0.005
-                og.sim.step_physics()
-
-
-                # 위에 놓이는 객체(obj1)를 아래로 이동 (Z 방향)
-                if not obj1.states[Touching].get_value(obj_beneath):
-                    while obj1_low_z >= max(0, obj_beneath_low_z) and \
-                        not obj1.states[Touching].get_value(obj_beneath):
-                        og.sim.load_state(old_state)
-                        new_center = obj1.get_position_orientation()[0] + th.tensor([0, 0, -1.0]) * center_step_size
-                        obj1_low_z -= center_step_size
-                        obj1.set_position_orientation(position=new_center)
-                        old_state = og.sim.dump_state()
-                        og.sim.step_physics()
-
-                    # Make both objects visual only again
-                    og.sim.load_state(old_state)
-                    final_position = obj1.get_position_orientation()[0] - th.tensor([0, 0, -1.0]) * center_step_size
-                    obj1.set_position_orientation(position=final_position)
-                    obj_pos, obj_quat = obj1.get_position_orientation()
-                    rel_tf = T.relative_pose_transform(obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), cam_pos, cam_quat)
-                    final_scene_info["objects"][obj1_name]["tf_from_cam"] = T.pose2mat(rel_tf)
-                else:
-                    og.sim.load_state(old_state)
-                # TODO
-                obj_beneath.keep_still()
-                obj1.keep_still()
-                og.sim.step_physics()
-                obj1.visual_only = True
-                obj_beneath.visual_only = True
-
-            # Take final physics step, then save visualization + info
-            og.sim.step_physics()
-            # scene_rgb = self.joint_test(scene, n_render_steps=10)
-            scene_rgb = self.take_photo(n_render_steps=10)
-            H, W, _ = scene_rgb.shape
-            resized_rgb = resize_image(rgb, height=H)
-            print(resized_rgb.shape)
-            print(scene_rgb.shape)
-            concat_scene_rgb = np.concatenate([scene_rgb[:, :, :3], scene_rgb[:,:,:3]], axis=1)
-            Image.fromarray(concat_scene_rgb).save(f"{scene_save_dir}/scene_{scene_count}_visualization.png")
-
-            # Save final info
-            with open(f"{scene_save_dir}/scene_{scene_count}_info.json", "w+") as f:
-                json.dump(final_scene_info, f, indent=4, cls=NumpyTorchEncoder)
-
-            if visualize_scene:
-                og.sim.viewer_camera.add_modality('seg_semantic')
-                aabb_points = []
-                for obj in scene.objects:
-                    p1, p2 = obj.aabb
-                    aabb_points.append(p1)
-                    aabb_points.append(p2)
-                    if ToggledOn in obj.states:
-                        obj.states[ToggledOn].link.visible = False
-
-                min_x = min([p[0] for p in aabb_points])
-                min_y = min([p[1] for p in aabb_points])
-                max_x = max([p[0] for p in aabb_points])
-                max_y = max([p[1] for p in aabb_points])
-            
-                # Get camera trajectory
-                vis_cam_pos, vis_cam_ori = og.sim.viewer_camera.get_position_orientation()
-                vis_center = ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0, vis_cam_pos[-1])
-                cam_commands = get_vis_cam_trajectory(center_pos=vis_center, cam_pos=vis_cam_pos, cam_quat=vis_cam_ori, \
-                                                    d_tilt=visualize_scene_tilt_angle, radius=visualize_scene_radius, n_steps=100)
-
-                for _ in range(50):
-                    og.sim.render()
-
-                # Visualize and record video
-                if save_visualization:
-                    video_path = f"{scene_save_dir}/visualization_video.mp4"
-                    img_dir = f"{scene_save_dir}/scene_visualization"
-                    Path(img_dir).mkdir(parents=True, exist_ok=True)
-                    video_writer = imageio.get_writer(video_path, fps=20)
-                for i, (pos, quat) in enumerate(cam_commands):
-                    og.sim.viewer_camera.set_position_orientation(pos, quat)
-                    og.sim.render()
-                    if save_visualization:
-                        obs, obs_info = og.sim.viewer_camera.get_obs()
-                        vis_rgb = obs["rgb"].cpu().detach().numpy()
-                        seg_semantic = obs["seg_semantic"].cpu().detach().numpy()
-
-                        # Filter out floors
-                        filter_names = {"floors", "background"}
-                        filter_ids = {idn for idn, name in obs_info["seg_semantic"].items() if name in filter_names}
-                        seg_mask = np.ones_like(seg_semantic).astype(np.uint8) * 255
-                        for filter_id in filter_ids:
-                            seg_mask[np.where(seg_semantic == filter_id)] = 0
-                        masked_vis_rgb = vis_rgb.astype(np.uint8)
-                        masked_vis_rgb[seg_mask == 0] = [0, 0, 0, 1]
-                        video_writer.append_data(masked_vis_rgb)
-                        
-                        vis_rgb[:, :, 3] = seg_mask
-                        Image.fromarray(vis_rgb).save(f"{img_dir}/vis_frame_{i}.png")
-                if save_visualization:
-                    video_writer.close()
-
-        # Compile final results across all scenes
+    def _save_step3_outputs(self) -> str:
+        """
+        Compiles and saves the final Step 3 output JSON across all generated scenes.
+        """
         step_3_output_info = dict()
-        for scene_count in range(n_scenes):
+        for scene_count in range(self.n_scenes):
             scene_name = f"scene_{scene_count}"
-            final_scene_info_path = f"{save_dir}/{scene_name}/{scene_name}_info.json"
+            final_scene_info_path = f"{self.save_dir}/{scene_name}/{scene_name}_info.json"
             with open(final_scene_info_path, "r") as f:
                 final_scene_info = json.load(f)
             step_3_output_info[scene_name] = final_scene_info
 
-        step_3_output_path = f"{save_dir}/step_3_output_info.json"
+        step_3_output_path = f"{self.save_dir}/step_3_output_info.json"
         with open(step_3_output_path, "w+") as f:
             json.dump(step_3_output_info, f, indent=4, cls=NumpyTorchEncoder)
 
-        print("""
+        return step_3_output_path
 
-#############################################
-### Completed Simulated Scene Generation! ###
-#############################################
 
-        """)
+    def _visualize_scene_video(self, scene, scene_save_dir):
+        """Generates and saves a rotating video visualization of the final scene."""
+        og.sim.viewer_camera.add_modality('seg_semantic')
+        aabb_points = []
+        for obj in scene.objects:
+            p1, p2 = obj.aabb
+            aabb_points.append(p1)
+            aabb_points.append(p2)
+            if ToggledOn in obj.states:
+                obj.states[ToggledOn].link.visible = False
 
-        return True, step_3_output_path
+        min_x = min([p[0] for p in aabb_points])
+        min_y = min([p[1] for p in aabb_points])
+        max_x = max([p[0] for p in aabb_points])
+        max_y = max([p[1] for p in aabb_points])
+        vis_cam_pos, vis_cam_ori = og.sim.viewer_camera.get_position_orientation()
+        vis_center = ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0, vis_cam_pos[-1])
+        cam_commands = get_vis_cam_trajectory(
+            center_pos=vis_center, cam_pos=vis_cam_pos, cam_quat=vis_cam_ori,
+            d_tilt=self.visualize_scene_tilt_angle, radius=self.visualize_scene_radius, n_steps=100
+        )
 
-    @staticmethod
-    def create_scene(floor=True, sky=True):
-        """
-        Helper function for creating new empty scene in OmniGibson
+        for _ in range(50):
+            og.sim.render()
 
-        Args:
-            floor (bool): Whether to use floor or not
-            sky (bool): Whether to use sky or not
+        if self.save_visualization:
+            video_path = f"{scene_save_dir}/visualization_video.mp4"
+            img_dir = f"{scene_save_dir}/scene_visualization"
+            Path(img_dir).mkdir(parents=True, exist_ok=True)
+            video_writer = imageio.get_writer(video_path, fps=20)
+        for i, (pos, quat) in enumerate(cam_commands):
+            og.sim.viewer_camera.set_position_orientation(pos, quat)
+            og.sim.render()
+            if self.save_visualization:
+                obs, obs_info = og.sim.viewer_camera.get_obs()
+                vis_rgb = obs["rgb"].cpu().detach().numpy()
+                seg_semantic = obs["seg_semantic"].cpu().detach().numpy()
 
-        Returns:
-            Scene: OmniGibson scene
-        """
-        og.sim.stop()
-        og.clear()
-        scene = Scene(use_floor_plane=floor, floor_plane_visible=floor, use_skybox=sky)
-        og.sim.import_scene(scene)
-        og.sim.play()
-        return scene
+                filter_names = {"floors", "background"}
+                filter_ids = {idn for idn, name in obs_info["seg_semantic"].items() if name in filter_names}
+                seg_mask = np.ones_like(seg_semantic).astype(np.uint8) * 255
+                for filter_id in filter_ids:
+                    seg_mask[np.where(seg_semantic == filter_id)] = 0
+                masked_vis_rgb = vis_rgb.astype(np.uint8)
+                masked_vis_rgb[seg_mask == 0] = [0, 0, 0, 1]
+                video_writer.append_data(masked_vis_rgb)
+                
+                vis_rgb[:, :, 3] = seg_mask
+                Image.fromarray(vis_rgb).save(f"{img_dir}/vis_frame_{i}.png")
+        if self.save_visualization:
+            video_writer.close()
+
+    # --- Static Helper Methods ---
 
     @staticmethod
     def load_cousin_scene(scene_info, visual_only=False):
         """
         Loads the cousin scene specified by info at @scene_info_fpath
-
-        Args:
-            scene_info (dict or str): If dict, scene information to load. Otherwise, should be absolute path to the
-                scene info that should be loaded
-            visual_only (bool): Whether to load all objects as visual only or not
-
-        Returns:
-            Scene: loaded OmniGibson scene
+        ...
         """
         # Stop sim, clear it, then load empty scene
-        scene = RealSceneGenerator.create_scene(floor=True)
+        scene = create_scene(floor=True)
 
         # Load scene information if it's a path
         if isinstance(scene_info, str):
@@ -782,47 +660,23 @@ class RealSceneGenerator:
         og.sim.step()
         return scene
 
-    def take_photo(self, n_render_steps=5):
-        """
-        Takes photo with current scene configuration with current camera
-
-        Args:
-            n_render_steps (int): Number of rendering steps to take before taking the photo
-
-        Returns:
-            np.ndarray: (H,W,3) RGB frame from viewer camera perspective
-        """
-        # Render a bit,
-        for _ in range(n_render_steps):
-            og.sim.render()
-        rgb = og.sim.viewer_camera.get_obs()[0]["rgb"][:, :, :3].cpu().detach().numpy()
-        return rgb
-
     def joint_test(self, scene, n_render_steps=5):
         """
         Takes photo with current scene configuration with current camera
-
-        Args:
-            n_render_steps (int): Number of rendering steps to take before taking the photo
-
-        Returns:
-            np.ndarray: (H,W,3) RGB frame from viewer camera perspective
+        ...
         """
         obj = scene.object_registry("name", "cabinet_0") 
-        print(obj.joints.keys())  
 
         joint_index = 0
-        positions = obj.get_joint_positions()  # 기존 joint 위치 가져오기
-        print("Initial positions:", positions)
+        positions = obj.get_joint_positions()
 
         for step in range(n_render_steps):
-            # 10번째 스텝마다 joint 위치 변경 (0 ↔ 1.5)
+            # Change joint position every 10 steps (0 <-> 1.5)
             if step % 10 == 0:
                 positions[joint_index] = 1.5 if positions[joint_index] == 0 else 0
-                obj.set_joint_positions(positions)  # 업데이트
-                print(f"Step {step}: Updated joint position -> {positions[joint_index]}")
+                obj.set_joint_positions(positions)  # Update
 
-            # 물리 시뮬레이션 실행 및 렌더링
+            # Run physics simulation and render
             og.sim.step_physics()
             og.sim.render()
         rgb = og.sim.viewer_camera.get_obs()[0]["rgb"][:, :, :3].cpu().detach().numpy()

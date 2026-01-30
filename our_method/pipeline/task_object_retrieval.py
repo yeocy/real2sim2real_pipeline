@@ -1,5 +1,6 @@
 import enum
 from hmac import new
+from math import dist
 from sklearn import feature_extraction
 import torch
 from torchvision.ops.boxes import _box_xyxy_to_cxcywh
@@ -66,7 +67,8 @@ class TaskObjectRetrieval:
     def __init__(
             self,
             feature_matcher,
-            verbose=False,
+            gpt=None,
+            verbose: bool = False
     ):
         """
         Args:
@@ -77,6 +79,7 @@ class TaskObjectRetrieval:
         self.fm = feature_matcher
         self.fm.eval()
         self.verbose = verbose
+        self.gpt = gpt
         self.device = self.fm.device
 
     def __call__(
@@ -85,8 +88,6 @@ class TaskObjectRetrieval:
             step_2_output_path,
             step_3_output_path,
             task_spatial_reasoning_output_path,
-            gpt_api_key,
-            gpt_version="4o",
             top_k_categories=3,
             top_k_models=5,
             n_digital_cousins=3,
@@ -96,7 +97,10 @@ class TaskObjectRetrieval:
             n_cousins_link_count_threshold=3,
             save_dir=None,
             start_at_name=None,
-            find_front_view = True
+            find_front_view = True,
+            use_distractor_noise=False,
+            use_distractor_category=5,
+            distractor_top_k=3,
     ):
         """
         Runs the digital cousin matcher. This does the following steps for each detected object from Step 1:
@@ -148,7 +152,6 @@ class TaskObjectRetrieval:
         save_dir = os.path.join(save_dir, "task_object_retrieval")
         Path(save_dir).mkdir(parents=True, exist_ok=True)
 
-
         if self.verbose:
             print(f"Computing digital cousins given output {task_spatial_reasoning_output_path}...")
 
@@ -194,6 +197,7 @@ class TaskObjectRetrieval:
             # 다시 넣기
             task_extraction_output_info['objects'] = sorted_objects
 
+            ##################################
             obj_name_list = []
             for obj_name, obj_info in task_extraction_output_info["objects"].items():
                 obj_name_list.append(obj_name)
@@ -244,6 +248,10 @@ class TaskObjectRetrieval:
             del res
             del clip
             del gpu_index_flat
+            ##################################
+                # exit()
+
+                    
 
             if self.verbose:
                 print("""
@@ -299,8 +307,8 @@ class TaskObjectRetrieval:
                 concat_img_save_dir = os.path.join(topk_model_candidates_dir, f'{name}_candidate_input_visualization.png')
                 concat_img = self.make_concat_images(
                     snapshot_imgs_path=candidate_imgs,
-                    visualize_resolution=(640, 480),  # 해상도 조절 가능
-                    images_per_row=10,
+                    visualize_resolution=(1280, 960),  # 해상도 조절 가능
+                    images_per_row=4,
                     save_path=concat_img_save_dir
                 )
                 
@@ -369,8 +377,8 @@ class TaskObjectRetrieval:
                 concat_img_save_dir = os.path.join(topk_model_candidates_dir, f'{name}_candidate_gpt_results_visualization.png')
                 concat_img = self.make_concat_images(
                     snapshot_imgs_path=n_candidates,
-                    visualize_resolution=(640, 480),  # 해상도 조절 가능
-                    images_per_row=10,
+                    visualize_resolution=(1280, 960),  # 해상도 조절 가능
+                    images_per_row=3,
                     save_path=concat_img_save_dir,
                     fontscale = 0
                 )
@@ -602,7 +610,330 @@ class TaskObjectRetrieval:
                 #           cls=OneLineListEncoder)
                     write_json_like(output_json, f, indent=0)
 
+            # TODO
+            if use_distractor_noise:
 
+                print("""
+
+##########################################
+### Start Distractor Object Matching! ###
+##########################################
+
+                """)
+                input_sim_real_rgb_path = os.path.join(os.path.dirname(step_3_output_info["scene_0"]["scene_graph"]), "scene_0_visualization.png")
+
+
+                # Create GPT instance
+                # assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
+                # gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="_TaskObjectRetrieval")
+                # Get the object phrases from the task extraction output info
+
+                parent_objects_inside = [
+                    obj_info['parent_object']
+                    for obj_info in task_extraction_output_info['objects'].values()
+                    if obj_info.get('placement') == 'inside'
+                ]
+                distractor_topk_categories_info = {}
+                for parent_object_category in parent_objects_inside:
+                    nn_selection_payload = gpt.payload_distractor_inside_object_category(
+                                                sim_real_img_path=input_sim_real_rgb_path,
+                                                # parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
+                                                goal_task=task_extraction_output_info["task"],
+                                                parent_obj_name=parent_object_category,
+                                                use_distractor_category=use_distractor_category)
+                    
+                    gpt_text_response = gpt(nn_selection_payload)
+
+                    print("GPT Response :")
+                    print(f"   {gpt_text_response}")
+                    # GPT Response :
+                    # pencil case, pens, notebooks, folders, stapler
+
+
+                    if gpt_text_response is None:
+                        print(f"gpt_text_response is None")
+                        # Failed, terminate early
+                        return False, None
+
+                    # 문자열을 쉼표(,) 기준으로 나눈 뒤, strip으로 양쪽 공백 제거
+                    category_list = [cat.strip() for cat in gpt_text_response.split(",") if cat.strip() != ""]
+
+                    # ============================================
+                    # 2. CLIP + FAISS 를 이용해 유사 category 찾기
+                    # ============================================
+
+                    # 전체 데이터셋에서 사용할 category 불러오기
+                    all_categories = list(get_all_dataset_categories(
+                        do_not_include_categories=DO_NOT_MATCH_CATEGORIES,
+                        replace_underscores=True
+                    ))
+
+                    # CLIP & FAISS 초기화
+                    clip = CLIPEncoder(backbone_name="ViT-B/32", device=self.device)
+                    res = faiss.StandardGpuResources()
+                    index_flat = faiss.IndexFlatL2(clip.embedding_dim)
+                    gpu_index_flat = faiss.index_cpu_to_gpu(res, 0, index_flat)
+
+                    if self.verbose:
+                        print(f"🔍 Finding top-{top_k_categories} similar categories for GPT outputs using CLIP+FAISS...")
+                        print(f"   GPT Categories: {category_list}")
+
+                    # 텍스트 임베딩 계산
+                    all_cat_features = clip.get_text_features(text=all_categories)
+                    query_features = clip.get_text_features(text=category_list)
+
+                    # FAISS 검색
+                    gpu_index_flat.reset()
+                    gpu_index_flat.add(all_cat_features)
+                    dists, idxs = gpu_index_flat.search(query_features, top_k_categories)
+
+                    # 결과 매핑
+                    selected_distractor_categories = {}
+                    for i, topk_idxs in enumerate(idxs):
+                        topk_names = [all_categories[j] for j in topk_idxs]
+                        selected_distractor_categories[category_list[i]] = topk_names
+
+                    # 저장
+                    distractor_topk_categories_info = {
+                        f"{parent_object_category}": selected_distractor_categories
+                    }
+
+                    topk_categories_path = os.path.join(save_dir, "gpt_distractor_topk_categories.json")
+                    with open(topk_categories_path, "w") as f:
+                        json.dump(distractor_topk_categories_info, f, indent=4)
+
+
+                    # 자원 정리
+                    del clip
+                    del res
+                    del gpu_index_flat
+                
+                distractor_extraction_output_info = {}
+                for parent_object_name in distractor_topk_categories_info:
+                    distractor_categories = distractor_topk_categories_info[parent_object_name]
+                    parent_obj_save_dir = f"{save_dir}/distactor/{parent_object_name}"
+
+                    # 이미 폴더가 있으면 건너뛰기
+                    if os.path.exists(parent_obj_save_dir):
+                        continue
+                    obj_name_list = []
+                    for distractor_object_name in distractor_categories.keys():
+                        og_categories = distractor_categories[distractor_object_name]
+                        distractor_parent_obj_save_dir = f"{parent_obj_save_dir}/{distractor_object_name}"
+                        topk_model_candidates_dir = f"{distractor_parent_obj_save_dir}/top_k_model_candidates"
+                        Path(topk_model_candidates_dir).mkdir(parents=True, exist_ok=True)
+
+                        obj_name_list.append(distractor_object_name)
+
+                        category_list = []
+                        model_list =[]
+                        
+                        selected_models = set()
+
+
+                        # Find Top-K candidates
+                        candidate_imgs_fdirs = [f"{digital_cousins.ASSET_DIR}/objects/{og_category.replace(' ', '_')}/snapshot" for og_category in og_categories]
+                        
+                        candidate_imgs = list(sorted(f"{candidate_imgs_fdir}/{model}"
+                                        for candidate_imgs_fdir in candidate_imgs_fdirs
+                                        for model in os.listdir(candidate_imgs_fdir)
+                                        if model not in selected_models))
+
+                        concat_img_save_dir = os.path.join(topk_model_candidates_dir, f'{distractor_object_name}_candidate_input_visualization.png')
+                        concat_img = self.make_concat_images(
+                            snapshot_imgs_path=candidate_imgs,
+                            visualize_resolution=(1280, 960),  # 해상도 조절 가능
+                            images_per_row=5,
+                            save_path=concat_img_save_dir
+                        )
+                        nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene_bbox(
+                                            sim_real_img_path=input_sim_real_rgb_path,
+                                            parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{parent_object_name}_annotated_bboxes.png",
+                                            goal_task=task_extraction_output_info["task"],
+                                            parent_obj_name=parent_object_name,
+                                            placement="inside",
+                                            caption=distractor_object_name,
+                                            candidates_path=concat_img_save_dir,
+                                            top_k=distractor_top_k)
+                        
+                        gpt_text_response = gpt(nn_selection_payload)
+
+                        print("GPT Response :")
+                        print(f"   {gpt_text_response}")
+
+                        if gpt_text_response is None:
+                            print(f"gpt_text_response is None")
+                            # Failed, terminate early
+                            return False, None
+                        # 숫자 모두 추출
+                        matches = re.findall(r'\b\d+\b', gpt_text_response)
+
+                        print("Extract number list :")
+                        print(f"   {matches}")
+
+                        # 최대 top_k개만 선택
+                        nn_model_indices = [int(m) for m in matches[:distractor_top_k]]  # 0-based 인덱스로 변환
+                        print("final number list :")
+                        print(f"   {nn_model_indices}\n")
+
+
+                        # # # 숫자가 하나도 없을 경우 → 실패 처리
+                        # # if not matches:
+                        # #     return False, None
+                        # if name == "cup":
+                        #     nn_model_indices = [18, 6, 27]
+                        # else : 
+                        #     nn_model_indices = [1, 2, 3]
+                        
+                        # 후보 이미지 리스트에서 선택된 인덱스만 추출
+                        n_candidates = [candidate_imgs[i-1] for i in nn_model_indices]
+                        
+                        results = {
+                            "k": distractor_top_k,
+                            "candidates": n_candidates,
+                        }
+
+                        with open(f"{topk_model_candidates_dir}/{distractor_object_name}_feature_matcher_results.json", "w+") as f:
+                            json.dump(results, f)
+
+                        for path in n_candidates:
+                            category = path.split("/")[-3]  # snapshot 바로 앞 폴더
+                            model = path.split("/")[-1].split(".")[0].split("_")[-1]  # 파일 이름에서 모델명만
+                            category_list.append(category)
+                            model_list.append(model)
+                        
+                        if parent_object_name not in distractor_extraction_output_info:
+                            distractor_extraction_output_info[parent_object_name] = {}
+
+                        if distractor_object_name not in distractor_extraction_output_info[parent_object_name]:
+                            distractor_extraction_output_info[parent_object_name][distractor_object_name] = {}
+
+
+                        distractor_extraction_output_info[parent_object_name][distractor_object_name]["category"] = category_list
+                        distractor_extraction_output_info[parent_object_name][distractor_object_name]["model"] = model_list
+
+
+                            
+                        re_axis_mat_list = []
+                        front_pose_select_dir = f"{distractor_parent_obj_save_dir}/task_object_front_pose_select"
+                        Path(front_pose_select_dir).mkdir(parents=True, exist_ok=True)
+
+                        #     results = {}
+
+                        for model_idx, model_name in enumerate(model_list):
+                            print(f"category: {category_list[model_idx]}")
+                            print(f"model: {model_list[model_idx]}")
+                                
+                            # # Find Top-K candidates
+                            candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{category_list[model_idx]}/model/{model_list[model_idx]}" 
+
+                            candidate_model_view_imgs = sorted(
+                                os.path.join(candidate_model_view_fdirs, fname)
+                                for fname in os.listdir(candidate_model_view_fdirs)
+                                if fname.endswith('.png') and int(fname.rstrip('.png').split('_')[-1]) % 25 == 0
+                            )
+
+                            concat_img_save_dir = os.path.join(front_pose_select_dir, f'{distractor_object_name}_{model_name}_candidate_view_input_visualization.png')
+
+                            concat_img = self.make_concat_images(
+                                snapshot_imgs_path=candidate_model_view_imgs,
+                                visualize_resolution=(640, 480),  # 해상도 조절 가능
+                                images_per_row=4,
+                                save_path=concat_img_save_dir
+                            ) 
+
+                            nn_selection_payload = gpt.payload_front_view_image(
+                                    candidate_view_path=concat_img_save_dir,
+                                    goal_task=task_extraction_output_info["task"],
+                                    parent_obj_name=parent_object_name,
+                                    placement="inside",
+                                    caption=distractor_object_name
+                                    )
+                            
+                            gpt_text_response = gpt(nn_selection_payload)
+                            print(f"gpt_text_response: {gpt_text_response}")
+                            if gpt_text_response is None:
+                                print(f"gpt_text_response is None")
+                                # Failed, terminate early
+                                return False, None
+
+                            # Extract the first non-negative integer from the response
+                            match = re.search(r'\b\d+\b', gpt_text_response)
+
+                            if match:
+                                nn_model_index = int(match.group()) - 1
+                            else:
+                                print(f"match is empty")
+                                # # No valid integer found, handle this case
+                                # return False, None
+                                nn_model_index = 0
+
+                            
+                            # nn_model_index = 1
+                            
+                            results[model_name] = {
+                                "view_path": candidate_model_view_imgs[nn_model_index],
+                                "re_axis_mat": RE_AXIS_MAT[nn_model_index],
+                            }
+                            
+                            re_axis_mat_list.append(RE_AXIS_MAT[nn_model_index])
+                            print(re_axis_mat_list)
+                            
+                            shutil.copy(candidate_model_view_imgs[nn_model_index], 
+                                        os.path.join(front_pose_select_dir, os.path.basename(candidate_model_view_imgs[nn_model_index])))
+                            
+                        with open(f"{front_pose_select_dir}/model_pose_selection_results.json", "w+") as f:
+                            json.dump(results, f)
+                        
+                        distractor_extraction_output_info[parent_object_name][distractor_object_name]["re_axis_mat"] = re_axis_mat_list
+
+                    print(distractor_extraction_output_info)       
+
+                    index_lists = [
+                        range(len(distractor_extraction_output_info[parent_object_name][obj]['model']))
+                        for obj in obj_name_list
+                    ]    
+                    distractor_json_list = []
+
+                    # 모든 조합 생성
+                    for num, idxs in enumerate(product(*index_lists)):
+                        combo_obj_data = {}
+
+                        for i, obj_name in enumerate(obj_name_list):
+                            idx = idxs[i]
+                            obj = distractor_extraction_output_info[parent_object_name][obj_name]
+
+                            # 원본 복사
+                            new_obj = copy.deepcopy(obj)
+
+                            # 현재 idx에 맞는 값으로 교체
+                            new_obj["model"] = obj["model"][idx]
+                            new_obj["category"] = obj["category"][idx]
+                            new_obj["re_axis_mat"] = obj["re_axis_mat"][idx]
+
+
+                            obj_name = obj_name.replace(" ", "_")
+                            combo_obj_data[obj_name] = new_obj
+
+                        # 저장할 JSON 구조
+                        output_json = {
+                            "task": task_extraction_output_info["task"],  # task 그대로 유지
+                            "objects": combo_obj_data
+                        }
+
+                        # 파일명 규칙 유지
+                        json_path = f"{parent_obj_save_dir}/distractor_output_info_{num}.json"
+
+                        # 저장
+                        distractor_json_list.append(json_path)
+                        Path(save_dir).mkdir(parents=True, exist_ok=True)
+                        with open(json_path, "w+") as f:
+                            write_json_like(output_json, f, indent=0)
+
+                    with open(f"{parent_obj_save_dir}/distractor_output_info.json", "w+") as f:
+                    # json.dump(task_extraction_output_info, f, indent=4, 
+                    #           cls=OneLineListEncoder)
+                        json.dump(distractor_json_list, f, indent=4)
         print("""
 
 ##########################################
@@ -616,11 +947,13 @@ class TaskObjectRetrieval:
         #           cls=OneLineListEncoder)
             json.dump(json_list, f, indent=4)
 
+        
+
         return True, step_2_output_path
 
 
 
-    def make_concat_images(self, snapshot_imgs_path, visualize_resolution=(640, 480), images_per_row=10, fontscale = 2, save_path=None):
+    def make_concat_images(self, snapshot_imgs_path, visualize_resolution=(640, 480), images_per_row=10, fontscale = 4, save_path=None):
         """
         snapshot_list_files 내 이미지들을 한 줄에 10개씩 정렬하고, 왼쪽 위에 파일명 숫자 라벨을 추가.
 
@@ -652,6 +985,7 @@ class TaskObjectRetrieval:
                 fontFace=cv2.FONT_HERSHEY_SIMPLEX,
                 fontScale=fontscale,
                 color=(255, 255, 255),
+                # color=(0, 0, 0),
                 thickness=2,
                 lineType=cv2.LINE_AA
             )

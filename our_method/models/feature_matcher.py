@@ -370,6 +370,42 @@ class FeatureMatcher(torch.nn.Module):
                 del models_copy[top_1_idx]
                 model_imgs_copy = np.delete(model_imgs_copy, top_1_idx, axis=0)
                 feat_vecs = np.delete(feat_vecs, np.arange(H * W * top_1_idx, H * W * (top_1_idx + 1)), axis=0)
+                
+                # # 배치 크기 설정
+                # batch_size = 10  # 1000개의 이미지씩 처리
+                # all_freqs = dict()
+                
+                # # 배치로 나누어 처리
+                # for j in range(0, len(feat_vecs), batch_size * H * W):
+                #     end_idx = min(j + batch_size * H * W, len(feat_vecs))
+                    
+                #     # GPU 인덱스 초기화 및 현재 배치만 추가
+                #     gpu_index_flat.reset()
+                #     gpu_index_flat.add(feat_vecs[j:end_idx])
+                    
+                #     dists, idxs = gpu_index_flat.search(ref_feat_vecs, 1)
+                #     # 전체 인덱스로 조정
+                #     idxs = (idxs + j) // (H * W)
+                    
+                #     for k, (idx, dist) in enumerate(zip(idxs.reshape(-1), dists.reshape(-1))):
+                #         # If k is not part of foreground, skip
+                #         if k not in foreground_idxs:
+                #             continue
+
+                #         if idx not in all_freqs:
+                #             all_freqs[idx] = 0
+                #         all_freqs[idx] += 1
+
+                # all_freqs = {k: v for k, v in sorted(all_freqs.items(), key=lambda item: item[1])}
+                # top_1_idx = list(all_freqs.keys())[-1]
+
+                # top_k_models.append(models_copy[top_1_idx])
+                # imgs.append(cv2.resize(model_imgs_copy[top_1_idx], visualize_resolution))
+                # # Prune the selected one
+                # del models_copy[top_1_idx]
+                # model_imgs_copy = np.delete(model_imgs_copy, top_1_idx, axis=0)
+                # feat_vecs = np.delete(feat_vecs, np.arange(H * W * top_1_idx, H * W * (top_1_idx + 1)), axis=0)
+
 
         elif self.encoder_name == "CLIPEncoder":
             gpu_index_flat.reset()
@@ -392,5 +428,16 @@ class FeatureMatcher(torch.nn.Module):
         }
         with open(f"{save_dir}/{save_prefix}_feature_matcher_results.json", "w+") as f:
             json.dump(results, f)
+
+        import torch
+        import gc
+        
+        # GPU 인덱스 명시적으로 삭제
+        del gpu_index_flat
+        if hasattr(self, 'res'):
+            del self.res
+        
+        torch.cuda.empty_cache()
+        gc.collect()
 
         return results

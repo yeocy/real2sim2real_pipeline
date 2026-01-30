@@ -1,9 +1,40 @@
 import numpy as np
 import torch as th
 import trimesh
+from loguru import logger as log
 import digital_cousins.utils.transform_utils as T
 from digital_cousins.utils.processing_utils import distance_to_plane, create_polygon_from_vertices
 import omnigibson as og
+from omnigibson.scenes import Scene
+
+def create_scene(floor=True, sky=True):
+    """
+    Helper function for creating new empty scene in OmniGibson
+
+    Args:
+        floor (bool): Whether to use floor or not
+        sky (bool): Whether to use sky or not
+
+    Returns:
+        Scene: OmniGibson scene
+    """
+    og.sim.stop()
+    og.clear()
+    scene = Scene(use_floor_plane=floor, floor_plane_visible=floor, use_skybox=sky)
+    og.sim.import_scene(scene)
+    og.sim.play()
+    return scene
+
+def take_photo(n_render_steps=5):
+    """
+    Takes photo with current scene configuration with current camera
+    ...
+    """
+    # Render a bit,
+    for _ in range(n_render_steps):
+        og.sim.render()
+    rgb = og.sim.viewer_camera.get_obs()[0]["rgb"][:, :, :3].cpu().detach().numpy()
+    return rgb
 
 def compute_relative_cam_pose_from(z_dir, origin_pos, init_quat=None):
     """
@@ -113,8 +144,6 @@ def align_model_pose(
         z_refine_rot_mat = T.euler2mat([0, 0, z_offset])
         pc_obj_rot_refined = pc_obj_rot @ z_refine_rot_mat.T
 
-        if verbose:
-            print(f"Finetuned {obj.name}'s z-rotation by {z_offset * 180 / np.pi} degrees")
         pc_obj_rot = pc_obj_rot_refined
 
         # Update z-rot angle
@@ -418,11 +447,11 @@ def compute_object_z_offset(target_obj_name, sorted_obj_bbox_info, verbose=False
         if polygon_tar.intersects(polygon_cand):
             intersect_area = polygon_tar.intersection(polygon_cand).area
             if verbose:
-                print(f"{target_obj_name} intersects with {check_obj_name}")
-                print(f"target area: {polygon_tar.area}, candidate area: {polygon_cand.area}, intersect_area: {intersect_area}")
+                log.info(f"{target_obj_name} intersects with {check_obj_name}")
+                log.info(f"target area: {polygon_tar.area}, candidate area: {polygon_cand.area}, intersect_area: {intersect_area}")
             if intersect_area / polygon_tar.area >= intersection_area_threshold or intersect_area / polygon_cand.area >= intersection_area_threshold:
                 if verbose:
-                    print(f"Detected that {target_obj_name} is on top of {check_obj_name}!")
+                    log.info(f"Detected that {target_obj_name} is on top of {check_obj_name}!")
                 obj_name_beneath = check_obj_name
                 _, _, up_z = sorted_obj_bbox_info[check_obj_name]["upper"]
                 _, _, target_obj_low_z = sorted_obj_bbox_info[target_obj_name]["lower"]
@@ -483,11 +512,11 @@ def compute_object_z_offset_non_articulated(target_obj_name, sorted_obj_bbox_inf
         if polygon_tar.intersects(polygon_cand):
             intersect_area = polygon_tar.intersection(polygon_cand).area
             if verbose:
-                print(f"{target_obj_name} intersects with {check_obj_name}")
-                print(f"target area: {polygon_tar.area}, candidate area: {polygon_cand.area}, intersect_area: {intersect_area}")
+                log.info(f"{target_obj_name} intersects with {check_obj_name}")
+                log.info(f"target area: {polygon_tar.area}, candidate area: {polygon_cand.area}, intersect_area: {intersect_area}")
             if intersect_area / polygon_tar.area >= intersection_area_threshold or intersect_area / polygon_cand.area >= intersection_area_threshold:
                 if verbose:
-                    print(f"Detected that {target_obj_name} is on top of {check_obj_name}!")
+                    log.info(f"Detected that {target_obj_name} is on top of {check_obj_name}!")
                 obj_name_beneath = check_obj_name
                 _, _, up_z = sorted_obj_bbox_info[check_obj_name]["upper"]
                 _, _, target_obj_low_z = sorted_obj_bbox_info[target_obj_name]["lower"]

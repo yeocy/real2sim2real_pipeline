@@ -3,7 +3,18 @@ import torch as th
 import trimesh
 import digital_cousins.utils.transform_utils as T
 from digital_cousins.utils.processing_utils import distance_to_plane, create_polygon_from_vertices
+
 import omnigibson as og
+
+def compute_relative_cam_pose_from(z_dir, origin_pos, init_quat=None):
+    """
+    """
+    # Render a bit,
+    for _ in range(n_render_steps):
+        og.sim.render()
+    rgb = og.sim.viewer_camera.get_obs()[0]["rgb"][:, :, :3].cpu().detach().numpy()
+    return rgb
+
 
 def compute_relative_cam_pose_from(z_dir, origin_pos, init_quat=None):
     """

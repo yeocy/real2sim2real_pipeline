@@ -19,6 +19,7 @@ python 4_evaluate_policy.py \
 
 
 # Necessary to make sure robomimic registers these modules
+from scipy import roll
 import digital_cousins
 
 import argparse
@@ -107,10 +108,32 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
             # get action from policy
             t1 = time.time()
             act = policy(ob=obs)
+            # for key, value in obs.items():
+            #     print(f"🔑 Key: {key}")
+            #     print(f"   - Type: {type(value)}")
+            #     if isinstance(value, np.ndarray):
+            #         print(f"   - Shape: {value.shape}")
+            #         # 예시 값 출력
+            #         if value.ndim == 1:
+            #             print(f"   - Example: {value}")
+            #         elif value.ndim == 2:
+            #             print(f"   - Example row[0]: {value[0]}")
+            #         else:
+            #             print("   - Example: Too many dimensions to preview.")
+            #     else:
+            #         print(f"   - Value: {value}")
+            #     print("-" * 40)
+            # exit()
+            # print("action: {}".format(act))
+            # print(real and (not env.base_env.controller_type == "JOINT_IMPEDANCE") and (policy.policy.global_config.algo_name != "diffusion_policy"))
+            # print(real)
+
             t2 = time.time()
             if real and (not env.base_env.controller_type == "JOINT_IMPEDANCE") and (policy.policy.global_config.algo_name != "diffusion_policy"):
                 # joint impedance actions and diffusion policy actions are absolute in the real world
                 act = np.clip(act, -1., 1.)
+            print(act)
+
 
             if rate_measure is not None:
                 rate_measure.measure()
@@ -120,9 +143,8 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
                 done = False
                 next_obs = obs
             else:
-                # play action
+                # play action                
                 next_obs, r, done, truncated, _ = env.step(act)
-
             # compute reward
             total_reward += r
             success = env.is_success()["task"]
@@ -150,9 +172,9 @@ def rollout(policy, env, horizon, render=False, video_writer=None, video_skip=5,
                 traj["obs"].append(ObsUtils.unprocess_obs_dict(obs))
                 traj["next_obs"].append(ObsUtils.unprocess_obs_dict(next_obs))
 
-            # break if done or if success
-            if done or success:
-                break
+            # # break if done or if success
+            # if done or success:
+            #     break
 
             # update for next iter
             obs = deepcopy(next_obs)
@@ -290,7 +312,7 @@ def run_trained_agent(args):
             ans = input("continue? (y/n)")
             if ans != "y":
                 exit()
-
+    
     # maybe set seed
     if args.seed is not None:
         np.random.seed(args.seed)
