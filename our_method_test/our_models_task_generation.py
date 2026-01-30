@@ -22,8 +22,6 @@ from rich.logging import RichHandler
 from our_method.pipeline.gaia import GAIA
 
 log.configure(handlers=[{"sink": RichHandler(), "format": "{message}"}])
-# If you store the offline dataset elsewhere, uncomment and set the directory here
-# digital_cousins.ASSET_DIR = "~/assets"
 
 os.environ["OMNIGIBSON_HEADLESS"] = "1"
 

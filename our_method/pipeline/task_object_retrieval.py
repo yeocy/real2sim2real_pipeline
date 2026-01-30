@@ -261,19 +261,10 @@ class TaskObjectRetrieval:
 ##############################################################
 
                 """)
-            # Create GPT instance
-            # assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
-            # gpt = GPT(api_key=gpt_api_key, version=gpt_version)
-            # input_sim_rgb_path = step_3_output_info["scene_0"]["scene_img"]
-            # input_real_rgb_path = step_3_output_info["scene_0"]["scene_img"]
             input_sim_real_rgb_path = os.path.join(os.path.dirname(step_3_output_info["scene_0"]["scene_graph"]), "scene_0_visualization.png")
 
             should_start = start_at_name is None
             n_instances = len(obj_name_list)
-
-            # Create GPT instance
-            assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
-            gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="_TaskObjectRetrieval")
 
             
             for instance_idx, name in enumerate(obj_name_list):
@@ -313,7 +304,7 @@ class TaskObjectRetrieval:
                 )
                 
                 if task_extraction_output_info["objects"][name]["new"]:
-                    nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene(
+                    nn_selection_payload = self.gpt.payload_nearest_neighbor_text_ref_scene(
                                         sim_real_img_path=input_sim_real_rgb_path,
                                         # parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
                                         goal_task=task_extraction_output_info["task"],
@@ -323,7 +314,7 @@ class TaskObjectRetrieval:
                                         candidates_path=concat_img_save_dir,
                                         top_k=top_k_models)
                 else:               
-                    nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene_bbox(
+                    nn_selection_payload = self.gpt.payload_nearest_neighbor_text_ref_scene_bbox(
                                         sim_real_img_path=input_sim_real_rgb_path,
                                         parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
                                         goal_task=task_extraction_output_info["task"],
@@ -332,9 +323,8 @@ class TaskObjectRetrieval:
                                         caption=obj_phrases[instance_idx],
                                         candidates_path=concat_img_save_dir,
                                         top_k=top_k_models)
-                
-                
-                gpt_text_response = gpt(nn_selection_payload)
+
+                gpt_text_response = self.gpt(nn_selection_payload)
 
                 print("GPT Response :")
                 print(f"   {gpt_text_response}")
@@ -439,7 +429,7 @@ class TaskObjectRetrieval:
                             save_path=concat_img_save_dir
                         ) 
 
-                        nn_selection_payload = gpt.payload_front_view_image(
+                        nn_selection_payload = self.gpt.payload_front_view_image(
                                 candidate_view_path=concat_img_save_dir,
                                 goal_task=task_extraction_output_info["task"],
                                 parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
@@ -447,7 +437,7 @@ class TaskObjectRetrieval:
                                 caption=obj_phrases[instance_idx]
                                 )
                         
-                        gpt_text_response = gpt(nn_selection_payload)
+                        gpt_text_response = self.gpt(nn_selection_payload)
                         print(f"gpt_text_response: {gpt_text_response}")
                         if gpt_text_response is None:
                             print(f"gpt_text_response is None")
@@ -525,7 +515,7 @@ class TaskObjectRetrieval:
                             save_path=concat_img_save_dir
                         )
                     
-                    nn_selection_payload = gpt.payload_front_view_image(
+                    nn_selection_payload = self.gpt.payload_front_view_image(
                                 candidate_view_path=concat_img_save_dir,
                                 goal_task=task_extraction_output_info["task"],
                                 parent_obj_name=task_extraction_output_info["objects"][name]["parent_object"],
@@ -533,7 +523,7 @@ class TaskObjectRetrieval:
                                 caption=obj_phrases[instance_idx]
                                 )
                         
-                    gpt_text_response = gpt(nn_selection_payload)
+                    gpt_text_response = self.gpt(nn_selection_payload)
                     if gpt_text_response is None:
                         # Failed, terminate early
                         return False, None
@@ -622,12 +612,6 @@ class TaskObjectRetrieval:
                 """)
                 input_sim_real_rgb_path = os.path.join(os.path.dirname(step_3_output_info["scene_0"]["scene_graph"]), "scene_0_visualization.png")
 
-
-                # Create GPT instance
-                # assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
-                # gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="_TaskObjectRetrieval")
-                # Get the object phrases from the task extraction output info
-
                 parent_objects_inside = [
                     obj_info['parent_object']
                     for obj_info in task_extraction_output_info['objects'].values()
@@ -635,14 +619,14 @@ class TaskObjectRetrieval:
                 ]
                 distractor_topk_categories_info = {}
                 for parent_object_category in parent_objects_inside:
-                    nn_selection_payload = gpt.payload_distractor_inside_object_category(
+                    nn_selection_payload = self.gpt.payload_distractor_inside_object_category(
                                                 sim_real_img_path=input_sim_real_rgb_path,
                                                 # parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
                                                 goal_task=task_extraction_output_info["task"],
                                                 parent_obj_name=parent_object_category,
                                                 use_distractor_category=use_distractor_category)
                     
-                    gpt_text_response = gpt(nn_selection_payload)
+                    gpt_text_response = self.gpt(nn_selection_payload)
 
                     print("GPT Response :")
                     print(f"   {gpt_text_response}")
@@ -746,7 +730,7 @@ class TaskObjectRetrieval:
                             images_per_row=5,
                             save_path=concat_img_save_dir
                         )
-                        nn_selection_payload = gpt.payload_nearest_neighbor_text_ref_scene_bbox(
+                        nn_selection_payload = self.gpt.payload_nearest_neighbor_text_ref_scene_bbox(
                                             sim_real_img_path=input_sim_real_rgb_path,
                                             parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{parent_object_name}_annotated_bboxes.png",
                                             goal_task=task_extraction_output_info["task"],
@@ -756,7 +740,7 @@ class TaskObjectRetrieval:
                                             candidates_path=concat_img_save_dir,
                                             top_k=distractor_top_k)
                         
-                        gpt_text_response = gpt(nn_selection_payload)
+                        gpt_text_response = self.gpt(nn_selection_payload)
 
                         print("GPT Response :")
                         print(f"   {gpt_text_response}")
@@ -842,7 +826,7 @@ class TaskObjectRetrieval:
                                 save_path=concat_img_save_dir
                             ) 
 
-                            nn_selection_payload = gpt.payload_front_view_image(
+                            nn_selection_payload = self.gpt.payload_front_view_image(
                                     candidate_view_path=concat_img_save_dir,
                                     goal_task=task_extraction_output_info["task"],
                                     parent_obj_name=parent_object_name,
@@ -850,7 +834,7 @@ class TaskObjectRetrieval:
                                     caption=distractor_object_name
                                     )
                             
-                            gpt_text_response = gpt(nn_selection_payload)
+                            gpt_text_response = self.gpt(nn_selection_payload)
                             print(f"gpt_text_response: {gpt_text_response}")
                             if gpt_text_response is None:
                                 print(f"gpt_text_response is None")

@@ -4,8 +4,6 @@ Top level entry point for GAIA
 from deps.OmniGibson.omnigibson.object_states import inside
 import our_method
 # If you store the offline dataset elsewhere, please uncomment the following line and put the directory here
-# digital_cousins.ASSET_DIR = "~/assets"
-
 import yaml
 import argparse
 import os
@@ -113,17 +111,15 @@ class GAIA:
             assert cur_save_dir is None, f"save_dir should not be specified in {step} config! Got: {cur_save_dir}"
             config["pipeline"][step]["call"]["save_dir"] = save_dir
 
-        # Cfg에 GPT 설정 - API key와 version 일괄 적용
-        gpt_steps = ["TaskObjectResizing", "TaskSceneGenerator"]
 
-        if gpt_api_key is not None:
-            config["pipeline"][step]["call"]["gpt_api_key"] = gpt_api_key
+        # if gpt_api_key is not None:
+        #     config["pipeline"][step]["call"]["gpt_api_key"] = gpt_api_key
                 
-        if gpt_version is not None:
-            config["pipeline"][step]["call"]["gpt_version"] = gpt_version
+        # if gpt_version is not None:
+        #     config["pipeline"][step]["call"]["gpt_version"] = gpt_version
 
-        if gpt_token_print is not None:
-            config["pipeline"][step]["call"]["gpt_token_print"] = gpt_token_print
+        # if gpt_token_print is not None:
+        #     config["pipeline"][step]["call"]["gpt_token_print"] = gpt_token_print
 
         # TODO : log_dir_tail 추가
         self.gpt = GPT(api_key=gpt_api_key, version=gpt_version, token_print=gpt_token_print, log_dir_tail=f"_GAIA")
@@ -248,6 +244,7 @@ class GAIA:
             log.debug("Running GAIA: Task Object Resizing")
 
             obj_resizing = TaskObjectResizing(
+                gpt=self.gpt,
                 verbose=config["pipeline"]["verbose"],
             )
             success, obj_resizing_output_path = obj_resizing(
@@ -258,12 +255,13 @@ class GAIA:
             )
             if not success:
                 raise ValueError("Failed Task Object Resizing!")
-
+            
         # Step 7: Task-following Scene Generation
         if run_step_7:
             log.debug("Running GAIA: Step 7 -- Task-following Scene Generation")
 
             step_7 = TaskSceneGenerator(
+                gpt=self.gpt,
                 verbose=config["pipeline"]["verbose"],
             )
             success, step_7_output_path = step_7(

@@ -47,18 +47,19 @@ class TaskObjectResizing:
 
     def __init__(
             self,
+            gpt=None,
             verbose=False,
     ):
         """
         Args:
             verbose (bool): Whether to display verbose print outs during execution or not
         """
+        self.gpt = gpt
         self.verbose = verbose
 
     def __call__(
             self,
             task_feature_matching_path,
-            gpt_api_key,
             gpt_version="4o",
             save_dir=None,
             resizing = True,
@@ -84,7 +85,6 @@ class TaskObjectResizing:
 
         print(task_object_retrieval_output_info)
 
-        gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="_TaskObjResizing")
         json_list = []
         for scenario_obj_num_json_path in task_object_retrieval_output_info:
             with open(scenario_obj_num_json_path, "r") as f:
@@ -121,13 +121,13 @@ class TaskObjectResizing:
                     scene.remove_object(obj)
 
                 # Setup GPT prompt
-                task_object_resizing_payload = gpt.payload_task_object_resizing(
+                task_object_resizing_payload = self.gpt.payload_task_object_resizing(
                     object_size_info=obj_size_info,
                     goal_task=task_obj_output_info['task'],
                 )
 
                 # Query GPT
-                gpt_text_response = gpt(task_object_resizing_payload, verbose=self.verbose)
+                gpt_text_response = self.gpt(task_object_resizing_payload, verbose=self.verbose)
 
                 if gpt_text_response is None:
                     # Failed, terminate early
@@ -223,13 +223,13 @@ class TaskObjectResizing:
                             scene.remove_object(obj)
 
                         # Setup GPT prompt
-                        task_object_resizing_payload = gpt.payload_task_object_resizing(
+                        task_object_resizing_payload = self.gpt.payload_task_object_resizing(
                             object_size_info=obj_size_info,
                             goal_task=task_obj_output_info['task'],
                         )
 
                         # Query GPT
-                        gpt_text_response = gpt(task_object_resizing_payload, verbose=self.verbose)
+                        gpt_text_response = self.gpt(task_object_resizing_payload, verbose=self.verbose)
 
                         if gpt_text_response is None:
                             # Failed, terminate early

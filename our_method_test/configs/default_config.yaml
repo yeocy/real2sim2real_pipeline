@@ -40,14 +40,14 @@ distractor:
 
 # Task specification
 task:
-  goal_task: "pick up the jar"
+  goal_task: "pick up the bottle"
 
 # Pipeline steps to run (set to true to enable)
 pipeline_steps:
-  run_step_1: false  # Step 1: Real-world extraction
-  run_step_2: true   # Step 2: Digital cousin matching
-  run_step_3: true   # Step 3: Scene generation
-  run_visualize_scene: true  # Visualize generated scene
+  run_step_1: true  # Step 1: Real-world extraction
+  run_step_2: false   # Step 2: Digital cousin matching
+  run_step_3: false   # Step 3: Scene generation
+  run_visualize_scene: false  # Visualize generated scene
   run_step_4_and_5: false  # Steps 4 & 5: Task object extraction and spatial reasoning
   run_step_6: false  # Step 6: Task object retrieval
   run_task_object_resizing: false  # Task object resizing

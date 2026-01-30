@@ -1473,375 +1473,284 @@ Scene objects: {scene_objects}
             goal_task
     ):
         """
-        
+        로봇 작업에 필요한 객체들의 적절한 실제 크기(가장 긴 변)를 결정하기 위한
+        프롬프트 페이로드를 생성합니다.
         """
 
-        prompt_text_system = """You are an expert in robotics, object modeling, and real-world dimensions. Your role is to determine appropriate sizes for objects used in robotic tasks.
+        # 1. 지침 (Instructions) 설정
+        instructions = (
+            "You are an expert in robotics, object modeling, and real-world dimensions. "
+            "Your role is to determine appropriate sizes for objects used in robotic tasks.\n\n"
+            "The user will provide:\n"
+            "- A task description that explains what the robot is doing.\n"
+            "- A list of objects, each with a name and its size (longest dimension) in meters.\n\n"
+            "Your job is to:\n"
+            "1. Use real-world knowledge to identify the typical or appropriate size (longest dimension) for each object in the given task context.\n"
+            "2. Output your answer strictly in the following format:\n\n"
+            "[One-sentence reasoning about the task and object sizing]\n"
+            "object_1 (appropriate_size_in_meters)\n"
+            "object_2 (appropriate_size_in_meters)\n\n"
+            "Only respond using this format. Do not include any additional explanation or text outside the required structure."
+        )
 
-The user will provide:
-- A task description that explains what the robot is doing.
-- A list of objects, each with a name and its size (longest dimension) in meters.
-- User input will be the following format:
-
-Task: [task description]
-[object_1_name] ([current_size])
-[object_2_name] ([current_size])
-...
-
-Your job is to:
-1. Use real-world knowledge to identify the typical or appropriate size (longest dimension) for each object in the given task context.
-2. Output your answer strictly in the following format:
-
-[One-sentence reasoning about the task and object sizing]
-object_1 (appropriate_size_in_meters)
-object_2 (appropriate_size_in_meters)
-...
-
-Only respond using this format. Do not include any additional explanation or text outside the required structure.
-"""
-
-        prompt_user =   """Task: {}
-{}
-"""
+        # 2. 객체 정보 문자열 생성 (기존 로직 유지)
         obj_info_str = ""
         for obj_name, obj_dims in object_size_info.items():
-            obj_info_str_ = "{} ({:.4f})\n".format(obj_name, max(obj_dims))
-            obj_info_str += (obj_info_str_)
-        obj_info_str += ("\nWhat is the appropriate real-world size (longest dimension) of each object for this task?")
+            # longest dimension 추출 및 포맷팅
+            obj_info_str += "{} ({:.4f})\n".format(obj_name, max(obj_dims))
+        
+        obj_info_str += "\nWhat is the appropriate real-world size (longest dimension) of each object for this task?"
 
-        prompt_user_filled = prompt_user.format(goal_task, obj_info_str)
+        # 3. 사용자 프롬프트 구성
+        user_prompt = f"Task: {goal_task}\n{obj_info_str}"
 
-        content = [
+        # 4. 요청하신 형식의 input_content 구성
+        input_content = [
             {
-                "type": "text",
-                "text": prompt_user_filled
+                "type": "input_text",
+                "text": user_prompt
             }
         ]
 
-
-        text_dict_system = {
-            "type": "text",
-            "text": prompt_text_system
-        }
-        content_system = [text_dict_system]
-
-
-        NN_payload = {
+        # 5. 최종 페이로드 반환
+        return {
             "model": self.VERSIONS[self.version],
-            "messages": [
-                {
-                    "role": "system",
-                    "content": content_system
-                },
+            "instructions": instructions,
+            "input": [
                 {
                     "role": "user",
-                    "content": content
+                    "content": input_content
                 }
             ],
-            # TODO
             "temperature": 0,
-            "max_tokens": 100
+            "max_output_tokens": 100 # 기존 max_tokens와 대응
         }
-        return NN_payload
-    
+
     def payload_nearest_neighbor_text_ref_scene(
-            self,
-            sim_real_img_path,
-            goal_task,
-            parent_obj_name,
-            placement,
-            caption,
-            candidates_path,
-            top_k = 3
-    ):
+                self,
+                sim_real_img_path,
+                goal_task,
+                parent_obj_name,
+                placement,
+                caption,
+                candidates_path,
+                top_k = 3
+        ):
         """
-        Given a list of candidate snapshots, return the payload used to find the nearest neighbor
-        to represent the "caption" in original image in simulation
-
-        Args:
-            img_path (str): Absolute path to image to infer object selection from
-            caption (str): Caption associated with the image at @img_path
-            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
-            candidates_fpaths (list of str): List of absolute paths to candidate images
-            nonproject_obj_img_path (str): Absolute path to segmented object image
-
-        Returns:
-            dict: Prompt payload
+        변환된 형식: 지침(Instructions)을 시스템 역할로 분리하고, 
+        이미지와 텍스트를 순서대로 input 리스트에 배치합니다.
         """
-        # Getting the base64 string
+        # 이미지 베이스64 인코딩
         sim_real_scene_img_base64 = self.encode_image(sim_real_img_path)
-        # parent_obj_bbox_img_base64 = self.encode_image(parent_obj_bbox_img_path)
-        # f"I will provide an image with a bounding box highlighting the location of the parent object ({parent_obj_name}) where the target object will be placed."+ \
         candidate_obj_img_base64 = self.encode_image(candidates_path)
 
+        # 1. 지침 (Instructions) 설정
+        instructions = (
+            "You are an expert in indoor design and feature matching. "
+            "The user will provide you with an image showing real-world scene and simulation scene, "
+            "and a list of candidate orientations of an asset in the simulator.\n"
+            f"Your task is to select the top {top_k} candidate assets that best match the goal, "
+            "placement requirements, and overall context of the given scene."
+        )
 
-        prompt_text_system = "You are an expert in indoor design and feature matching. " + \
-                        "The user will provide you with an image showing real-world scene and simulation scene, and a list of candidate orientations of an asset in the simulator.\n" + \
-                        f"Your task is to select the top {top_k} candidate assets that best match the goal, placement requirements, and overall context of the given scene."
+        # 2. 사용자 텍스트 블록 정의 (기존 내용 그대로 유지)
+        prompt_user_1 = (
+            "### Task Overview ###\n"
+            f"I will show you an image of a real-world scene. I will show you an image of a simulation scene. \n"
+            f"In this scene, the goal task is to: {goal_task}. "
+            f"To achieve this, the object needs to be placed {placement} the {parent_obj_name}. \n"
+            f"I will then present you a list of candidate assets in my simulator. \n"
+            f"Your task is to select the top {top_k} candidate assets that have the highest geometric similarity to the target object ({caption}), "
+            f"in descending order of similarity so that I can use the asset to represent the target object in the simulator with the intended goal and placement. "
+            f"In other words, I want you to select the most suitable object, taking into account the scene, task, and placement.\n\n"
+            "### Special Requirements ###\n"
+            "1. I have full control over these assets (as a whole), which means I can reoriente, reposition, and rescale the assets; I can also change the relative ratios of length, width, and height; adjust the texture; or relight the object by defining a new light direction; "
+            "It's important to note that the aforementioned operations can only be applied to the entire object, not to its parts. "
+            "For example, I can rescale an entire cabinet without keeping the original length-width-height ratio, but I cannot rescale one drawer of a cabinet by one ratio and another drawer by a different ratio.\n"
+            "2. When the target object is partially occluded by other objects, please observe its visible parts and infer its full geometry.\n"
+            "3. Also notice that the candidate asset snapshots are taken with a black background, so pay attention to observe the asset snapshot when it has a dark color.\n"
+            "4. Consider which asset, after being modified (reoriented, repositioned, rescaled, ratio changed, texture altered, relit), resembles the target object most closely. "
+            "Geometry (shape) similarity after the aforementioned modifications is much more critical than appearance similarity.\n"
+            "5. You should consider not only the overall shape, but also key features and affordance of the target object's category. "
+            "For example, if it is a mug, consider if it has a handle and if some candidate assets have a handle. "
+            "If they both have handles, which asset has the most similar handle as the target object.\n"
+            "6. Please ensure you return a valid index. For example, if there are n candidates, then your response should be an integer from 1 to n."
+            f"Please return exactly {top_k} indices of the most suitable asset snapshots, in descending order of similarity. Only include the indices, separated by commas. Do not include any explanations. \n"
+            "Example output:2, 14, 21\n"
+            "Example output:6, 31, 1\n"
+            "Example output:16\n"
+            "Example output:3, 5, 7\n"
+            "Example output:10, 3, 4, 6, 17, 24\n"
+            "Example output:1, 3, 19, 32\n\n\n"
+            "Now, let's take a deep breath and begin!\n"
+        )
 
-        prompt_user_1 = "### Task Overview ###\n" + \
-                f"I will show you an image of a real-world scene. " + \
-                f"I will show you an image of a simulation scene. \n" + \
-                f"In this scene, the goal task is to: {goal_task}. " + \
-                f"To achieve this, the object needs to be placed {placement} the {parent_obj_name}. \n" + \
-                f"I will then present you a list of candidate assets in my simulator. \n" + \
-                f"Your task is to select the top {top_k} candidate assets that have the highest geometric similarity to the target object ({caption}), in descending order of similarity so that I can use the asset to represent the target object in the simulator with the intended goal and placement. " + \
-                f"In other words, I want you to select the most suitable object, taking into account the scene, task, and placement.\n\n" + \
-                "### Special Requirements ###\n" + \
-                "1. I have full control over these assets (as a whole), which means I can reoriente, reposition, and rescale the assets; I can also change the relative ratios of length, width, and height; adjust the texture; or relight the object by defining a new light direction; " + \
-                "It's important to note that the aforementioned operations can only be applied to the entire object, not to its parts. " + \
-                "For example, I can rescale an entire cabinet without keeping the original length-width-height ratio, but I cannot rescale one drawer of a cabinet by one ratio and another drawer by a different ratio.\n" + \
-                "2. When the target object is partially occluded by other objects, please observe its visible parts and infer its full geometry.\n" + \
-                "3. Also notice that the candidate asset snapshots are taken with a black background, so pay attention to observe the asset snapshot when it has a dark color.\n" + \
-                "4. Consider which asset, after being modified (reoriented, repositioned, rescaled, ratio changed, texture altered, relit), resembles the target object most closely. " + \
-                "Geometry (shape) similarity after the aforementioned modifications is much more critical than appearance similarity.\n" + \
-                "5. You should consider not only the overall shape, but also key features and affordance of the target object's category. " + \
-                "For example, if it is a mug, consider if it has a handle and if some candidate assets have a handle. " + \
-                "If they both have handles, which asset has the most similar handle as the target object.\n" + \
-                "6. Please ensure you return a valid index. For example, if there are n candidates, then your response should be an integer from 1 to n." + \
-                "Please return exactly {top_k} indices of the most suitable asset snapshots, in descending order of similarity. Only include the indices, separated by commas. Do not include any explanations. \n" + \
-                "Example output:2, 14, 21\n" + \
-                "Example output:6, 31, 1\n" + \
-                "Example output:16\n" + \
-                "Example output:3, 5, 7\n" + \
-                "Example output:10, 3, 4, 6, 17, 24\n" + \
-                "Example output:1, 3, 19, 32\n\n\n" + \
-                "Now, let's take a deep breath and begin!\n"
+        prompt_text_user_final = (
+            f"The following are a list of assets you can choose to represent the {caption}. "
+            f"Please select the top {top_k} assets that best fits the scene, considering the intended task ({goal_task}),"
+            f"the placement ({placement} of the {parent_obj_name}), and the geometric similarity to the target object.\n"
+            "Choose the most suitable object for this context."
+        )
 
-        prompt_text_user_final = f"The following are a list of assets you can choose to represent the {caption}. " + \
-                        f"Please select the top {top_k} assets that best fits the scene, considering the intended task ({goal_task})," +\
-                        f"the placement ({placement} of the {parent_obj_name}), and the geometric similarity to the target object.\n" +\
-                        "Choose the most suitable object for this context."
-        
-        content = [
+        # 3. input 리스트 구성 (순서 및 타입 일원화)
+        input_content = [
             {
-                "type": "text",
+                "type": "input_text",
                 "text": prompt_user_1
             },
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{sim_real_scene_img_base64}"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{sim_real_scene_img_base64}",
+                "detail": "high"
             },
             {
-                "type": "text",
-                "text": "The above image left side shows a scene in the real world. " + \
-                        f"and right side shows the simulation scene that is similar to the real-world scene."
+                "type": "input_text",
+                "text": "The above image left side shows a scene in the real world. and right side shows the simulation scene that is similar to the real-world scene."
             },
             {
-                "type": "text",
+                "type": "input_text",
                 "text": f"The following image shows candidate asset list ({caption})."
             },
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{candidate_obj_img_base64}"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{candidate_obj_img_base64}",
+                "detail": "high"
             },
             {
-                "type": "text",
+                "type": "input_text",
                 "text": prompt_text_user_final
             }
         ]
-        
-        # for i, candidate_fpath in enumerate(candidates_fpaths):
-        #     text_prompt = f"image {i + 1}:\n"
-        #     text_dict = {
-        #         "type": "text",
-        #         "text": text_prompt
-        #     }
-        #     cand_base64 = self.encode_image(candidate_fpath)
-        #     img_dict = {
-        #         "type": "image_url",
-        #         "image_url": {
-        #             "url": f"data:image/png;base64,{cand_base64}"
-        #         }
-        #     }
-        #     content.append(text_dict)
-        #     content.append(img_dict)
 
-        text_dict_system = {
-            "type": "text",
-            "text": prompt_text_system
-        }
-        content_system = [text_dict_system]
-
-
-        NN_payload = {
+        # 4. 최종 페이로드 반환
+        return {
             "model": self.VERSIONS[self.version],
-            "messages": [
-                {
-                    "role": "system",
-                    "content": content_system
-                },
+            "instructions": instructions,
+            "input": [
                 {
                     "role": "user",
-                    "content": content
+                    "content": input_content
                 }
             ],
-            # TODO
             "temperature": 0,
-            "max_tokens": 16
+            "max_output_tokens": 16
         }
-        return NN_payload
-    
+
     def payload_nearest_neighbor_text_ref_scene_bbox(
-            self,
-            sim_real_img_path,
-            parent_obj_bbox_img_path,
-            goal_task,
-            parent_obj_name,
-            placement,
-            caption,
-            candidates_path,
-            top_k = 3
-    ):
+                self,
+                sim_real_img_path,
+                parent_obj_bbox_img_path,
+                goal_task,
+                parent_obj_name,
+                placement,
+                caption,
+                candidates_path,
+                top_k = 3
+        ):
         """
-        Given a list of candidate snapshots, return the payload used to find the nearest neighbor
-        to represent the "caption" in original image in simulation
-
-        Args:
-            img_path (str): Absolute path to image to infer object selection from
-            caption (str): Caption associated with the image at @img_path
-            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
-            candidates_fpaths (list of str): List of absolute paths to candidate images
-            nonproject_obj_img_path (str): Absolute path to segmented object image
-
-        Returns:
-            dict: Prompt payload
+        변환된 형식: 바운딩 박스 이미지를 포함하여 
+        전체 페이로드를 구조화된 리스트 형식으로 생성합니다.
         """
 
-        # Getting the base64 string
+        # 이미지 베이스64 인코딩
         sim_real_scene_img_base64 = self.encode_image(sim_real_img_path)
         parent_obj_bbox_img_base64 = self.encode_image(parent_obj_bbox_img_path)
-        
         candidate_obj_img_base64 = self.encode_image(candidates_path)
 
+        # 1. 지침 (Instructions) 설정
+        instructions = (
+            "You are an expert in indoor design and feature matching. "
+            "The user will provide you with an image showing real-world scene and simulation scene, "
+            "and a list of candidate orientations of an asset in the simulator.\n"
+            f"Your task is to select the top {top_k} candidate assets that best match the goal, "
+            "placement requirements, and overall context of the given scene."
+        )
 
-        prompt_text_system = "You are an expert in indoor design and feature matching. " + \
-                        "The user will provide you with an image showing real-world scene and simulation scene, and a list of candidate orientations of an asset in the simulator.\n" + \
-                        f"Your task is to select the top {top_k} candidate assets that best match the goal, placement requirements, and overall context of the given scene."
+        # 2. 사용자 프롬프트 텍스트 정의
+        prompt_user_1 = (
+            "### Task Overview ###\n"
+            f"I will show you an image of a real-world scene. I will show you an image of a simulation scene. \n"
+            f"In this scene, the goal task is to: {goal_task}. "
+            f"To achieve this, the object needs to be placed {placement} the {parent_obj_name}. \n"
+            f"I will provide an image with a bounding box highlighting the location of the parent object ({parent_obj_name}) where the target object will be placed."
+            f"I will then present you a list of candidate assets in my simulator. \n"
+            f"Your task is to select the top {top_k} candidate assets that have the highest geometric similarity to the target object ({caption}), "
+            "in descending order of similarity so that I can use the asset to represent the target object in the simulator with the intended goal and placement. "
+            "In other words, I want you to select the most suitable object, taking into account the scene, task, and placement.\n\n"
+            "### Special Requirements ###\n"
+            "1. I have full control over these assets (as a whole), which means I can reoriente, reposition, and rescale the assets; I can also change the relative ratios of length, width, and height; adjust the texture; or relight the object by defining a new light direction; "
+            "It's important to note that the aforementioned operations can only be applied to the entire object, not to its parts.\n"
+            "2. When the target object is partially occluded by other objects, please observe its visible parts and infer its full geometry.\n"
+            "3. Also notice that the candidate asset snapshots are taken with a black background, so pay attention to observe the asset snapshot when it has a dark color.\n"
+            "4. Consider which asset, after being modified (reoriented, repositioned, rescaled, ratio changed, texture altered, relit), resembles the target object most closely. "
+            "Geometry (shape) similarity after the aforementioned modifications is much more critical than appearance similarity.\n"
+            "5. You should consider not only the overall shape, but also key features and affordance of the target object's category.\n"
+            "6. Please ensure you return a valid index.\n"
+            f"Please return exactly {top_k} indices of the most suitable asset snapshots, in descending order of similarity. Only include the indices, separated by commas. Do not include any explanations. \n"
+            "Example output:2, 14, 21\n"
+            "Example output:1, 3, 19, 32\n\n\n"
+            "Now, let's take a deep breath and begin!\n"
+        )
 
-        prompt_user_1 = "### Task Overview ###\n" + \
-                f"I will show you an image of a real-world scene. " + \
-                f"I will show you an image of a simulation scene. \n" + \
-                f"In this scene, the goal task is to: {goal_task}. " + \
-                f"To achieve this, the object needs to be placed {placement} the {parent_obj_name}. \n" + \
-                f"I will provide an image with a bounding box highlighting the location of the parent object ({parent_obj_name}) where the target object will be placed."+ \
-                f"I will then present you a list of candidate assets in my simulator. \n" + \
-                f"Your task is to select the top {top_k} candidate assets that have the highest geometric similarity to the target object ({caption}), in descending order of similarity so that I can use the asset to represent the target object in the simulator with the intended goal and placement. " + \
-                f"In other words, I want you to select the most suitable object, taking into account the scene, task, and placement.\n\n" + \
-                "### Special Requirements ###\n" + \
-                "1. I have full control over these assets (as a whole), which means I can reoriente, reposition, and rescale the assets; I can also change the relative ratios of length, width, and height; adjust the texture; or relight the object by defining a new light direction; " + \
-                "It's important to note that the aforementioned operations can only be applied to the entire object, not to its parts. " + \
-                "For example, I can rescale an entire cabinet without keeping the original length-width-height ratio, but I cannot rescale one drawer of a cabinet by one ratio and another drawer by a different ratio.\n" + \
-                "2. When the target object is partially occluded by other objects, please observe its visible parts and infer its full geometry.\n" + \
-                "3. Also notice that the candidate asset snapshots are taken with a black background, so pay attention to observe the asset snapshot when it has a dark color.\n" + \
-                "4. Consider which asset, after being modified (reoriented, repositioned, rescaled, ratio changed, texture altered, relit), resembles the target object most closely. " + \
-                "Geometry (shape) similarity after the aforementioned modifications is much more critical than appearance similarity.\n" + \
-                "5. You should consider not only the overall shape, but also key features and affordance of the target object's category. " + \
-                "For example, if it is a mug, consider if it has a handle and if some candidate assets have a handle. " + \
-                "If they both have handles, which asset has the most similar handle as the target object.\n" + \
-                "6. Please ensure you return a valid index. For example, if there are n candidates, then your response should be an integer from 1 to n." + \
-                "Please return exactly {top_k} indices of the most suitable asset snapshots, in descending order of similarity. Only include the indices, separated by commas. Do not include any explanations. \n" + \
-                "Example output:2, 14, 21\n" + \
-                "Example output:6, 31, 1\n" + \
-                "Example output:16\n" + \
-                "Example output:3, 5, 7\n" + \
-                "Example output:10, 3, 4, 6, 17, 24\n" + \
-                "Example output:19, 1, 8, 25, 24\n" + \
-                "Example output:1, 3, 19, 32\n\n\n" + \
-                "Now, let's take a deep breath and begin!\n"
+        prompt_text_user_final = (
+            f"The following are a list of assets you can choose to represent the {caption}. "
+            f"Please select the top {top_k} assets that best fits the scene, considering the intended task ({goal_task}),"
+            f"the placement ({placement} of the {parent_obj_name}), and the geometric similarity to the target object.\n"
+            "Choose the most suitable object for this context."
+        )
 
-        prompt_text_user_final = f"The following are a list of assets you can choose to represent the {caption}. " + \
-                        f"Please select the top {top_k} assets that best fits the scene, considering the intended task ({goal_task})," +\
-                        f"the placement ({placement} of the {parent_obj_name}), and the geometric similarity to the target object.\n" +\
-                        "Choose the most suitable object for this context."
-        
-        content = [
+        # 3. input_content 리스트 구성 (순서 엄수)
+        input_content = [
             {
-                "type": "text",
+                "type": "input_text",
                 "text": prompt_user_1
             },
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{sim_real_scene_img_base64}"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{sim_real_scene_img_base64}",
+                "detail": "high"
             },
             {
-                "type": "text",
-                "text": "The above image left side shows a scene in the real world. " + \
-                        f"and right side shows the simulation scene that is similar to the real-world scene."
+                "type": "input_text",
+                "text": "The above image left side shows a scene in the real world. and right side shows the simulation scene that is similar to the real-world scene."
             },
             {
-                "type": "text",
+                "type": "input_text",
                 "text": f"The following image shows the bounding box of the parent object({parent_obj_name})."
             },
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{parent_obj_bbox_img_base64}"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{parent_obj_bbox_img_base64}",
+                "detail": "high"
             },
             {
-                "type": "text",
+                "type": "input_text",
                 "text": f"The following image shows candidate asset list ({caption})."
             },
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{candidate_obj_img_base64}"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{candidate_obj_img_base64}",
+                "detail": "high"
             },
             {
-                "type": "text",
+                "type": "input_text",
                 "text": prompt_text_user_final
             }
         ]
-        
-        # for i, candidate_fpath in enumerate(candidates_fpaths):
-        #     text_prompt = f"image {i + 1}:\n"
-        #     text_dict = {
-        #         "type": "text",
-        #         "text": text_prompt
-        #     }
-        #     cand_base64 = self.encode_image(candidate_fpath)
-        #     img_dict = {
-        #         "type": "image_url",
-        #         "image_url": {
-        #             "url": f"data:image/png;base64,{cand_base64}"
-        #         }
-        #     }
-        #     content.append(text_dict)
-        #     content.append(img_dict)
 
-        text_dict_system = {
-            "type": "text",
-            "text": prompt_text_system
-        }
-        content_system = [text_dict_system]
-
-
-        NN_payload = {
+        # 4. 최종 페이로드 반환
+        return {
             "model": self.VERSIONS[self.version],
-            "messages": [
-                {
-                    "role": "system",
-                    "content": content_system
-                },
+            "instructions": instructions,
+            "input": [
                 {
                     "role": "user",
-                    "content": content
+                    "content": input_content
                 }
             ],
-            # TODO
             "temperature": 0.1,
-            "max_tokens": 50
+            "max_output_tokens": 50
         }
-        return NN_payload
-    
 
     def payload_front_view_image(
             self,
@@ -1851,89 +1760,168 @@ Only respond using this format. Do not include any additional explanation or tex
             placement,
             caption,
             direction="front",
-    ):
+        ):
         """
-        Generates custom prompt payload for selecting an object from a list of objects
-
-        Args:
-            img_path (str): Absolute path to image to infer object selection from
-            obj_list (list of str): List of previously detected objects
-            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
-            nonproject_obj_img_path (str): Absolute path to segmented object image
-
-        Returns:
-            dict: Prompt payload
+        변환된 형식: 객체의 4가지 뷰 중 특정 방향(direction)을 선택하기 위한
+        구조화된 페이로드를 생성합니다.
         """
-        # Getting the base64 string
+        # 이미지 베이스64 인코딩
         candidate_view_img_base64 = self.encode_image(candidate_view_path)
 
-        prompting_text_system = "You are an expert in determining the orientation of objects.\n\n" + \
-                        "### Task Overview ###\n" + \
-                        "The user will show you four images of the object taken from different directions: front, left, right, and back, in a random order. " + \
-                        "Each image you see contains four different views of the object (front, left, right, and back) combined into a single image. " + \
-                        "Each view is labeled with a number from 1 to 4. \n" + \
-                        "Your task is to select the image that best represents the {direction} view of the target object. \n\n" + \
-                        "### Special Requirements ###\n\n" + \
-                        "Please follow these guidelines when selecting your answer:\n\n" + \
-                        "1. Select the image that best represents the {direction} view of the object. " + \
-                        "If the {direction} view is ambiguous or unclear, consider the task context to make your decision. \n\n" + \
-                        "2. When considering the task, take into account the parent object and the placement. " + \
-                        "Consider how the object should be positioned relative to the parent object to perform the task correctly. \n\n" + \
-                        "3. Choose the number that shows the most likely **front view of the object when placed appropriately to accomplish the task**. " + \
-                        "In other words, select the image where the object appears as it would when correctly positioned for the task.\n\n" + \
-                        "4. Respond using only a single number from 1 to 4, corresponding to the view you select. \n\n" + \
-                        "Example output: 1\n" + \
-                        "Example output: 3\n" + \
-                        "Example output: 2\n" + \
-                        "Example output: 1\n\n"
+        # 1. 지침 (Instructions) 설정
+        instructions = (
+            "You are an expert in determining the orientation of objects.\n\n"
+            "### Task Overview ###\n"
+            "The user will show you four images of the object taken from different directions: front, left, right, and back, in a random order. "
+            "Each image you see contains four different views of the object (front, left, right, and back) combined into a single image. "
+            "Each view is labeled with a number from 1 to 4. \n"
+            f"Your task is to select the image that best represents the {direction} view of the target object.\n\n"
+            "### Special Requirements ###\n"
+            "Please follow these guidelines when selecting your answer:\n\n"
+            f"1. Select the image that best represents the {direction} view of the object. "
+            f"If the {direction} view is ambiguous or unclear, consider the task context to make your decision.\n"
+            "2. When considering the task, take into account the parent object and the placement. "
+            "Consider how the object should be positioned relative to the parent object to perform the task correctly.\n"
+            f"3. Choose the number that shows the most likely **front view of the object when placed appropriately to accomplish the task**. "
+            "In other words, select the image where the object appears as it would when correctly positioned for the task.\n"
+            "4. Respond using only a single number from 1 to 4, corresponding to the view you select.\n\n"
+            "Example output: 1\n"
+            "Example output: 3\n"
+            "Example output: 2\n"
+            "Example output: 1"
+        )
 
-        text_dict_system = {
-            "type": "text",
-            "text": prompting_text_system
-        }
-        content_system = [text_dict_system]
+        # 2. 사용자 입력 구성
+        prompt_user_text_1 = (
+            f"The above image contains four different views of the {caption} object — front, back, right, and left — arranged in a random order."
+        )
+        
+        prompt_user_text_2 = (
+            f"Please select the number that corresponds to the {direction} view of the object in the image above.\n"
+            f"If the {direction} view is ambiguous or unclear, consider the task context provided below to make your decision:\n"
+            f"User plan to place the {caption} object {placement} the {parent_obj_name} in order to accomplish the task.\n"
+            f"Task: {goal_task}\n"
+            f"Parent Object: {parent_obj_name}\n"
+            f"Placement: {placement}\n"
+            f"Respond with only a single number from 1 to 4, indicating which view you believe best represents the {direction} of the object."
+        )
 
-        content_user = [
+        # 3. input_content 리스트 구조화
+        input_content = [
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{candidate_view_img_base64}"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{candidate_view_img_base64}",
+                "detail": "high"
             },
             {
-                "type": "text",
-                "text": f"The above image contains four different views of the {caption} object — front, back, right, and left — arranged in a random order. "
+                "type": "input_text",
+                "text": prompt_user_text_1
             },
             {
-                "type": "text",
-                "text": f"Please select the number that corresponds to the {direction} view of the object in the image above. \n" + \
-                    f"If the {direction} view is ambiguous or unclear, consider the task context provided below to make your decision: \n" +\
-                    f"User plan to place the {caption} object {placement} the {parent_obj_name} in order to accomplish the task. \n" +\
-                    f"Task: {goal_task} \n" + \
-                    f"Parent Object: {parent_obj_name} \n" +\
-                    f"Placement: {placement} \n"
-                    "Respond with only a single number from 1 to 4, indicating which view you believe best represents the {direction} of the object."
+                "type": "input_text",
+                "text": prompt_user_text_2
             }
         ]
 
-        object_selection_payload = {
+        # 4. 최종 페이로드 반환
+        return {
             "model": self.VERSIONS[self.version],
-            "messages": [
-                {
-                    "role": "system",  
-                    "content": content_system
-                },
+            "instructions": instructions,
+            "input": [
                 {
                     "role": "user",
-                    "content": content_user
+                    "content": input_content
                 }
             ],
             "temperature": 0.2,
-            "max_tokens": 16
+            "max_output_tokens": 16
         }
 
-        return object_selection_payload
-    
+    def payload_front_view_image(
+            self,
+            candidate_view_path,
+            goal_task,
+            parent_obj_name,
+            placement,
+            caption,
+            direction="front",
+        ):
+        """
+        변환된 형식: 객체의 4가지 뷰 중 특정 방향(direction)을 선택하기 위한
+        구조화된 페이로드를 생성합니다.
+        """
+        # 이미지 베이스64 인코딩
+        candidate_view_img_base64 = self.encode_image(candidate_view_path)
+
+        # 1. 지침 (Instructions) 설정
+        instructions = (
+            "You are an expert in determining the orientation of objects.\n\n"
+            "### Task Overview ###\n"
+            "The user will show you four images of the object taken from different directions: front, left, right, and back, in a random order. "
+            "Each image you see contains four different views of the object (front, left, right, and back) combined into a single image. "
+            "Each view is labeled with a number from 1 to 4. \n"
+            f"Your task is to select the image that best represents the {direction} view of the target object.\n\n"
+            "### Special Requirements ###\n"
+            "Please follow these guidelines when selecting your answer:\n\n"
+            f"1. Select the image that best represents the {direction} view of the object. "
+            f"If the {direction} view is ambiguous or unclear, consider the task context to make your decision.\n"
+            "2. When considering the task, take into account the parent object and the placement. "
+            "Consider how the object should be positioned relative to the parent object to perform the task correctly.\n"
+            f"3. Choose the number that shows the most likely **front view of the object when placed appropriately to accomplish the task**. "
+            "In other words, select the image where the object appears as it would when correctly positioned for the task.\n"
+            "4. Respond using only a single number from 1 to 4, corresponding to the view you select.\n\n"
+            "Example output: 1\n"
+            "Example output: 3\n"
+            "Example output: 2\n"
+            "Example output: 1"
+        )
+
+        # 2. 사용자 입력 텍스트 구성
+        prompt_user_text_1 = (
+            f"The above image contains four different views of the {caption} object — front, back, right, and left — arranged in a random order."
+        )
+        
+        prompt_user_text_2 = (
+            f"Please select the number that corresponds to the {direction} view of the object in the image above.\n"
+            f"If the {direction} view is ambiguous or unclear, consider the task context provided below to make your decision:\n"
+            f"User plan to place the {caption} object {placement} the {parent_obj_name} in order to accomplish the task.\n"
+            f"Task: {goal_task}\n"
+            f"Parent Object: {parent_obj_name}\n"
+            f"Placement: {placement}\n"
+            f"Respond with only a single number from 1 to 4, indicating which view you believe best represents the {direction} of the object."
+        )
+
+        # 3. input 리스트 구조화
+        input_content = [
+            {
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{candidate_view_img_base64}",
+                "detail": "high"
+            },
+            {
+                "type": "input_text",
+                "text": prompt_user_text_1
+            },
+            {
+                "type": "input_text",
+                "text": prompt_user_text_2
+            }
+        ]
+
+        # 4. 최종 페이로드 반환
+        return {
+            "model": self.VERSIONS[self.version],
+            "instructions": instructions,
+            "input": [
+                {
+                    "role": "user",
+                    "content": input_content
+                }
+            ],
+            "temperature": 0.2,
+            "max_output_tokens": 16
+        }
+
     def payload_above_object_position(
             self,
             prompt_img_path,
@@ -1942,384 +1930,1152 @@ Only respond using this format. Do not include any additional explanation or tex
             child_obj_name,
             parent_front_view_img_path,
             child_front_view_img_path,
-    ):
+        ):
         """
-        Given a list of candidate snapshots, return the payload used to find the nearest neighbor
-        to represent the "caption" in original image in simulation
-
-        Args:
-            img_path (str): Absolute path to image to infer object selection from
-            caption (str): Caption associated with the image at @img_path
-            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
-            candidates_fpaths (list of str): List of absolute paths to candidate images
-            nonproject_obj_img_path (str): Absolute path to segmented object image
-
-        Returns:
-            dict: Prompt payload
+        변환된 형식: 그리드 번호가 표시된 이미지와 참조 이미지들을 바탕으로
+        최적의 배치 위치를 선택하기 위한 페이로드를 생성합니다.
         """
-        # Getting the base64 string
+        # 이미지 베이스64 인코딩
         prompt_img_base64 = self.encode_image(prompt_img_path)
         parent_front_view_img_base64 = self.encode_image(parent_front_view_img_path)
         child_front_view_img_base64 = self.encode_image(child_front_view_img_path)
 
-        prompt_text_system = "You are an expert in indoor object placement and visual spatial reasoning. \n" + \
-                             "Given the image below showing a simulated scene with a parent object overlaid with numbered candidate positions, " + \
-                             "your task is to identify the most realistic and physically appropriate grid location to place the child object on or above the parent object, "
-                             
-        prompt_user_1 = "### Task Overview ###\n" + \
-                f"I will show you an image of a simulated scene. This scene contains a parent object ({parent_obj_name}) overlaid with numbered candidate positions.\n" + \
-                f"A child object ({child_obj_name}) needs to be placed {placement} the parent object ({parent_obj_name}).\n" + \
-                "Your task is to select the most appropriate location that would realistically support placing the object, considering physical feasibility and spatial context.\n\n" + \
-                "I will also be provided with reference front-view images of the parent and child objects. " + \
-                "Please use them to understand the shape, scale, and orientation of the objects when reasoning about placement.\n" + \
-                "Your task is to select the most appropriate candidate position(s) for placing the object, based on physical plausibility and spatial reasoning.\n" + \
-                "In other words, select the position that best fits the scene context and realistically supports the object.\n\n" + \
-                "### Special Instructions ###\n" + \
-                "1. You must select exactly one grid location (a single number) that is most suitable for placing the object.\n" + \
-                "2. Prefer locations where the object would realistically be placed in the real world, not just in simulation. \n" + \
-                "   For example:\n" + \
-                "   - A fan should be placed on a flat surface like a desk or cabinet top, not on a keyboard or at the edge.\n" + \
-                "   - A monitor should face forward on the center of a desk, not halfway off the edge.\n" + \
-                "   - A bottle should be placed upright in a stable, reachable location, not on top of another object.\n" + \
-                "3. The object should be placed where it can realistically rest without falling, tilting, or floating. Avoid edges, unstable surfaces, or occluded areas.\n" + \
-                "4. Consider the object's intended function and affordance — for example, a fan should be placed where it can effectively ventilate the area.\n" + \
-                "5. Take into account the surrounding context: avoid placing the object where it would block or interfere with other nearby items such as lamps, books, or bottles.\n" + \
-                "6. Avoid grid positions that are close to or surrounded by other objects — especially if the child object is large or may require extra space. Placing the object too close to clutter increases the risk of collision or unrealistic overlap. \n" + \
-                "7. Be mindful that the child object may be tall or wide; ensure it fits comfortably in the selected grid location without hitting or overlapping nearby structures or items. \n" + \
-                "8. Use the reference front-view images of the parent and child objects to reason about size, shape, and how they physically interact.\n" + \
-                "9. Only consider the numbered grid positions shown in the image.\n" + \
-                "10. Respond with a single number corresponding to the selected grid location. Do not include any explanation or extra text.\n\n" + \
-                "Example output: 2\n" + \
-                "Example output: 5\n" + \
-                "Example output: 5\n" + \
-                "Example output: 3\n" + \
-                "Example output: 1\n" + \
-                "Example output: 7\n\n" + \
-                "Think carefully, and then respond."
-        
-        prompt_text_user_final = f"Please review the image and select exactly one grid position that best supports placing the child object ({child_obj_name}) {placement} the parent object ({parent_obj_name}). " + \
-                         "Your choice should reflect a physically realistic and contextually appropriate location, based on object shape, size, and surroundings. Avoid selecting positions that are close to other items or cluttered, especially if the child object is large or might collide with surrounding objects. \n" + \
-                         "Use the reference front-view images to guide your reasoning.\n" + \
-                         "Respond with a **single number only**, with no explanation or additional text."
-        
-        content = [
+        # 1. 지침 (Instructions) 설정
+        instructions = (
+            "You are an expert in indoor object placement and visual spatial reasoning.\n"
+            "Given the image below showing a simulated scene with a parent object overlaid with numbered candidate positions, "
+            "your task is to identify the most realistic and physically appropriate grid location to place the child object on or above the parent object."
+        )
+
+        # 2. 사용자 프롬프트 텍스트 정의
+        prompt_user_1 = (
+            "### Task Overview ###\n"
+            f"I will show you an image of a simulated scene. This scene contains a parent object ({parent_obj_name}) overlaid with numbered candidate positions.\n"
+            f"A child object ({child_obj_name}) needs to be placed {placement} the parent object ({parent_obj_name}).\n"
+            "Your task is to select the most appropriate location that would realistically support placing the object, considering physical feasibility and spatial context.\n\n"
+            "I will also be provided with reference front-view images of the parent and child objects. "
+            "Please use them to understand the shape, scale, and orientation of the objects when reasoning about placement.\n"
+            "Your task is to select the most appropriate candidate position(s) for placing the object, based on physical plausibility and spatial reasoning.\n"
+            "In other words, select the position that best fits the scene context and realistically supports the object.\n\n"
+            "### Special Instructions ###\n"
+            "1. You must select exactly one grid location (a single number) that is most suitable for placing the object.\n"
+            "2. Prefer locations where the object would realistically be placed in the real world, not just in simulation.\n"
+            "3. The object should be placed where it can realistically rest without falling, tilting, or floating. Avoid edges, unstable surfaces, or occluded areas.\n"
+            "4. Consider the object's intended function and affordance.\n"
+            "5. Take into account the surrounding context: avoid placing the object where it would block or interfere with other nearby items.\n"
+            "6. Avoid grid positions that are close to or surrounded by other objects.\n"
+            "7. Be mindful that the child object may be tall or wide; ensure it fits comfortably without hitting or overlapping nearby structures.\n"
+            "8. Use the reference front-view images of the parent and child objects to reason about size, shape, and how they physically interact.\n"
+            "9. Only consider the numbered grid positions shown in the image.\n"
+            "10. Respond with a single number corresponding to the selected grid location. Do not include any explanation or extra text.\n\n"
+            "Example output: 2\n"
+            "Example output: 5\n"
+            "Think carefully, and then respond."
+        )
+
+        prompt_text_user_final = (
+            f"Please review the image and select exactly one grid position that best supports placing the child object ({child_obj_name}) {placement} the parent object ({parent_obj_name}). "
+            "Your choice should reflect a physically realistic and contextually appropriate location, based on object shape, size, and surroundings. Avoid selecting positions that are close to other items or cluttered, especially if the child object is large or might collide with surrounding objects.\n"
+            "Use the reference front-view images to guide your reasoning.\n"
+            "Respond with a **single number only**, with no explanation or additional text."
+        )
+
+        # 3. input 리스트 구조화
+        input_content = [
             {
-                "type": "text",
+                "type": "input_text",
                 "text": prompt_user_1
             },
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{prompt_img_base64}"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{prompt_img_base64}",
+                "detail": "high"
             },
             {
-                "type": "text",
-                    "text": "The above image shows a simulated scene containing a parent object. " +\
-                            "Several existing objects in the scene are visualized using segmentation overlays, and " +\
-                            "nine candidate positions are marked with numeric labels from [1] to [9]. "
+                "type": "input_text",
+                "text": (
+                    "The above image shows a simulated scene containing a parent object. "
+                    "Several existing objects in the scene are visualized using segmentation overlays, and "
+                    "nine candidate positions are marked with numeric labels from [1] to [9]."
+                )
             },
             {
-                "type": "text",
-                "text": "The following images show the front-view appearances of the parent and child objects involved in the scene. " +
-            "Please use these reference images to understand the shape, scale, and orientation of both objects when deciding where the child object should be placed."
+                "type": "input_text",
+                "text": (
+                    "The following images show the front-view appearances of the parent and child objects involved in the scene. "
+                    "Please use these reference images to understand the shape, scale, and orientation of both objects when deciding where the child object should be placed."
+                )
             },
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{parent_front_view_img_base64}"
-                }
-            },
-                        {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{child_front_view_img_base64}"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{parent_front_view_img_base64}",
+                "detail": "high"
             },
             {
-                "type": "text",
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{child_front_view_img_base64}",
+                "detail": "high"
+            },
+            {
+                "type": "input_text",
                 "text": prompt_text_user_final
             }
         ]
 
-        text_dict_system = {
-            "type": "text",
-            "text": prompt_text_system
-        }
-        content_system = [text_dict_system]
-
-
-        NN_payload = {
+        # 4. 최종 페이로드 반환
+        return {
             "model": self.VERSIONS[self.version],
-            "messages": [
-                {
-                    "role": "system",
-                    "content": content_system
-                },
+            "instructions": instructions,
+            "input": [
                 {
                     "role": "user",
-                    "content": content
+                    "content": input_content
                 }
             ],
-            # TODO
             "temperature": 0.0,
-            "max_tokens": 16
+            "max_output_tokens": 16
         }
-        return NN_payload
-    
-    def payload_above_object_distribution(
-            self,
-            prompt_img_path,
-            parent_obj_name,
-            placement,
-            child_obj_name,
-            # parent_front_view_img_path,
-            child_front_view_img_path,
-    ):
-        """
-        Return a payload that asks the model to output a probability distribution
-        over 9 candidate grid positions for placing a child object on or above a parent object.
-        """
-
-        # Getting the base64 string
-        prompt_img_base64 = self.encode_image(prompt_img_path)
-        # parent_front_view_img_base64 = self.encode_image(parent_front_view_img_path)
-        child_front_view_img_base64 = self.encode_image(child_front_view_img_path)
-
-        prompt_text_system = "You are an expert in indoor object placement and visual spatial reasoning. \n" + \
-                             "Given the image below showing a simulated scene with a parent object overlaid with numbered candidate positions, " + \
-                             "your task is to evaluate the suitability of each candidate grid location for placing the child object on or above the parent object."
-                             
-        prompt_user_1 = "### Task Overview ###\n" + \
-                        f"I will show you an image of a simulated scene. This scene contains a parent object ({parent_obj_name}) overlaid with numbered candidate positions.\n" + \
-                        f"A child object ({child_obj_name}) needs to be placed {placement} the parent object ({parent_obj_name}).\n" + \
-                        "Your task is to analyze each grid location and assign a probability score that reflects how appropriate it is for placing the object, considering physical feasibility and spatial context.\n\n" + \
-                        "You will also be provided with reference front-view images of the child objects. " + \
-                        "Please use them to understand the shape, scale, and orientation of the objects when reasoning about placement.\n\n" + \
-                        "### Special Instructions ###\n" + \
-                        "1. You must assign a probability score (between 0.0 and 1.0) to **each** of the 9 grid positions.\n" + \
-                        "2. The total of all 9 probability scores must **sum to 1.0**.\n" + \
-                        "3. If a grid position already contains another object or is clearly not physically suitable (e.g., too narrow, tilted, floating, or occluded), assign it a probability of **0.0**.\n" + \
-                        "4. Prefer locations where the object would realistically be placed in the real world, not just in simulation.\n" + \
-                        "   For example:\n" + \
-                        "   - A fan should be placed on a flat surface like a desk or cabinet top, not on a keyboard or at the edge.\n" + \
-                        "   - A monitor should face forward on the center of a desk, not halfway off the edge.\n" + \
-                        "   - A bottle should be placed upright in a stable, reachable location, not on top of another object.\n" + \
-                        "5. The object should be placed where it can realistically rest without falling, tilting, or floating. Avoid edges, unstable surfaces, or cluttered areas.\n" + \
-                        "6. Consider the object's intended function and affordance — for example, a fan should be placed where it can effectively ventilate the area.\n" + \
-                        "7. Take into account the surrounding context: avoid placing the object where it would block or interfere with other nearby items such as lamps, books, or bottles.\n" + \
-                        "8. Avoid grid positions that are close to or surrounded by other objects — especially if the child object is large or might require additional clearance. Placing objects near cluttered areas increases the risk of physical collision or unrealistic placement. \n" + \
-                        "9. Keep in mind that the child object may have a non-negligible size or height. Ensure that it fits comfortably within the selected grid space without overlapping or colliding with nearby objects or the environment. \n" + \
-                        "10. Use the reference front-view images of the child objects to reason about size, shape, and how they physically interact.\n" + \
-                        "11. Only consider the numbered grid positions shown in the image.\n" + \
-                        "12. Respond only with a single line of comma-separated number-probability pairs. **Do not include any explanation or extra text.**\n\n" + \
-                        "### Output Format ###\n" + \
-                        "Your response must follow this exact format:\n" + \
-                        "1: 0.05, 2: 0.10, 3: 0.20, 4: 0.10, 5: 0.25, 6: 0.10, 7: 0.10, 8: 0.05, 9: 0.05\n\n" + \
-                        "### Example Outputs ###\n" + \
-                        "1: 0.10, 2: 0.10, 3: 0.10, 4: 0.10, 5: 0.10, 6: 0.10, 7: 0.10, 8: 0.10, 9: 0.20\n" + \
-                        "1: 0.00, 2: 0.00, 3: 0.00, 4: 0.30, 5: 0.25, 6: 0.20, 7: 0.15, 8: 0.10, 9: 0.00\n" + \
-                        "1: 0.25, 2: 0.15, 3: 0.10, 4: 0.10, 5: 0.10, 6: 0.10, 7: 0.05, 8: 0.10, 9: 0.05\n" + \
-                        "1: 0.00, 2: 0.00, 3: 0.05, 4: 0.15, 5: 0.30, 6: 0.25, 7: 0.15, 8: 0.10, 9: 0.00\n" + \
-                        "1: 0.05, 2: 0.20, 3: 0.25, 4: 0.05, 5: 0.05, 6: 0.10, 7: 0.10, 8: 0.10, 9: 0.10\n" + \
-                        "1: 0.00, 2: 0.10, 3: 0.10, 4: 0.10, 5: 0.10, 6: 0.10, 7: 0.10, 8: 0.10, 9: 0.30\n" + \
-                        "1: 0.15, 2: 0.10, 3: 0.10, 4: 0.05, 5: 0.10, 6: 0.15, 7: 0.10, 8: 0.10, 9: 0.15\n" + \
-                        "1: 0.00, 2: 0.00, 3: 0.00, 4: 0.05, 5: 0.20, 6: 0.35, 7: 0.20, 8: 0.10, 9: 0.10\n" + \
-                        "1: 0.20, 2: 0.10, 3: 0.05, 4: 0.05, 5: 0.05, 6: 0.10, 7: 0.15, 8: 0.20, 9: 0.10\n" + \
-                        "1: 0.10, 2: 0.05, 3: 0.10, 4: 0.10, 5: 0.05, 6: 0.15, 7: 0.15, 8: 0.15, 9: 0.15\n" + \
-                        "1: 0.00, 2: 0.00, 3: 0.00, 4: 0.00, 5: 0.10, 6: 0.20, 7: 0.30, 8: 0.25, 9: 0.15\n\n" + \
-                        "Make sure your response includes exactly 9 grid positions and that the sum of all probabilities equals 1.0." + \
-                        "### Final Reminder ###\n" + \
-                        "You must return 9 values that add up to 1.0.\n" + \
-                        "Clearly unsuitable or blocked positions should be given a probability of 0.0.\n" + \
-                        "Respond with the probabilities only — no extra text or explanation."
-        
-        prompt_text_user_final = f"Please review the image and assign a probability score to each of the 9 grid positions for placing the child object ({child_obj_name}) {placement} the parent object ({parent_obj_name}). " + \
-                                "Your probability scores should reflect how physically realistic and contextually appropriate each location is, based on object shape, size, and surroundings.\n" + \
-                                "Use the reference front-view images to guide your reasoning about object scale and placement feasibility.\n" + \
-                                "Your response must include exactly 9 probability values (between 0.0 and 1.0) — one for each grid position — and they must sum to 1.0.\n" + \
-                                "Assign a value of 0.0 to any position where placing the object is clearly impossible due to collisions, instability, or obstruction, or nearby clutter that might prevent safe placement. Consider whether the object’s size could lead to collisions with adjacent items.\n" + \
-                                "Respond with a **comma-separated list of number: probability pairs only**, and do not include any explanation or additional text."
-
-        content = [
-            {
-                "type": "text",
-                "text": prompt_user_1
-            },
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{prompt_img_base64}"
-                }
-            },
-            {
-                "type": "text",
-                    "text": "The above image shows a simulated scene containing a parent object. " +\
-                            "Several existing objects in the scene are visualized using segmentation overlays, and " +\
-                            "nine candidate positions are marked with numeric labels from [1] to [9]. "
-            },
-            {
-                "type": "text",
-                "text": "The following images show the front-view appearances of the child objects involved in the scene. " +
-            "Please use these reference images to understand the shape, scale, and orientation of both objects when deciding where the child object should be placed."
-            },
-            # {
-            #     "type": "image_url",
-            #     "image_url": {
-            #         "url": f"data:image/png;base64,{parent_front_view_img_base64}"
-            #     }
-            # },
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{child_front_view_img_base64}"
-                }
-            },
-            {
-                "type": "text",
-                "text": prompt_text_user_final
-            }
-        ]
-
-        text_dict_system = {
-            "type": "text",
-            "text": prompt_text_system
-        }
-        content_system = [text_dict_system]
-
-
-        NN_payload = {
-            "model": self.VERSIONS[self.version],
-            "messages": [
-                {
-                    "role": "system",
-                    "content": content_system
-                },
-                {
-                    "role": "user",
-                    "content": content
-                }
-            ],
-            # TODO
-            "temperature": 0.2,
-            "max_tokens": 300
-        }
-        return NN_payload
-    
 
     def payload_distractor_inside_object_category(
-            self,
-            sim_real_img_path,
-            goal_task,
-            parent_obj_name,
-            use_distractor_category,
-    ):
+                self,
+                sim_real_img_path,
+                goal_task,
+                parent_obj_name,
+                use_distractor_category,
+        ):
         """
-        Given a list of candidate snapshots, return the payload used to find the nearest neighbor
-        to represent the "caption" in original image in simulation
-
-        Args:
-            img_path (str): Absolute path to image to infer object selection from
-            caption (str): Caption associated with the image at @img_path
-            bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
-            candidates_fpaths (list of str): List of absolute paths to candidate images
-            nonproject_obj_img_path (str): Absolute path to segmented object image
-
-        Returns:
-            dict: Prompt payload
+        변환된 형식: 가구 내부의 개연성 있는 물체 카테고리들을 추론하기 위한
+        구조화된 프롬프트 페이로드를 생성합니다.
         """
-        # Getting the base64 string
+        # 이미지 베이스64 인코딩
         sim_real_scene_img_base64 = self.encode_image(sim_real_img_path)
 
+        # 1. 지침 (Instructions) 설정
+        instructions = (
+            "You are an expert in spatial reasoning and indoor object arrangement. "
+            f"You are helping a robot system understand which object categories are likely to be placed inside a given {parent_obj_name} object, "
+            "based on a natural language task instruction and a real-world scene image. "
+            "Think about indoor object affordances, usage, and spatial semantics."
+        )
 
+        # 2. 사용자 프롬프트 텍스트 정의
+        prompt_user = (
+            "### Scene Understanding Task ###\n\n"
+            "You are given:\n"
+            "1. A task instruction that describes a goal (e.g., 'Bring me the pencil case from the cabinet').\n"
+            "2. A scene image that shows the current environment, including the target container.\n\n"
+            f"Your goal is to infer which object categories are likely to be placed **inside** the specified {parent_obj_name} object, considering the scene, the task, and the context.\n\n"
+            "### Inputs ###\n"
+            f"- Task: \"{goal_task}\"\n"
+            f"- Parent Object: \"{parent_obj_name}\"\n"
+            "- Scene Image: (see attached image)\n\n"
+            f"### Output ###\n"
+            f"List the top {use_distractor_category} object categories that are likely to be inside the {parent_obj_name} **in this specific scene**, based on common indoor object arrangements and the task goal.\n\n"
+            "### Instructions ###\n"
+            "- Consider object affordances and functional relationships.\n"
+            f"- Think about what kinds of items are usually stored **inside** the {parent_obj_name} in similar real-world scenarios.\n"
+            "- Your answer should reflect what's plausible in the current scene context.\n"
+            "- Do NOT include the object category that is directly involved in the task.\n"
+            f"- Only list {use_distractor_category} categories, in descending order of likelihood.\n"
+            "- Do not include any explanation. Just list the categories, separated by commas.\n\n"
+            "### Example output ###\n"
+            "folders, pen, notebook\n"
+            "cup, mouse, coke\n"
+            "eraser, pencil, stapler\n\n"
+            f"Now, please think carefully and return only {use_distractor_category} object categories that are most likely to be inside the {parent_obj_name}."
+        )
 
-        prompt_text_system = "You are an expert in spatial reasoning and indoor object arrangement. " + \
-                             f"You are helping a robot system understand which object categories are likely to be placed inside a given {parent_obj_name} object, " + \
-                             "based on a natural language task instruction and a real-world scene image. " + \
-                             "Think about indoor object affordances, usage, and spatial semantics."
-        prompt_user = f"""
-            ### Scene Understanding Task ###
-
-            You are given:
-            1. A task instruction that describes a goal (e.g., 'Bring me the pencil case from the cabinet').
-            2. A scene image that shows the current environment, including the target container (e.g., a cabinet or drawer).
-
-            Your goal is to infer which object categories are likely to be placed **inside** the specified {parent_obj_name} object, considering the scene, the task, and the context.
-
-            ### Inputs ###
-            - Task: "{goal_task}"
-            - Parent Object: "{parent_obj_name}" (e.g., a cabinet, drawer, shelf)
-            - Scene Image: (see attached image)
-
-            ### Output ###
-            List the top {use_distractor_category} object categories that are likely to be inside the {parent_obj_name} **in this specific scene**, based on common indoor object arrangements and the task goal.
-
-            ### Instructions ###
-            - Consider object affordances and functional relationships.
-            - Think about what kinds of items are usually stored **inside** the {parent_obj_name} in similar real-world scenarios.
-            - Your answer should reflect what's plausible in the current scene context.
-            - Do NOT include the object category that is directly involved in the task.
-            For example, if the task is "Bring me the pencil case from the cabinet", you should NOT include "pencil case" in your output.
-            - Only list {use_distractor_category} categories, in descending order of likelihood.
-            - Do not include any explanation. Just list the categories, separated by commas.
-
-
-            ### Example output ###
-            folders, pen, notebook  
-            cup, mouse, coke  
-            eraser, pencil, stapler  
-            remote control, batteries, charger  
-            toothpaste, toothbrush, comb
-
-            Now, please think carefully and return only {use_distractor_category} object categories that are most likely to be inside the {parent_obj_name}.
-            """
-        
-        # System message (guidance for the assistant)
-        content_system = [
+        # 3. input 리스트 구조화
+        input_content = [
             {
-                "type": "text",
-                "text": prompt_text_system
-            }
-        ]
-
-        # User content: task + scene image
-        content = [
-
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{sim_real_scene_img_base64}"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{sim_real_scene_img_base64}",
+                "detail": "high"
             },
             {
-                "type": "text",
-                "text": f"The above image shows a real-world scene including the {parent_obj_name}. "
-                        "Use this image to reason about what kinds of objects are likely placed inside it."
+                "type": "input_text",
+                "text": (
+                    f"The above image shows a real-world scene including the {parent_obj_name}. "
+                    "Use this image to reason about what kinds of objects are likely placed inside it."
+                )
             },
             {
-                "type": "text",
+                "type": "input_text",
                 "text": prompt_user.strip()
             }
         ]
 
-        # Final payload for GPT model
-        NN_payload = {
+        # 4. 최종 페이로드 반환
+        return {
             "model": self.VERSIONS[self.version],
-            "messages": [
-                {
-                    "role": "system",
-                    "content": content_system
-                },
+            "instructions": instructions,
+            "input": [
                 {
                     "role": "user",
-                    "content": content
+                    "content": input_content
                 }
             ],
             "temperature": 0.7,
-            "max_tokens": 50  # increased to allow list of categories
+            "max_output_tokens": 50
         }
 
-        return NN_payload
+        def payload_above_object_distribution(
+                self,
+                prompt_img_path,
+                parent_obj_name,
+                placement,
+                child_obj_name,
+                child_front_view_img_path,
+        ):
+            """
+            변환된 형식: 9개 그리드 위치에 대한 확률 분포를 출력하도록 요청하는
+            구조화된 페이로드를 생성합니다.
+            """
+            # 이미지 베이스64 인코딩
+            prompt_img_base64 = self.encode_image(prompt_img_path)
+            child_front_view_img_base64 = self.encode_image(child_front_view_img_path)
+
+            # 1. 지침 (Instructions) 설정
+            instructions = (
+                "You are an expert in indoor object placement and visual spatial reasoning.\n"
+                "Given the image below showing a simulated scene with a parent object overlaid with numbered candidate positions, "
+                "your task is to evaluate the suitability of each candidate grid location for placing the child object on or above the parent object."
+            )
+
+            # 2. 사용자 프롬프트 텍스트 정의
+            prompt_user_1 = (
+                "### Task Overview ###\n"
+                f"I will show you an image of a simulated scene. This scene contains a parent object ({parent_obj_name}) overlaid with numbered candidate positions.\n"
+                f"A child object ({child_obj_name}) needs to be placed {placement} the parent object ({parent_obj_name}).\n"
+                "Your task is to analyze each grid location and assign a probability score that reflects how appropriate it is for placing the object, considering physical feasibility and spatial context.\n\n"
+                "You will also be provided with reference front-view images of the child objects. "
+                "Please use them to understand the shape, scale, and orientation of the objects when reasoning about placement.\n\n"
+                "### Special Instructions ###\n"
+                "1. You must assign a probability score (between 0.0 and 1.0) to **each** of the 9 grid positions.\n"
+                "2. The total of all 9 probability scores must **sum to 1.0**.\n"
+                "3. If a grid position already contains another object or is clearly not physically suitable, assign it a probability of **0.0**.\n"
+                "4. Prefer locations where the object would realistically be placed in the real world.\n"
+                "5. The object should be placed where it can realistically rest without falling, tilting, or floating.\n"
+                "6. Consider the object's intended function and affordance.\n"
+                "7. Take into account the surrounding context: avoid blocking other items.\n"
+                "8. Avoid grid positions close to or surrounded by other objects to prevent collision.\n"
+                "9. Ensure the child object fits comfortably without overlapping nearby environment.\n"
+                "10. Use the reference front-view images to reason about size and shape.\n"
+                "11. Only consider the numbered grid positions shown in the image.\n"
+                "12. Respond only with a single line of comma-separated number-probability pairs. **Do not include any explanation.**\n\n"
+                "### Output Format ###\n"
+                "1: 0.05, 2: 0.10, 3: 0.20, 4: 0.10, 5: 0.25, 6: 0.10, 7: 0.10, 8: 0.05, 9: 0.05\n\n"
+                "Make sure your response includes exactly 9 grid positions and the sum equals 1.0."
+            )
+
+            prompt_text_user_final = (
+                f"Please review the image and assign a probability score to each of the 9 grid positions for placing the child object ({child_obj_name}) {placement} the parent object ({parent_obj_name}).\n"
+                "Your probability scores should reflect how physically realistic and contextually appropriate each location is.\n"
+                "Respond with a **comma-separated list of number: probability pairs only**, and do not include any explanation."
+            )
+
+            # 3. input 리스트 구조화
+            input_content = [
+                {
+                    "type": "input_text",
+                    "text": prompt_user_1
+                },
+                {
+                    "type": "input_image",
+                    "image_url": f"data:image/png;base64,{prompt_img_base64}",
+                    "detail": "high"
+                },
+                {
+                    "type": "input_text",
+                    "text": (
+                        "The above image shows a simulated scene containing a parent object. "
+                        "Nine candidate positions are marked with numeric labels from [1] to [9]."
+                    )
+                },
+                {
+                    "type": "input_text",
+                    "text": (
+                        "The following images show the front-view appearances of the child objects involved in the scene."
+                    )
+                },
+                {
+                    "type": "input_image",
+                    "image_url": f"data:image/png;base64,{child_front_view_img_base64}",
+                    "detail": "high"
+                },
+                {
+                    "type": "input_text",
+                    "text": prompt_text_user_final
+                }
+            ]
+
+            # 4. 최종 페이로드 반환
+            return {
+                "model": self.VERSIONS[self.version],
+                "instructions": instructions,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": input_content
+                    }
+                ],
+                "temperature": 0.2,
+                "max_output_tokens": 300
+            }
+
+#     def payload_task_object_resizing(
+#             self,
+#             object_size_info,
+#             goal_task
+#     ):
+#         """
+        
+#         """
+
+#         prompt_text_system = """You are an expert in robotics, object modeling, and real-world dimensions. Your role is to determine appropriate sizes for objects used in robotic tasks.
+
+# The user will provide:
+# - A task description that explains what the robot is doing.
+# - A list of objects, each with a name and its size (longest dimension) in meters.
+# - User input will be the following format:
+
+# Task: [task description]
+# [object_1_name] ([current_size])
+# [object_2_name] ([current_size])
+# ...
+
+# Your job is to:
+# 1. Use real-world knowledge to identify the typical or appropriate size (longest dimension) for each object in the given task context.
+# 2. Output your answer strictly in the following format:
+
+# [One-sentence reasoning about the task and object sizing]
+# object_1 (appropriate_size_in_meters)
+# object_2 (appropriate_size_in_meters)
+# ...
+
+# Only respond using this format. Do not include any additional explanation or text outside the required structure.
+# """
+
+#         prompt_user =   """Task: {}
+# {}
+# """
+#         obj_info_str = ""
+#         for obj_name, obj_dims in object_size_info.items():
+#             obj_info_str_ = "{} ({:.4f})\n".format(obj_name, max(obj_dims))
+#             obj_info_str += (obj_info_str_)
+#         obj_info_str += ("\nWhat is the appropriate real-world size (longest dimension) of each object for this task?")
+
+#         prompt_user_filled = prompt_user.format(goal_task, obj_info_str)
+
+#         content = [
+#             {
+#                 "type": "text",
+#                 "text": prompt_user_filled
+#             }
+#         ]
+
+
+#         text_dict_system = {
+#             "type": "text",
+#             "text": prompt_text_system
+#         }
+#         content_system = [text_dict_system]
+
+
+#         NN_payload = {
+#             "model": self.VERSIONS[self.version],
+#             "messages": [
+#                 {
+#                     "role": "system",
+#                     "content": content_system
+#                 },
+#                 {
+#                     "role": "user",
+#                     "content": content
+#                 }
+#             ],
+#             # TODO
+#             "temperature": 0,
+#             "max_tokens": 100
+#         }
+#         return NN_payload
+    
+    # def payload_nearest_neighbor_text_ref_scene(
+    #         self,
+    #         sim_real_img_path,
+    #         goal_task,
+    #         parent_obj_name,
+    #         placement,
+    #         caption,
+    #         candidates_path,
+    #         top_k = 3
+    # ):
+    #     """
+    #     Given a list of candidate snapshots, return the payload used to find the nearest neighbor
+    #     to represent the "caption" in original image in simulation
+
+    #     Args:
+    #         img_path (str): Absolute path to image to infer object selection from
+    #         caption (str): Caption associated with the image at @img_path
+    #         bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+    #         candidates_fpaths (list of str): List of absolute paths to candidate images
+    #         nonproject_obj_img_path (str): Absolute path to segmented object image
+
+    #     Returns:
+    #         dict: Prompt payload
+    #     """
+    #     # Getting the base64 string
+    #     sim_real_scene_img_base64 = self.encode_image(sim_real_img_path)
+    #     # parent_obj_bbox_img_base64 = self.encode_image(parent_obj_bbox_img_path)
+    #     # f"I will provide an image with a bounding box highlighting the location of the parent object ({parent_obj_name}) where the target object will be placed."+ \
+    #     candidate_obj_img_base64 = self.encode_image(candidates_path)
+
+
+    #     prompt_text_system = "You are an expert in indoor design and feature matching. " + \
+    #                     "The user will provide you with an image showing real-world scene and simulation scene, and a list of candidate orientations of an asset in the simulator.\n" + \
+    #                     f"Your task is to select the top {top_k} candidate assets that best match the goal, placement requirements, and overall context of the given scene."
+
+    #     prompt_user_1 = "### Task Overview ###\n" + \
+    #             f"I will show you an image of a real-world scene. " + \
+    #             f"I will show you an image of a simulation scene. \n" + \
+    #             f"In this scene, the goal task is to: {goal_task}. " + \
+    #             f"To achieve this, the object needs to be placed {placement} the {parent_obj_name}. \n" + \
+    #             f"I will then present you a list of candidate assets in my simulator. \n" + \
+    #             f"Your task is to select the top {top_k} candidate assets that have the highest geometric similarity to the target object ({caption}), in descending order of similarity so that I can use the asset to represent the target object in the simulator with the intended goal and placement. " + \
+    #             f"In other words, I want you to select the most suitable object, taking into account the scene, task, and placement.\n\n" + \
+    #             "### Special Requirements ###\n" + \
+    #             "1. I have full control over these assets (as a whole), which means I can reoriente, reposition, and rescale the assets; I can also change the relative ratios of length, width, and height; adjust the texture; or relight the object by defining a new light direction; " + \
+    #             "It's important to note that the aforementioned operations can only be applied to the entire object, not to its parts. " + \
+    #             "For example, I can rescale an entire cabinet without keeping the original length-width-height ratio, but I cannot rescale one drawer of a cabinet by one ratio and another drawer by a different ratio.\n" + \
+    #             "2. When the target object is partially occluded by other objects, please observe its visible parts and infer its full geometry.\n" + \
+    #             "3. Also notice that the candidate asset snapshots are taken with a black background, so pay attention to observe the asset snapshot when it has a dark color.\n" + \
+    #             "4. Consider which asset, after being modified (reoriented, repositioned, rescaled, ratio changed, texture altered, relit), resembles the target object most closely. " + \
+    #             "Geometry (shape) similarity after the aforementioned modifications is much more critical than appearance similarity.\n" + \
+    #             "5. You should consider not only the overall shape, but also key features and affordance of the target object's category. " + \
+    #             "For example, if it is a mug, consider if it has a handle and if some candidate assets have a handle. " + \
+    #             "If they both have handles, which asset has the most similar handle as the target object.\n" + \
+    #             "6. Please ensure you return a valid index. For example, if there are n candidates, then your response should be an integer from 1 to n." + \
+    #             "Please return exactly {top_k} indices of the most suitable asset snapshots, in descending order of similarity. Only include the indices, separated by commas. Do not include any explanations. \n" + \
+    #             "Example output:2, 14, 21\n" + \
+    #             "Example output:6, 31, 1\n" + \
+    #             "Example output:16\n" + \
+    #             "Example output:3, 5, 7\n" + \
+    #             "Example output:10, 3, 4, 6, 17, 24\n" + \
+    #             "Example output:1, 3, 19, 32\n\n\n" + \
+    #             "Now, let's take a deep breath and begin!\n"
+
+    #     prompt_text_user_final = f"The following are a list of assets you can choose to represent the {caption}. " + \
+    #                     f"Please select the top {top_k} assets that best fits the scene, considering the intended task ({goal_task})," +\
+    #                     f"the placement ({placement} of the {parent_obj_name}), and the geometric similarity to the target object.\n" +\
+    #                     "Choose the most suitable object for this context."
+        
+    #     content = [
+    #         {
+    #             "type": "text",
+    #             "text": prompt_user_1
+    #         },
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{sim_real_scene_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": "The above image left side shows a scene in the real world. " + \
+    #                     f"and right side shows the simulation scene that is similar to the real-world scene."
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": f"The following image shows candidate asset list ({caption})."
+    #         },
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{candidate_obj_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": prompt_text_user_final
+    #         }
+    #     ]
+        
+    #     # for i, candidate_fpath in enumerate(candidates_fpaths):
+    #     #     text_prompt = f"image {i + 1}:\n"
+    #     #     text_dict = {
+    #     #         "type": "text",
+    #     #         "text": text_prompt
+    #     #     }
+    #     #     cand_base64 = self.encode_image(candidate_fpath)
+    #     #     img_dict = {
+    #     #         "type": "image_url",
+    #     #         "image_url": {
+    #     #             "url": f"data:image/png;base64,{cand_base64}"
+    #     #         }
+    #     #     }
+    #     #     content.append(text_dict)
+    #     #     content.append(img_dict)
+
+    #     text_dict_system = {
+    #         "type": "text",
+    #         "text": prompt_text_system
+    #     }
+    #     content_system = [text_dict_system]
+
+
+    #     NN_payload = {
+    #         "model": self.VERSIONS[self.version],
+    #         "messages": [
+    #             {
+    #                 "role": "system",
+    #                 "content": content_system
+    #             },
+    #             {
+    #                 "role": "user",
+    #                 "content": content
+    #             }
+    #         ],
+    #         # TODO
+    #         "temperature": 0,
+    #         "max_tokens": 16
+    #     }
+    #     return NN_payload
+    
+    # def payload_nearest_neighbor_text_ref_scene_bbox(
+    #         self,
+    #         sim_real_img_path,
+    #         parent_obj_bbox_img_path,
+    #         goal_task,
+    #         parent_obj_name,
+    #         placement,
+    #         caption,
+    #         candidates_path,
+    #         top_k = 3
+    # ):
+    #     """
+    #     Given a list of candidate snapshots, return the payload used to find the nearest neighbor
+    #     to represent the "caption" in original image in simulation
+
+    #     Args:
+    #         img_path (str): Absolute path to image to infer object selection from
+    #         caption (str): Caption associated with the image at @img_path
+    #         bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+    #         candidates_fpaths (list of str): List of absolute paths to candidate images
+    #         nonproject_obj_img_path (str): Absolute path to segmented object image
+
+    #     Returns:
+    #         dict: Prompt payload
+    #     """
+
+    #     # Getting the base64 string
+    #     sim_real_scene_img_base64 = self.encode_image(sim_real_img_path)
+    #     parent_obj_bbox_img_base64 = self.encode_image(parent_obj_bbox_img_path)
+        
+    #     candidate_obj_img_base64 = self.encode_image(candidates_path)
+
+
+    #     prompt_text_system = "You are an expert in indoor design and feature matching. " + \
+    #                     "The user will provide you with an image showing real-world scene and simulation scene, and a list of candidate orientations of an asset in the simulator.\n" + \
+    #                     f"Your task is to select the top {top_k} candidate assets that best match the goal, placement requirements, and overall context of the given scene."
+
+    #     prompt_user_1 = "### Task Overview ###\n" + \
+    #             f"I will show you an image of a real-world scene. " + \
+    #             f"I will show you an image of a simulation scene. \n" + \
+    #             f"In this scene, the goal task is to: {goal_task}. " + \
+    #             f"To achieve this, the object needs to be placed {placement} the {parent_obj_name}. \n" + \
+    #             f"I will provide an image with a bounding box highlighting the location of the parent object ({parent_obj_name}) where the target object will be placed."+ \
+    #             f"I will then present you a list of candidate assets in my simulator. \n" + \
+    #             f"Your task is to select the top {top_k} candidate assets that have the highest geometric similarity to the target object ({caption}), in descending order of similarity so that I can use the asset to represent the target object in the simulator with the intended goal and placement. " + \
+    #             f"In other words, I want you to select the most suitable object, taking into account the scene, task, and placement.\n\n" + \
+    #             "### Special Requirements ###\n" + \
+    #             "1. I have full control over these assets (as a whole), which means I can reoriente, reposition, and rescale the assets; I can also change the relative ratios of length, width, and height; adjust the texture; or relight the object by defining a new light direction; " + \
+    #             "It's important to note that the aforementioned operations can only be applied to the entire object, not to its parts. " + \
+    #             "For example, I can rescale an entire cabinet without keeping the original length-width-height ratio, but I cannot rescale one drawer of a cabinet by one ratio and another drawer by a different ratio.\n" + \
+    #             "2. When the target object is partially occluded by other objects, please observe its visible parts and infer its full geometry.\n" + \
+    #             "3. Also notice that the candidate asset snapshots are taken with a black background, so pay attention to observe the asset snapshot when it has a dark color.\n" + \
+    #             "4. Consider which asset, after being modified (reoriented, repositioned, rescaled, ratio changed, texture altered, relit), resembles the target object most closely. " + \
+    #             "Geometry (shape) similarity after the aforementioned modifications is much more critical than appearance similarity.\n" + \
+    #             "5. You should consider not only the overall shape, but also key features and affordance of the target object's category. " + \
+    #             "For example, if it is a mug, consider if it has a handle and if some candidate assets have a handle. " + \
+    #             "If they both have handles, which asset has the most similar handle as the target object.\n" + \
+    #             "6. Please ensure you return a valid index. For example, if there are n candidates, then your response should be an integer from 1 to n." + \
+    #             "Please return exactly {top_k} indices of the most suitable asset snapshots, in descending order of similarity. Only include the indices, separated by commas. Do not include any explanations. \n" + \
+    #             "Example output:2, 14, 21\n" + \
+    #             "Example output:6, 31, 1\n" + \
+    #             "Example output:16\n" + \
+    #             "Example output:3, 5, 7\n" + \
+    #             "Example output:10, 3, 4, 6, 17, 24\n" + \
+    #             "Example output:19, 1, 8, 25, 24\n" + \
+    #             "Example output:1, 3, 19, 32\n\n\n" + \
+    #             "Now, let's take a deep breath and begin!\n"
+
+    #     prompt_text_user_final = f"The following are a list of assets you can choose to represent the {caption}. " + \
+    #                     f"Please select the top {top_k} assets that best fits the scene, considering the intended task ({goal_task})," +\
+    #                     f"the placement ({placement} of the {parent_obj_name}), and the geometric similarity to the target object.\n" +\
+    #                     "Choose the most suitable object for this context."
+        
+    #     content = [
+    #         {
+    #             "type": "text",
+    #             "text": prompt_user_1
+    #         },
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{sim_real_scene_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": "The above image left side shows a scene in the real world. " + \
+    #                     f"and right side shows the simulation scene that is similar to the real-world scene."
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": f"The following image shows the bounding box of the parent object({parent_obj_name})."
+    #         },
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{parent_obj_bbox_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": f"The following image shows candidate asset list ({caption})."
+    #         },
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{candidate_obj_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": prompt_text_user_final
+    #         }
+    #     ]
+        
+    #     # for i, candidate_fpath in enumerate(candidates_fpaths):
+    #     #     text_prompt = f"image {i + 1}:\n"
+    #     #     text_dict = {
+    #     #         "type": "text",
+    #     #         "text": text_prompt
+    #     #     }
+    #     #     cand_base64 = self.encode_image(candidate_fpath)
+    #     #     img_dict = {
+    #     #         "type": "image_url",
+    #     #         "image_url": {
+    #     #             "url": f"data:image/png;base64,{cand_base64}"
+    #     #         }
+    #     #     }
+    #     #     content.append(text_dict)
+    #     #     content.append(img_dict)
+
+    #     text_dict_system = {
+    #         "type": "text",
+    #         "text": prompt_text_system
+    #     }
+    #     content_system = [text_dict_system]
+
+
+    #     NN_payload = {
+    #         "model": self.VERSIONS[self.version],
+    #         "messages": [
+    #             {
+    #                 "role": "system",
+    #                 "content": content_system
+    #             },
+    #             {
+    #                 "role": "user",
+    #                 "content": content
+    #             }
+    #         ],
+    #         # TODO
+    #         "temperature": 0.1,
+    #         "max_tokens": 50
+    #     }
+    #     return NN_payload
+    
+
+    # def payload_front_view_image(
+    #         self,
+    #         candidate_view_path,
+    #         goal_task,
+    #         parent_obj_name,
+    #         placement,
+    #         caption,
+    #         direction="front",
+    # ):
+    #     """
+    #     Generates custom prompt payload for selecting an object from a list of objects
+
+    #     Args:
+    #         img_path (str): Absolute path to image to infer object selection from
+    #         obj_list (list of str): List of previously detected objects
+    #         bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+    #         nonproject_obj_img_path (str): Absolute path to segmented object image
+
+    #     Returns:
+    #         dict: Prompt payload
+    #     """
+    #     # Getting the base64 string
+    #     candidate_view_img_base64 = self.encode_image(candidate_view_path)
+
+    #     prompting_text_system = "You are an expert in determining the orientation of objects.\n\n" + \
+    #                     "### Task Overview ###\n" + \
+    #                     "The user will show you four images of the object taken from different directions: front, left, right, and back, in a random order. " + \
+    #                     "Each image you see contains four different views of the object (front, left, right, and back) combined into a single image. " + \
+    #                     "Each view is labeled with a number from 1 to 4. \n" + \
+    #                     "Your task is to select the image that best represents the {direction} view of the target object. \n\n" + \
+    #                     "### Special Requirements ###\n\n" + \
+    #                     "Please follow these guidelines when selecting your answer:\n\n" + \
+    #                     "1. Select the image that best represents the {direction} view of the object. " + \
+    #                     "If the {direction} view is ambiguous or unclear, consider the task context to make your decision. \n\n" + \
+    #                     "2. When considering the task, take into account the parent object and the placement. " + \
+    #                     "Consider how the object should be positioned relative to the parent object to perform the task correctly. \n\n" + \
+    #                     "3. Choose the number that shows the most likely **front view of the object when placed appropriately to accomplish the task**. " + \
+    #                     "In other words, select the image where the object appears as it would when correctly positioned for the task.\n\n" + \
+    #                     "4. Respond using only a single number from 1 to 4, corresponding to the view you select. \n\n" + \
+    #                     "Example output: 1\n" + \
+    #                     "Example output: 3\n" + \
+    #                     "Example output: 2\n" + \
+    #                     "Example output: 1\n\n"
+
+    #     text_dict_system = {
+    #         "type": "text",
+    #         "text": prompting_text_system
+    #     }
+    #     content_system = [text_dict_system]
+
+    #     content_user = [
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{candidate_view_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": f"The above image contains four different views of the {caption} object — front, back, right, and left — arranged in a random order. "
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": f"Please select the number that corresponds to the {direction} view of the object in the image above. \n" + \
+    #                 f"If the {direction} view is ambiguous or unclear, consider the task context provided below to make your decision: \n" +\
+    #                 f"User plan to place the {caption} object {placement} the {parent_obj_name} in order to accomplish the task. \n" +\
+    #                 f"Task: {goal_task} \n" + \
+    #                 f"Parent Object: {parent_obj_name} \n" +\
+    #                 f"Placement: {placement} \n"
+    #                 "Respond with only a single number from 1 to 4, indicating which view you believe best represents the {direction} of the object."
+    #         }
+    #     ]
+
+    #     object_selection_payload = {
+    #         "model": self.VERSIONS[self.version],
+    #         "messages": [
+    #             {
+    #                 "role": "system",  
+    #                 "content": content_system
+    #             },
+    #             {
+    #                 "role": "user",
+    #                 "content": content_user
+    #             }
+    #         ],
+    #         "temperature": 0.2,
+    #         "max_tokens": 16
+    #     }
+
+    #     return object_selection_payload
+    
+    # def payload_above_object_position(
+    #         self,
+    #         prompt_img_path,
+    #         parent_obj_name,
+    #         placement,
+    #         child_obj_name,
+    #         parent_front_view_img_path,
+    #         child_front_view_img_path,
+    # ):
+    #     """
+    #     Given a list of candidate snapshots, return the payload used to find the nearest neighbor
+    #     to represent the "caption" in original image in simulation
+
+    #     Args:
+    #         img_path (str): Absolute path to image to infer object selection from
+    #         caption (str): Caption associated with the image at @img_path
+    #         bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+    #         candidates_fpaths (list of str): List of absolute paths to candidate images
+    #         nonproject_obj_img_path (str): Absolute path to segmented object image
+
+    #     Returns:
+    #         dict: Prompt payload
+    #     """
+    #     # Getting the base64 string
+    #     prompt_img_base64 = self.encode_image(prompt_img_path)
+    #     parent_front_view_img_base64 = self.encode_image(parent_front_view_img_path)
+    #     child_front_view_img_base64 = self.encode_image(child_front_view_img_path)
+
+    #     prompt_text_system = "You are an expert in indoor object placement and visual spatial reasoning. \n" + \
+    #                          "Given the image below showing a simulated scene with a parent object overlaid with numbered candidate positions, " + \
+    #                          "your task is to identify the most realistic and physically appropriate grid location to place the child object on or above the parent object, "
+                             
+    #     prompt_user_1 = "### Task Overview ###\n" + \
+    #             f"I will show you an image of a simulated scene. This scene contains a parent object ({parent_obj_name}) overlaid with numbered candidate positions.\n" + \
+    #             f"A child object ({child_obj_name}) needs to be placed {placement} the parent object ({parent_obj_name}).\n" + \
+    #             "Your task is to select the most appropriate location that would realistically support placing the object, considering physical feasibility and spatial context.\n\n" + \
+    #             "I will also be provided with reference front-view images of the parent and child objects. " + \
+    #             "Please use them to understand the shape, scale, and orientation of the objects when reasoning about placement.\n" + \
+    #             "Your task is to select the most appropriate candidate position(s) for placing the object, based on physical plausibility and spatial reasoning.\n" + \
+    #             "In other words, select the position that best fits the scene context and realistically supports the object.\n\n" + \
+    #             "### Special Instructions ###\n" + \
+    #             "1. You must select exactly one grid location (a single number) that is most suitable for placing the object.\n" + \
+    #             "2. Prefer locations where the object would realistically be placed in the real world, not just in simulation. \n" + \
+    #             "   For example:\n" + \
+    #             "   - A fan should be placed on a flat surface like a desk or cabinet top, not on a keyboard or at the edge.\n" + \
+    #             "   - A monitor should face forward on the center of a desk, not halfway off the edge.\n" + \
+    #             "   - A bottle should be placed upright in a stable, reachable location, not on top of another object.\n" + \
+    #             "3. The object should be placed where it can realistically rest without falling, tilting, or floating. Avoid edges, unstable surfaces, or occluded areas.\n" + \
+    #             "4. Consider the object's intended function and affordance — for example, a fan should be placed where it can effectively ventilate the area.\n" + \
+    #             "5. Take into account the surrounding context: avoid placing the object where it would block or interfere with other nearby items such as lamps, books, or bottles.\n" + \
+    #             "6. Avoid grid positions that are close to or surrounded by other objects — especially if the child object is large or may require extra space. Placing the object too close to clutter increases the risk of collision or unrealistic overlap. \n" + \
+    #             "7. Be mindful that the child object may be tall or wide; ensure it fits comfortably in the selected grid location without hitting or overlapping nearby structures or items. \n" + \
+    #             "8. Use the reference front-view images of the parent and child objects to reason about size, shape, and how they physically interact.\n" + \
+    #             "9. Only consider the numbered grid positions shown in the image.\n" + \
+    #             "10. Respond with a single number corresponding to the selected grid location. Do not include any explanation or extra text.\n\n" + \
+    #             "Example output: 2\n" + \
+    #             "Example output: 5\n" + \
+    #             "Example output: 5\n" + \
+    #             "Example output: 3\n" + \
+    #             "Example output: 1\n" + \
+    #             "Example output: 7\n\n" + \
+    #             "Think carefully, and then respond."
+        
+    #     prompt_text_user_final = f"Please review the image and select exactly one grid position that best supports placing the child object ({child_obj_name}) {placement} the parent object ({parent_obj_name}). " + \
+    #                      "Your choice should reflect a physically realistic and contextually appropriate location, based on object shape, size, and surroundings. Avoid selecting positions that are close to other items or cluttered, especially if the child object is large or might collide with surrounding objects. \n" + \
+    #                      "Use the reference front-view images to guide your reasoning.\n" + \
+    #                      "Respond with a **single number only**, with no explanation or additional text."
+        
+    #     content = [
+    #         {
+    #             "type": "text",
+    #             "text": prompt_user_1
+    #         },
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{prompt_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #                 "text": "The above image shows a simulated scene containing a parent object. " +\
+    #                         "Several existing objects in the scene are visualized using segmentation overlays, and " +\
+    #                         "nine candidate positions are marked with numeric labels from [1] to [9]. "
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": "The following images show the front-view appearances of the parent and child objects involved in the scene. " +
+    #         "Please use these reference images to understand the shape, scale, and orientation of both objects when deciding where the child object should be placed."
+    #         },
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{parent_front_view_img_base64}"
+    #             }
+    #         },
+    #                     {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{child_front_view_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": prompt_text_user_final
+    #         }
+    #     ]
+
+    #     text_dict_system = {
+    #         "type": "text",
+    #         "text": prompt_text_system
+    #     }
+    #     content_system = [text_dict_system]
+
+
+    #     NN_payload = {
+    #         "model": self.VERSIONS[self.version],
+    #         "messages": [
+    #             {
+    #                 "role": "system",
+    #                 "content": content_system
+    #             },
+    #             {
+    #                 "role": "user",
+    #                 "content": content
+    #             }
+    #         ],
+    #         # TODO
+    #         "temperature": 0.0,
+    #         "max_tokens": 16
+    #     }
+    #     return NN_payload
+    
+    # def payload_above_object_distribution(
+    #         self,
+    #         prompt_img_path,
+    #         parent_obj_name,
+    #         placement,
+    #         child_obj_name,
+    #         # parent_front_view_img_path,
+    #         child_front_view_img_path,
+    # ):
+    #     """
+    #     Return a payload that asks the model to output a probability distribution
+    #     over 9 candidate grid positions for placing a child object on or above a parent object.
+    #     """
+
+    #     # Getting the base64 string
+    #     prompt_img_base64 = self.encode_image(prompt_img_path)
+    #     # parent_front_view_img_base64 = self.encode_image(parent_front_view_img_path)
+    #     child_front_view_img_base64 = self.encode_image(child_front_view_img_path)
+
+    #     prompt_text_system = "You are an expert in indoor object placement and visual spatial reasoning. \n" + \
+    #                          "Given the image below showing a simulated scene with a parent object overlaid with numbered candidate positions, " + \
+    #                          "your task is to evaluate the suitability of each candidate grid location for placing the child object on or above the parent object."
+                             
+    #     prompt_user_1 = "### Task Overview ###\n" + \
+    #                     f"I will show you an image of a simulated scene. This scene contains a parent object ({parent_obj_name}) overlaid with numbered candidate positions.\n" + \
+    #                     f"A child object ({child_obj_name}) needs to be placed {placement} the parent object ({parent_obj_name}).\n" + \
+    #                     "Your task is to analyze each grid location and assign a probability score that reflects how appropriate it is for placing the object, considering physical feasibility and spatial context.\n\n" + \
+    #                     "You will also be provided with reference front-view images of the child objects. " + \
+    #                     "Please use them to understand the shape, scale, and orientation of the objects when reasoning about placement.\n\n" + \
+    #                     "### Special Instructions ###\n" + \
+    #                     "1. You must assign a probability score (between 0.0 and 1.0) to **each** of the 9 grid positions.\n" + \
+    #                     "2. The total of all 9 probability scores must **sum to 1.0**.\n" + \
+    #                     "3. If a grid position already contains another object or is clearly not physically suitable (e.g., too narrow, tilted, floating, or occluded), assign it a probability of **0.0**.\n" + \
+    #                     "4. Prefer locations where the object would realistically be placed in the real world, not just in simulation.\n" + \
+    #                     "   For example:\n" + \
+    #                     "   - A fan should be placed on a flat surface like a desk or cabinet top, not on a keyboard or at the edge.\n" + \
+    #                     "   - A monitor should face forward on the center of a desk, not halfway off the edge.\n" + \
+    #                     "   - A bottle should be placed upright in a stable, reachable location, not on top of another object.\n" + \
+    #                     "5. The object should be placed where it can realistically rest without falling, tilting, or floating. Avoid edges, unstable surfaces, or cluttered areas.\n" + \
+    #                     "6. Consider the object's intended function and affordance — for example, a fan should be placed where it can effectively ventilate the area.\n" + \
+    #                     "7. Take into account the surrounding context: avoid placing the object where it would block or interfere with other nearby items such as lamps, books, or bottles.\n" + \
+    #                     "8. Avoid grid positions that are close to or surrounded by other objects — especially if the child object is large or might require additional clearance. Placing objects near cluttered areas increases the risk of physical collision or unrealistic placement. \n" + \
+    #                     "9. Keep in mind that the child object may have a non-negligible size or height. Ensure that it fits comfortably within the selected grid space without overlapping or colliding with nearby objects or the environment. \n" + \
+    #                     "10. Use the reference front-view images of the child objects to reason about size, shape, and how they physically interact.\n" + \
+    #                     "11. Only consider the numbered grid positions shown in the image.\n" + \
+    #                     "12. Respond only with a single line of comma-separated number-probability pairs. **Do not include any explanation or extra text.**\n\n" + \
+    #                     "### Output Format ###\n" + \
+    #                     "Your response must follow this exact format:\n" + \
+    #                     "1: 0.05, 2: 0.10, 3: 0.20, 4: 0.10, 5: 0.25, 6: 0.10, 7: 0.10, 8: 0.05, 9: 0.05\n\n" + \
+    #                     "### Example Outputs ###\n" + \
+    #                     "1: 0.10, 2: 0.10, 3: 0.10, 4: 0.10, 5: 0.10, 6: 0.10, 7: 0.10, 8: 0.10, 9: 0.20\n" + \
+    #                     "1: 0.00, 2: 0.00, 3: 0.00, 4: 0.30, 5: 0.25, 6: 0.20, 7: 0.15, 8: 0.10, 9: 0.00\n" + \
+    #                     "1: 0.25, 2: 0.15, 3: 0.10, 4: 0.10, 5: 0.10, 6: 0.10, 7: 0.05, 8: 0.10, 9: 0.05\n" + \
+    #                     "1: 0.00, 2: 0.00, 3: 0.05, 4: 0.15, 5: 0.30, 6: 0.25, 7: 0.15, 8: 0.10, 9: 0.00\n" + \
+    #                     "1: 0.05, 2: 0.20, 3: 0.25, 4: 0.05, 5: 0.05, 6: 0.10, 7: 0.10, 8: 0.10, 9: 0.10\n" + \
+    #                     "1: 0.00, 2: 0.10, 3: 0.10, 4: 0.10, 5: 0.10, 6: 0.10, 7: 0.10, 8: 0.10, 9: 0.30\n" + \
+    #                     "1: 0.15, 2: 0.10, 3: 0.10, 4: 0.05, 5: 0.10, 6: 0.15, 7: 0.10, 8: 0.10, 9: 0.15\n" + \
+    #                     "1: 0.00, 2: 0.00, 3: 0.00, 4: 0.05, 5: 0.20, 6: 0.35, 7: 0.20, 8: 0.10, 9: 0.10\n" + \
+    #                     "1: 0.20, 2: 0.10, 3: 0.05, 4: 0.05, 5: 0.05, 6: 0.10, 7: 0.15, 8: 0.20, 9: 0.10\n" + \
+    #                     "1: 0.10, 2: 0.05, 3: 0.10, 4: 0.10, 5: 0.05, 6: 0.15, 7: 0.15, 8: 0.15, 9: 0.15\n" + \
+    #                     "1: 0.00, 2: 0.00, 3: 0.00, 4: 0.00, 5: 0.10, 6: 0.20, 7: 0.30, 8: 0.25, 9: 0.15\n\n" + \
+    #                     "Make sure your response includes exactly 9 grid positions and that the sum of all probabilities equals 1.0." + \
+    #                     "### Final Reminder ###\n" + \
+    #                     "You must return 9 values that add up to 1.0.\n" + \
+    #                     "Clearly unsuitable or blocked positions should be given a probability of 0.0.\n" + \
+    #                     "Respond with the probabilities only — no extra text or explanation."
+        
+    #     prompt_text_user_final = f"Please review the image and assign a probability score to each of the 9 grid positions for placing the child object ({child_obj_name}) {placement} the parent object ({parent_obj_name}). " + \
+    #                             "Your probability scores should reflect how physically realistic and contextually appropriate each location is, based on object shape, size, and surroundings.\n" + \
+    #                             "Use the reference front-view images to guide your reasoning about object scale and placement feasibility.\n" + \
+    #                             "Your response must include exactly 9 probability values (between 0.0 and 1.0) — one for each grid position — and they must sum to 1.0.\n" + \
+    #                             "Assign a value of 0.0 to any position where placing the object is clearly impossible due to collisions, instability, or obstruction, or nearby clutter that might prevent safe placement. Consider whether the object’s size could lead to collisions with adjacent items.\n" + \
+    #                             "Respond with a **comma-separated list of number: probability pairs only**, and do not include any explanation or additional text."
+
+    #     content = [
+    #         {
+    #             "type": "text",
+    #             "text": prompt_user_1
+    #         },
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{prompt_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #                 "text": "The above image shows a simulated scene containing a parent object. " +\
+    #                         "Several existing objects in the scene are visualized using segmentation overlays, and " +\
+    #                         "nine candidate positions are marked with numeric labels from [1] to [9]. "
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": "The following images show the front-view appearances of the child objects involved in the scene. " +
+    #         "Please use these reference images to understand the shape, scale, and orientation of both objects when deciding where the child object should be placed."
+    #         },
+    #         # {
+    #         #     "type": "image_url",
+    #         #     "image_url": {
+    #         #         "url": f"data:image/png;base64,{parent_front_view_img_base64}"
+    #         #     }
+    #         # },
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{child_front_view_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": prompt_text_user_final
+    #         }
+    #     ]
+
+    #     text_dict_system = {
+    #         "type": "text",
+    #         "text": prompt_text_system
+    #     }
+    #     content_system = [text_dict_system]
+
+
+    #     NN_payload = {
+    #         "model": self.VERSIONS[self.version],
+    #         "messages": [
+    #             {
+    #                 "role": "system",
+    #                 "content": content_system
+    #             },
+    #             {
+    #                 "role": "user",
+    #                 "content": content
+    #             }
+    #         ],
+    #         # TODO
+    #         "temperature": 0.2,
+    #         "max_tokens": 300
+    #     }
+    #     return NN_payload
+    
+
+    # def payload_distractor_inside_object_category(
+    #         self,
+    #         sim_real_img_path,
+    #         goal_task,
+    #         parent_obj_name,
+    #         use_distractor_category,
+    # ):
+    #     """
+    #     Given a list of candidate snapshots, return the payload used to find the nearest neighbor
+    #     to represent the "caption" in original image in simulation
+
+    #     Args:
+    #         img_path (str): Absolute path to image to infer object selection from
+    #         caption (str): Caption associated with the image at @img_path
+    #         bbox_img_path (str): Absolute path to segmented object image with drawn bounding box
+    #         candidates_fpaths (list of str): List of absolute paths to candidate images
+    #         nonproject_obj_img_path (str): Absolute path to segmented object image
+
+    #     Returns:
+    #         dict: Prompt payload
+    #     """
+    #     # Getting the base64 string
+    #     sim_real_scene_img_base64 = self.encode_image(sim_real_img_path)
+
+
+
+    #     prompt_text_system = "You are an expert in spatial reasoning and indoor object arrangement. " + \
+    #                          f"You are helping a robot system understand which object categories are likely to be placed inside a given {parent_obj_name} object, " + \
+    #                          "based on a natural language task instruction and a real-world scene image. " + \
+    #                          "Think about indoor object affordances, usage, and spatial semantics."
+    #     prompt_user = f"""
+    #         ### Scene Understanding Task ###
+
+    #         You are given:
+    #         1. A task instruction that describes a goal (e.g., 'Bring me the pencil case from the cabinet').
+    #         2. A scene image that shows the current environment, including the target container (e.g., a cabinet or drawer).
+
+    #         Your goal is to infer which object categories are likely to be placed **inside** the specified {parent_obj_name} object, considering the scene, the task, and the context.
+
+    #         ### Inputs ###
+    #         - Task: "{goal_task}"
+    #         - Parent Object: "{parent_obj_name}" (e.g., a cabinet, drawer, shelf)
+    #         - Scene Image: (see attached image)
+
+    #         ### Output ###
+    #         List the top {use_distractor_category} object categories that are likely to be inside the {parent_obj_name} **in this specific scene**, based on common indoor object arrangements and the task goal.
+
+    #         ### Instructions ###
+    #         - Consider object affordances and functional relationships.
+    #         - Think about what kinds of items are usually stored **inside** the {parent_obj_name} in similar real-world scenarios.
+    #         - Your answer should reflect what's plausible in the current scene context.
+    #         - Do NOT include the object category that is directly involved in the task.
+    #         For example, if the task is "Bring me the pencil case from the cabinet", you should NOT include "pencil case" in your output.
+    #         - Only list {use_distractor_category} categories, in descending order of likelihood.
+    #         - Do not include any explanation. Just list the categories, separated by commas.
+
+
+    #         ### Example output ###
+    #         folders, pen, notebook  
+    #         cup, mouse, coke  
+    #         eraser, pencil, stapler  
+    #         remote control, batteries, charger  
+    #         toothpaste, toothbrush, comb
+
+    #         Now, please think carefully and return only {use_distractor_category} object categories that are most likely to be inside the {parent_obj_name}.
+    #         """
+        
+    #     # System message (guidance for the assistant)
+    #     content_system = [
+    #         {
+    #             "type": "text",
+    #             "text": prompt_text_system
+    #         }
+    #     ]
+
+    #     # User content: task + scene image
+    #     content = [
+
+    #         {
+    #             "type": "image_url",
+    #             "image_url": {
+    #                 "url": f"data:image/png;base64,{sim_real_scene_img_base64}"
+    #             }
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": f"The above image shows a real-world scene including the {parent_obj_name}. "
+    #                     "Use this image to reason about what kinds of objects are likely placed inside it."
+    #         },
+    #         {
+    #             "type": "text",
+    #             "text": prompt_user.strip()
+    #         }
+    #     ]
+
+    #     # Final payload for GPT model
+    #     NN_payload = {
+    #         "model": self.VERSIONS[self.version],
+    #         "messages": [
+    #             {
+    #                 "role": "system",
+    #                 "content": content_system
+    #             },
+    #             {
+    #                 "role": "user",
+    #                 "content": content
+    #             }
+    #         ],
+    #         "temperature": 0.7,
+    #         "max_tokens": 50  # increased to allow list of categories
+    #     }
+
+    #     return NN_payload
 
 
 #     def payload_task_proposals(

@@ -77,12 +77,14 @@ class TaskSceneGenerator:
 
     def __init__(
             self,
+            gpt=None,
             verbose=False,
     ):
         """
         Args:
             verbose (bool): Whether to display verbose print outs during execution or not
         """
+        self.gpt = gpt
         self.verbose = verbose
     def __call__(
             self,
@@ -90,8 +92,6 @@ class TaskSceneGenerator:
             step_2_output_path,
             step_3_output_path,
             task_feature_matching_path,
-            gpt_api_key,
-            gpt_version="4o",
             n_scenes=1,
             # sampling_method="random",
             sampling_method="ordered",
@@ -193,15 +193,13 @@ class TaskSceneGenerator:
         # print(obj._joints)
         # exit()
         print("cam_pose : ", cam_pose)
-
-        scene_rgb = self.take_photo(n_render_steps=10)
-
-        # scene_rgb = self.joint_test(scene, n_render_steps=10)
-        # print(task_feature_matching_path)
-        # print("#######################################################")
-        # exit()
+        
+        scene_rgb = self.take_photo(n_render_steps=10, save_dir=save_dir)
         
         with open(task_feature_matching_path, "r") as f:
+            task_obj_output_info = json.load(f)
+
+        with open(task_obj_output_info[0], "r") as f:
             task_obj_output_info = json.load(f)
         
         distractor_output_path = os.path.join(os.path.dirname(task_feature_matching_path), "distractor")
@@ -263,7 +261,7 @@ class TaskSceneGenerator:
         # og.sim.viewer_camera.set_position_orientation(th.tensor([1.84928, -3.39455,  3.48315], dtype=th.float), th.tensor([ 0.52228, 0.00643, 0.007, 0.85272], dtype=th.float)) # bottle, drawer
         # og.sim.viewer_camera.set_position_orientation(th.tensor([0.89556, -1.76199,  1.12694], dtype=th.float), th.tensor([ 0.67224, -0.00203, -0.00488, 0.74031], dtype=th.float)) # bottle, drawer
         
-        scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, scene_graphs = scene_graphs, cam_pose=cam_pose, obj_info_json=task_obj_output_info, gpt_api_key=gpt_api_key, gpt_version=gpt_version, save_dir=save_dir, 
+        scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, scene_graphs = scene_graphs, cam_pose=cam_pose, obj_info_json=task_obj_output_info, save_dir=save_dir, 
                                                    visual_only=True, inside_position_randomization=inside_position_randomization, max_bound=max_bound, rotation_randomization=rotation_randomization, random_degree=random_degree, 
                                                    use_distractor_noise=use_distractor_noise, distractor_output_path=distractor_output_path)
         print("Task object added to the scene!")
@@ -281,7 +279,7 @@ class TaskSceneGenerator:
         # og.sim.viewer_camera.set_position_orientation(th.tensor([1.10365, -5.06405,  4.37386], dtype=th.float), th.tensor([ 0.52106, 0.00038, -0.00288, 0.85351], dtype=th.float)) # bottle, drawer
 
         # TODO
-        scene_rgb = self.take_photo(n_render_steps=100)
+        scene_rgb = self.take_photo(n_render_steps=100, save_dir=save_dir)
         # exit(())
 
 
@@ -300,7 +298,7 @@ class TaskSceneGenerator:
         print(og.sim.viewer_camera.get_position_orientation())
         og.sim.viewer_camera.set_position_orientation(th.tensor([-0.3616, -2.9108,  2.2365], dtype=th.float), th.tensor([5.3933e-01, 6.4206e-03, 4.1202e-18, 8.4207e-01], dtype=th.float))
         
-        scene_rgb = self.take_photo(n_render_steps=1000)
+        scene_rgb = self.take_photo(n_render_steps=1000, save_dir=save_dir)
 
         final_scene_info = deepcopy(scene_info)
 
@@ -380,7 +378,7 @@ class TaskSceneGenerator:
         og.sim.step()
         return scene, cam_pose
 
-    def take_photo(self, n_render_steps=5):
+    def take_photo(self, n_render_steps=5, save_dir="./our_method_test/acdc_output/task_scene_generation"):
         """
         Takes photo with current scene configuration with current camera
 
@@ -398,7 +396,7 @@ class TaskSceneGenerator:
             rgb = (rgb * 255).astype(np.uint8)
 
         img = Image.fromarray(rgb)
-        img.save("./our_method_test/acdc_output/viewer_rgb.png")
+        img.save(f"{save_dir}/viewer_rgb.png")
 
         return rgb
 
@@ -432,17 +430,15 @@ class TaskSceneGenerator:
         rgb = og.sim.viewer_camera.get_obs()[0]["rgb"][:, :, :3].cpu().detach().numpy()
         return rgb
     
-    def add_task_object(scene, scene_info, scene_graphs, cam_pose, obj_info_json, gpt_api_key, gpt_version, save_dir, visual_only=False, probability_map = True, capture_env=False, camera_error=False, 
+    def add_task_object(scene, scene_info, scene_graphs, cam_pose, obj_info_json, save_dir, visual_only=False, probability_map = True, capture_env=False, camera_error=False, 
                         inside_position_randomization=False, max_bound=0.2, rotation_randomization=False, random_degree=5.0, use_distractor_noise=False, distractor_output_path=None):
          # Load all objects
-        assert gpt_api_key is not None, "gpt_api_key must be specified in order to use GPT model!"
-        gpt = GPT(api_key=gpt_api_key, version=gpt_version, log_dir_tail="TaskSceneGeneration")
         object_retrieval_save_dir = os.path.join(os.path.dirname(save_dir), "task_object_retrieval")
         count = 1
         with og.sim.stopped():    
             distractor_objects = []
             for obj_name, obj_info in obj_info_json["objects"].items():
-        
+                
                 obj = DatasetObject(
                     name=obj_name,
                     category=obj_info["category"],
@@ -762,7 +758,7 @@ class TaskSceneGenerator:
 
                     if not camera_error: 
                         if probability_map:
-                            nn_selection_payload = gpt.payload_above_object_distribution(
+                            nn_selection_payload = self.gpt.payload_above_object_distribution(
                                     prompt_img_path = blended_number_img_path,
                                     parent_obj_name = parent_obj_name,
                                     placement = placement,
@@ -770,7 +766,7 @@ class TaskSceneGenerator:
                                     # parent_front_view_img_path = front_parent_img_path,
                                     child_front_view_img_path = front_child_img_path)                    
 
-                            gpt_text_response = gpt(nn_selection_payload)
+                            gpt_text_response = self.gpt(nn_selection_payload)
                             print(f"gpt_text_response: {gpt_text_response}")
                             if gpt_text_response is None:
                                 print(f"gpt_text_response is None")
@@ -937,7 +933,7 @@ class TaskSceneGenerator:
                 
                 
 
-            def take_photo_position(n_render_steps=5, iteration=0):
+            def take_photo_position(n_render_steps=5, iteration=0, save_dir="./our_method_test/acdc_output/task_scene_generation"):
                 """
                 Takes photo with current scene configuration with current camera
 
@@ -955,7 +951,7 @@ class TaskSceneGenerator:
                     rgb = (rgb * 255).astype(np.uint8)
 
                 img = Image.fromarray(rgb)
-                img.save(f"./our_method_test/acdc_output/task_scene_generation/viewer_rgb_{iteration}.png")
+                img.save(f"{save_dir}/viewer_rgb_{iteration}.png")
 
                 return rgb
 
@@ -981,7 +977,7 @@ class TaskSceneGenerator:
                     #                             parent_obj_name=obj_info["parent_object"],
                     #                             placement=obj_info["placement"])
                     # TaskSceneGenerator.enable_collision_and_physics(scene, child_obj_name=obj_name, parent_obj_name=obj_info["parent_object"])
-                    scene_rgb = take_photo_position(n_render_steps=10, iteration=i)
+                    scene_rgb = take_photo_position(n_render_steps=10, iteration=i, save_dir=save_dir)
 
             if placement == "inside":
                 parent_obj_inside_bbox = TaskSceneGenerator.get_inside_bbox(scene, 
