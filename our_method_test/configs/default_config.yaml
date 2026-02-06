@@ -5,7 +5,7 @@ seed: 42
 
 # Path settings
 paths:
-  save_dir: "acdc_output"        # Output directory for ACDC results
+  save_dir: "gaia_output"        # Output directory for GAIA results
   test_rgb_img_path: "inputs/camera_rgb.png"       # Input test image path
   test_depth_img_path: "inputs/camera_depth.npy"   # Input test depth image path
   # test_depth_img_path: null   # Input test depth image path
@@ -52,6 +52,7 @@ pipeline_steps:
   run_step_6: false  # Step 6: Task object retrieval
   run_task_object_resizing: false  # Task object resizing
   run_step_7: false  # Step 7: Task-following scene generation
+  run_build_walls: true  # Build walls: Add walls to the scene using step 1 output
   run_og_test: false  # OmniGibson test (Note: cannot run with step 3)
 
 # Model configurations (from our_method/configs/default.yaml)
@@ -72,7 +73,7 @@ pipeline:
   RealWorldExtractor:
     call:
       captions: null
-      depth_model: "UniDepthV2" # "UniDepthV2" or "DepthAnythingV2"
+      depth_model: "DepthAnythingV2" # "UniDepthV2" or "DepthAnythingV2"
       filter_backsplash: true
       infer_aligned_wall: true
       visualize: false
@@ -88,6 +89,8 @@ pipeline:
       gpt_select_cousins: true
       n_cousins_link_count_threshold: 10
       start_at_name: null # Object Matching을 중간부터 시작할지 비었을 경우 null으로 작성해야함
+      model_max_candidates: 20
+      pose_max_candidates: 20
 
   RealSceneGenerator:
     call:
@@ -100,6 +103,10 @@ pipeline:
       visualize_scene_radius: 5
       save_visualization: true
       save_camera_info_extrinsic: true
+
+  BuildWalls:
+    call:
+      depth_max_limit: 20  # Maximum depth limit for wall point cloud processing
 
   VisualizeScene:
     call:

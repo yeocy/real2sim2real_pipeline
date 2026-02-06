@@ -328,6 +328,27 @@ def gaia_step_7(args, config_path):
     del pipeline
 
 
+def gaia_build_walls(args, config_path):
+    """Run GAIA pipeline: Build walls in the scene."""
+    pipeline = GAIA(config=config_path)
+    pipeline.run(
+        input_path=args.test_img_path,
+        save_dir=args.save_dir,
+        run_step_1=False,
+        run_step_2=False,
+        run_step_3=False,
+        run_build_walls=True,
+        step_1_output_path=f"{TEST_DIR}/gaia_output/step_1_output/step_1_output_info.json",
+        step_2_output_path=f"{TEST_DIR}/gaia_output/step_2_output/step_2_output_info.json",
+        step_3_output_path=f"{TEST_DIR}/gaia_output/step_3_output/step_3_output_info.json",
+        scene_info_path=f"{TEST_DIR}/gaia_output/task_scene_generation/scene_info.json",
+        gpt_api_key=args.gpt_api_key,
+        gpt_version=args.gpt_version,
+        gpt_token_print=args.token_print
+    )
+    del pipeline
+
+
 def run_visualize_scene(args, config_path):
     """Run scene visualization using GAIA pipeline's run_visualize_scene argument."""
     pipeline = GAIA(config=config_path)
@@ -390,6 +411,9 @@ def main(config, config_path):
 
     if steps.get('run_step_7', False):
         gaia_step_7(args, config_path)
+
+    if steps.get('run_build_walls', False):
+        gaia_build_walls(args, config_path)
 
     # Note: test_og() cannot run together with test_gaia_step_3()
     # because the simulator can only be launched once

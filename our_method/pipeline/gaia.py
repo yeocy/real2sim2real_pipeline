@@ -18,6 +18,7 @@ from our_method.pipeline.task_object_extraction_and_spatial_reasoning import Tas
 from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
 from our_method.pipeline.task_object_resizing import TaskObjectResizing
+from our_method.pipeline.wall_builder import WallBuilder
 import omnigibson as og
 
 class GAIA:
@@ -49,6 +50,7 @@ class GAIA:
             run_step_2=False,
             run_step_3=False,
             run_visualize_scene=False,
+            run_build_walls=False,
             run_step_4_and_5=False,
             run_step_6=False,
             run_step_7=False,
@@ -59,6 +61,7 @@ class GAIA:
             task_spatial_reasoning_output_path=None,
             task_object_retrieval_path=None,
             task_object_resizing_path=None,
+            scene_info_path=None,
             gpt_api_key=None,
             gpt_version=None,
             gpt_token_print=None,
@@ -103,13 +106,17 @@ class GAIA:
         
         # Use provided save_dir or default to acdc_output in input_path directory
         if save_dir is None:
-            save_dir = f"{os.path.dirname(input_path)}/acdc_output"
+            save_dir = f"{os.path.dirname(input_path)}/gaia_output"
         
         # Cfg에 Save dir 설정
-        for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "TaskObjectExtractionAndSpatialReasoning", "TaskObjectRetrieval", "TaskObjectResizing", "TaskSceneGenerator"]:
-            cur_save_dir = config["pipeline"][step]["call"].get("save_dir", None)
-            assert cur_save_dir is None, f"save_dir should not be specified in {step} config! Got: {cur_save_dir}"
-            config["pipeline"][step]["call"]["save_dir"] = save_dir
+        for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "BuildWalls", "TaskObjectExtractionAndSpatialReasoning", "TaskObjectRetrieval", "TaskObjectResizing", "TaskSceneGenerator"]:
+            cur_save_dir = config["pipeline"].get(step, {}).get("call", {}).get("save_dir", None)
+            if cur_save_dir is not None:
+                assert False, f"save_dir should not be specified in {step} config! Got: {cur_save_dir}"
+            if step in config["pipeline"]:
+                if "call" not in config["pipeline"][step]:
+                    config["pipeline"][step]["call"] = {}
+                config["pipeline"][step]["call"]["save_dir"] = save_dir
 
 
         # if gpt_api_key is not None:
@@ -185,6 +192,24 @@ class GAIA:
             )
             if not success:
                 raise ValueError("Failed GAIA Step 3!")
+
+        # Build Walls (optional)
+        if run_build_walls:
+            log.debug("Running GAIA: Build Walls -- Adding walls to the scene")
+            
+            wall_builder = WallBuilder(
+                verbose=config["pipeline"]["verbose"],
+            )
+            
+            success, wall_builder_output_path = wall_builder(
+                input_path=input_path,
+                step_1_output_path=step_1_output_path,
+                step_3_output_path=step_3_output_path,
+                scene_info_path=scene_info_path,
+                **config["pipeline"]["BuildWalls"]["call"],
+            )
+            if not success:
+                raise ValueError("Failed GAIA Build Walls!")
 
         # Step Visualization (optional, using VisualizeScene class)
         if run_visualize_scene:
@@ -290,6 +315,7 @@ def main(args):
         run_step_1=not args.skip_step_1,
         run_step_2=not args.skip_step_2,
         run_step_3=not args.skip_step_3,
+        run_build_walls=not args.skip_build_walls,
         step_1_output_path=args.step_1_output_path,
         step_2_output_path=args.step_2_output_path,
         gpt_api_key=args.gpt_api_key,
@@ -311,6 +337,8 @@ if __name__ == "__main__":
                         help="If set, will skip GAIA Step 2 (Digital Cousin Matching)")
     parser.add_argument("--skip_step_3", action="store_true",
                         help="If set, will skip GAIA Step 3 (Simulated Scene Generation)")
+    parser.add_argument("--skip_build_walls", action="store_true",
+                        help="If set, will skip Building Walls step")
     parser.add_argument("--step_1_output_path", type=str, default=None,
                         help="output path from Step 1 to use. Only necessary if --skip_step_1 is set and --skip_step_2 is not set.")
     parser.add_argument("--step_2_output_path", type=str, default=None,
