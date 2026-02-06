@@ -23,7 +23,7 @@ import our_method.utils.transform_utils as T
 from our_method.models.gpt import GPT
 from our_method.models.perspective_fields import PerspectiveFields
 from our_method.models.depth_anything_v2 import DepthAnythingV2
-from our_method.models.unidepth_v2 import UniDepthV2Wrapper
+# from our_method.models.unidepth_v2 import UniDepthV2Wrapper
 from our_method.utils.processing_utils import (
     prepare_output_dir,
     create_polygon_from_vertices,

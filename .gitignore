@@ -10,7 +10,9 @@ our_method/pipeline/draw_bbox.ipynb
 our_method_test/logs/
 our_method_test/AnyTask/
 our_method_test/acdc_output/
+our_method_test/gaia_output/
 
+build/
 tests/acdc_output
 
 

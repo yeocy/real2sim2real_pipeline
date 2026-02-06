@@ -219,7 +219,7 @@ class RealSceneGenerator:
         self.z_dir = np.array(step_1_output_info["z_direction"])
         self.wall_mask_planes = step_1_output_info["wall_mask_planes"]
         origin_pos = np.array(step_1_output_info["origin_pos"])
-        if self.save_camera_info_extrinsic:
+        if self.save_camera_info_extrinsic and self.camera_info is not None:
             self.w = self.camera_info['intrinsics']['image_width']
             self.h = self.camera_info['intrinsics']['image_height']
             self.cam_pos = self.camera_info['camera']['position']
