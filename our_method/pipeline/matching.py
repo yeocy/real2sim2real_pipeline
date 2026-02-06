@@ -71,6 +71,8 @@ class DigitalCousinMatcher:
         top_k_poses=3,
         n_digital_cousins=3,
         n_cousins_reselect_cand=3,
+        model_max_candidates=20,
+        pose_max_candidates=20,
         remove_background=False,
         gpt_select_cousins=True,
         n_cousins_link_count_threshold=3,
@@ -83,12 +85,17 @@ class DigitalCousinMatcher:
         1. Use CLIP to find top-K dataset categories per object.
         2. For each object, use the feature matcher + GPT to select model and pose.
         """
+        # Clear GPU cache before starting
+        torch.cuda.empty_cache()
+        
         self.step_1_output_path = step_1_output_path
         self.top_k_categories = top_k_categories
         self.top_k_models = top_k_models
         self.top_k_poses = top_k_poses
         self.n_digital_cousins = n_digital_cousins
         self.n_cousins_reselect_cand = n_cousins_reselect_cand
+        self.model_max_candidates = model_max_candidates
+        self.pose_max_candidates = pose_max_candidates
         self.remove_background = remove_background
         self.gpt_select_cousins = gpt_select_cousins
         self.n_cousins_link_count_threshold = n_cousins_link_count_threshold
@@ -211,10 +218,93 @@ class DigitalCousinMatcher:
         with open(topk_categories_path, "w+") as f:
             json.dump(topk_categories_info, f, indent=4)
 
+        # Properly cleanup GPU resources
+        del gpu_index_flat
+        del index_flat
         del res
         del clip
+        torch.cuda.empty_cache()
 
         self.selected_categories = selected_categories
+
+
+    def _batched_nn_candidates(
+        self,
+        *,
+        name: str,
+        category: str,
+        candidate_imgs: list[str],
+        n_candidates: int,
+        save_dir: str,
+        bboxes: torch.Tensor,
+        logit,
+        phrase: str,
+        obj_masks: np.ndarray,
+        save_prefix: str,
+        max_candidates: int,
+    ) -> dict:
+        if len(candidate_imgs) < max_candidates:
+            return self.fm.find_nearest_neighbor_candidates(
+                input_category=category,
+                input_img_fpath=self.input_rgb_path,
+                candidate_imgs_fdirs=None,
+                candidate_imgs=candidate_imgs,
+                candidate_filter=None,
+                n_candidates=n_candidates,
+                save_dir=save_dir,
+                visualize_resolution=(640, 480),
+                boxes=bboxes,
+                logits=logit.unsqueeze(dim=0),
+                phrases=[phrase],
+                obj_masks=obj_masks,
+                save_prefix=save_prefix,
+                remove_background=self.remove_background,
+            )
+
+        num_batches = (len(candidate_imgs) + max_candidates - 1) // max_candidates
+        log.info(f"Too many candidates, splitting into {num_batches} batches...")
+        results_list = []
+        for batch_idx in range(num_batches):
+            log.info(f"Batch {batch_idx + 1}/{num_batches}")
+            candidate_imgs_temp = candidate_imgs[
+                batch_idx * max_candidates : (batch_idx + 1) * max_candidates
+            ]
+            log.info(f"len(candidate_imgs_temp): {len(candidate_imgs_temp)}")
+            batch_results = self.fm.find_nearest_neighbor_candidates(
+                input_category=category,
+                input_img_fpath=self.input_rgb_path,
+                candidate_imgs_fdirs=None,
+                candidate_imgs=candidate_imgs_temp,
+                candidate_filter=None,
+                n_candidates=n_candidates,
+                save_dir=save_dir,
+                visualize_resolution=(640, 480),
+                boxes=bboxes,
+                logits=logit.unsqueeze(dim=0),
+                phrases=[phrase],
+                obj_masks=obj_masks,
+                save_prefix=f"{save_prefix}_batch{batch_idx}",
+                remove_background=self.remove_background,
+            )
+            results_list.extend(batch_results["candidates"])
+
+        log.info(f"len(results_list): {len(results_list)}")
+        return self.fm.find_nearest_neighbor_candidates(
+            input_category=category,
+            input_img_fpath=self.input_rgb_path,
+            candidate_imgs_fdirs=None,
+            candidate_imgs=results_list,
+            candidate_filter=None,
+            n_candidates=n_candidates,
+            save_dir=save_dir,
+            visualize_resolution=(640, 480),
+            boxes=bboxes,
+            logits=logit.unsqueeze(dim=0),
+            phrases=[phrase],
+            obj_masks=obj_masks,
+            save_prefix=save_prefix,
+            remove_background=self.remove_background,
+        )
 
 
 
@@ -241,6 +331,9 @@ class DigitalCousinMatcher:
             )
             if not success:
                 return False
+            
+            # Clean up GPU memory after each object
+            torch.cuda.empty_cache()
 
         return True
 
@@ -377,7 +470,13 @@ class DigitalCousinMatcher:
             )
 
             current_candidates.pop(nn_model_index)
+            # Clean up GPU memory after each cousin
+            torch.cuda.empty_cache()
 
+        # Clean up tensors after all cousins processed
+        del obj_masks
+        del bboxes
+        torch.cuda.empty_cache()
         
         obj_cousin_results_path = f"{obj_save_dir}/cousin_results.json"
         with open(obj_cousin_results_path, "w+") as f:
@@ -488,73 +587,20 @@ class DigitalCousinMatcher:
                 f"Selecting Top-{self.top_k_models} nearest models using {self.fm.encoder_name}..."
             )
 
-        max_candidates = 120
-        last_prefix = None
-
-        if len(candidate_imgs) < max_candidates:
-            last_prefix = f"{name}_iter{iter_idx}"
-            model_results = self.fm.find_nearest_neighbor_candidates(
-                input_category=category,
-                input_img_fpath=self.input_rgb_path,
-                candidate_imgs_fdirs=None,
-                candidate_imgs=candidate_imgs,
-                candidate_filter=None,
-                n_candidates=self.top_k_models,
-                save_dir=topk_model_candidates_dir,
-                visualize_resolution=(640, 480),
-                boxes=bboxes,
-                logits=logit.unsqueeze(dim=0),
-                phrases=[phrase],
-                obj_masks=obj_masks,
-                save_prefix=last_prefix,
-                remove_background=self.remove_background,
-            )
-        else:
-            num_batches = len(candidate_imgs) // max_candidates + 1
-            log.info(f"Too many candidates, splitting into {num_batches} batches...")
-            model_results_list = []
-            for batch_idx in range(num_batches):
-                log.info(f"Batch {batch_idx + 1}/{num_batches}")
-                candidate_imgs_temp = candidate_imgs[
-                    batch_idx * max_candidates : (batch_idx + 1) * max_candidates
-                ]
-                log.info(f"len(candidate_imgs_temp): {len(candidate_imgs_temp)}")
-                _batch_results = self.fm.find_nearest_neighbor_candidates(
-                    input_category=category,
-                    input_img_fpath=self.input_rgb_path,
-                    candidate_imgs_fdirs=None,
-                    candidate_imgs=candidate_imgs_temp,
-                    candidate_filter=None,
-                    n_candidates=self.top_k_models,
-                    save_dir=topk_model_candidates_dir,
-                    visualize_resolution=(640, 480),
-                    boxes=bboxes,
-                    logits=logit.unsqueeze(dim=0),
-                    phrases=[phrase],
-                    obj_masks=obj_masks,
-                    save_prefix=f"{name}_iter{batch_idx}",
-                    remove_background=self.remove_background,
-                )
-                model_results_list.extend(_batch_results["candidates"])
-
-            log.info(f"len(model_results_list): {len(model_results_list)}")
-            last_prefix = f"{name}_iter{num_batches}"
-            model_results = self.fm.find_nearest_neighbor_candidates(
-                input_category=category,
-                input_img_fpath=self.input_rgb_path,
-                candidate_imgs_fdirs=None,
-                candidate_imgs=model_results_list,
-                candidate_filter=None,
-                n_candidates=self.top_k_models,
-                save_dir=topk_model_candidates_dir,
-                visualize_resolution=(640, 480),
-                boxes=bboxes,
-                logits=logit.unsqueeze(dim=0),
-                phrases=[phrase],
-                obj_masks=obj_masks,
-                save_prefix=last_prefix,
-                remove_background=self.remove_background,
-            )
+        last_prefix = f"{name}_iter{iter_idx}"
+        model_results = self._batched_nn_candidates(
+            name=name,
+            category=category,
+            candidate_imgs=candidate_imgs,
+            n_candidates=self.top_k_models,
+            save_dir=topk_model_candidates_dir,
+            bboxes=bboxes,
+            logit=logit,
+            phrase=phrase,
+            obj_masks=obj_masks,
+            save_prefix=last_prefix,
+            max_candidates=self.model_max_candidates,
+        )
 
         # Normalize visualization file names
         src_bbox = f"{topk_model_candidates_dir}/{last_prefix}_annotated_bboxes.png"
@@ -646,21 +692,22 @@ class DigitalCousinMatcher:
             for rot_idx in range(start_idx, end_idx + 1)
         ]
 
-        pose_results = self.fm.find_nearest_neighbor_candidates(
-            input_category=category,
-            input_img_fpath=self.input_rgb_path,
-            candidate_imgs_fdirs=None,
+        log.info(f"len(candidate_imgs): {len(candidate_imgs)}")
+
+        pose_results = self._batched_nn_candidates(
+            name=name,
+            category=category,
             candidate_imgs=candidate_imgs,
             n_candidates=self.top_k_poses,
             save_dir=cousin_topk_pose_candidates_dir,
-            visualize_resolution=(640, 480),
-            boxes=bboxes,
-            logits=logit.unsqueeze(dim=0),
-            phrases=[phrase],
+            bboxes=bboxes,
+            logit=logit,
+            phrase=phrase,
             obj_masks=obj_masks,
             save_prefix=name,
-            remove_background=self.remove_background,
+            max_candidates=self.pose_max_candidates,
         )
+        
         return pose_results
 
     def _select_final_pose_index(

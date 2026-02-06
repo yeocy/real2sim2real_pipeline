@@ -432,11 +432,15 @@ class FeatureMatcher(torch.nn.Module):
         import torch
         import gc
         
-        # GPU 인덱스 명시적으로 삭제
+        # Comprehensive GPU memory cleanup
         del gpu_index_flat
-        if hasattr(self, 'res'):
-            del self.res
-        
+        del index_flat
+        del res
+        del model_imgs_feats
+        del model_feat_vecs
+        del ref_img_feats
+        del ref_feat_vecs
+        del feat_vecs
         torch.cuda.empty_cache()
         gc.collect()
 
