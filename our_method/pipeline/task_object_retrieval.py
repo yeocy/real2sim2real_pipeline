@@ -17,6 +17,8 @@ import digital_cousins
 import re
 import shutil
 from itertools import product
+from loguru import logger as log
+
 import warnings
 import our_method
 import our_method.utils.transform_utils as T
@@ -153,10 +155,10 @@ class TaskObjectRetrieval:
         Path(save_dir).mkdir(parents=True, exist_ok=True)
 
         if self.verbose:
-            print(f"Computing digital cousins given output {task_spatial_reasoning_output_path}...")
+            log.info(f"Computing digital cousins given output {task_spatial_reasoning_output_path}...")
 
         if self.verbose:
-            print("""
+            log.info("""
 
 ##################################################################
 ### 1. Use CLIP embeddings to find top-K categories per object ###
@@ -218,7 +220,7 @@ class TaskObjectRetrieval:
 
             if len(obj_phrases) > 0:
                 if self.verbose:
-                    print(f"Computing top-{top_k_categories} for phrases using CLIP...")
+                    log.info(f"Computing top-{top_k_categories} for phrases using CLIP...")
                 
                 # CLIP 임베딩 계산
                 text_features = clip.get_text_features(text=all_categories)
@@ -254,7 +256,7 @@ class TaskObjectRetrieval:
                     
 
             if self.verbose:
-                print("""
+                log.info("""
 
 ##############################################################
 ### 2. Select Task Object using GPT ###
@@ -326,23 +328,23 @@ class TaskObjectRetrieval:
 
                 gpt_text_response = self.gpt(nn_selection_payload)
 
-                print("GPT Response :")
-                print(f"   {gpt_text_response}")
+                log.info("GPT Response :")
+                log.info(f"   {gpt_text_response}")
 
                 if gpt_text_response is None:
-                    print(f"gpt_text_response is None")
+                    log.info(f"gpt_text_response is None")
                     # Failed, terminate early
                     return False, None
                 # 숫자 모두 추출
                 matches = re.findall(r'\b\d+\b', gpt_text_response)
 
-                print("Extract number list :")
-                print(f"   {matches}")
+                log.info("Extract number list :")
+                log.info(f"   {matches}")
 
                 # 최대 top_k개만 선택
                 nn_model_indices = [int(m) for m in matches[:top_k_models]]  # 0-based 인덱스로 변환
-                print("final number list :")
-                print(f"   {nn_model_indices}\n")
+                log.info("final number list :")
+                log.info(f"   {nn_model_indices}\n")
 
 
                 # # # 숫자가 하나도 없을 경우 → 실패 처리
@@ -385,10 +387,10 @@ class TaskObjectRetrieval:
 
                 # 정면 포즈 찾기
 
-            print(f"task_extraction_output_info: {task_extraction_output_info}")
+            log.info(f"task_extraction_output_info: {task_extraction_output_info}")
 
             if self.verbose:
-                print("""
+                log.info("""
 
 ##############################################################
 ### 3. Select Task Object Front Position using GPT ###
@@ -407,8 +409,8 @@ class TaskObjectRetrieval:
                 results = {}
 
                 for model_idx, model_name in enumerate(model_list):
-                    print(f"category: {category_list[model_idx]}")
-                    print(f"model: {model_list[model_idx]}")
+                    log.info(f"category: {category_list[model_idx]}")
+                    log.info(f"model: {model_list[model_idx]}")
                     
                     # Find Top-K candidates
                     candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{category_list[model_idx]}/model/{model_list[model_idx]}" 
@@ -438,9 +440,9 @@ class TaskObjectRetrieval:
                                 )
                         
                         gpt_text_response = self.gpt(nn_selection_payload)
-                        print(f"gpt_text_response: {gpt_text_response}")
+                        log.info(f"gpt_text_response: {gpt_text_response}")
                         if gpt_text_response is None:
-                            print(f"gpt_text_response is None")
+                            log.info(f"gpt_text_response is None")
                             # Failed, terminate early
                             return False, None
 
@@ -450,7 +452,7 @@ class TaskObjectRetrieval:
                         if match:
                             nn_model_index = int(match.group()) - 1
                         else:
-                            print(f"match is empty")
+                            log.info(f"match is empty")
                             # # No valid integer found, handle this case
                             # return False, None
                             nn_model_index = 0
@@ -474,10 +476,10 @@ class TaskObjectRetrieval:
                 
                 task_extraction_output_info["objects"][name]["re_axis_mat"] = re_axis_mat_list
 
-            print(f"task_extraction_output_info: {task_extraction_output_info}")
+            log.info(f"task_extraction_output_info: {task_extraction_output_info}")
 
             if self.verbose:
-                print("""
+                log.info("""
 
 ##############################################################
 ### 4. Select Parent Object Front Position using GPT ###
@@ -603,7 +605,7 @@ class TaskObjectRetrieval:
             # TODO
             if use_distractor_noise:
 
-                print("""
+                log.info("""
 
 ##########################################
 ### Start Distractor Object Matching! ###
@@ -628,14 +630,14 @@ class TaskObjectRetrieval:
                     
                     gpt_text_response = self.gpt(nn_selection_payload)
 
-                    print("GPT Response :")
-                    print(f"   {gpt_text_response}")
+                    log.info("GPT Response :")
+                    log.info(f"   {gpt_text_response}")
                     # GPT Response :
                     # pencil case, pens, notebooks, folders, stapler
 
 
                     if gpt_text_response is None:
-                        print(f"gpt_text_response is None")
+                        log.info(f"gpt_text_response is None")
                         # Failed, terminate early
                         return False, None
 
@@ -659,8 +661,8 @@ class TaskObjectRetrieval:
                     gpu_index_flat = faiss.index_cpu_to_gpu(res, 0, index_flat)
 
                     if self.verbose:
-                        print(f"🔍 Finding top-{top_k_categories} similar categories for GPT outputs using CLIP+FAISS...")
-                        print(f"   GPT Categories: {category_list}")
+                        log.info(f"🔍 Finding top-{top_k_categories} similar categories for GPT outputs using CLIP+FAISS...")
+                        log.info(f"   GPT Categories: {category_list}")
 
                     # 텍스트 임베딩 계산
                     all_cat_features = clip.get_text_features(text=all_categories)
@@ -742,23 +744,23 @@ class TaskObjectRetrieval:
                         
                         gpt_text_response = self.gpt(nn_selection_payload)
 
-                        print("GPT Response :")
-                        print(f"   {gpt_text_response}")
+                        log.info("GPT Response :")
+                        log.info(f"   {gpt_text_response}")
 
                         if gpt_text_response is None:
-                            print(f"gpt_text_response is None")
+                            log.info(f"gpt_text_response is None")
                             # Failed, terminate early
                             return False, None
                         # 숫자 모두 추출
                         matches = re.findall(r'\b\d+\b', gpt_text_response)
 
-                        print("Extract number list :")
-                        print(f"   {matches}")
+                        log.info("Extract number list :")
+                        log.info(f"   {matches}")
 
                         # 최대 top_k개만 선택
                         nn_model_indices = [int(m) for m in matches[:distractor_top_k]]  # 0-based 인덱스로 변환
-                        print("final number list :")
-                        print(f"   {nn_model_indices}\n")
+                        log.info("final number list :")
+                        log.info(f"   {nn_model_indices}\n")
 
 
                         # # # 숫자가 하나도 없을 경우 → 실패 처리
@@ -805,8 +807,8 @@ class TaskObjectRetrieval:
                         #     results = {}
 
                         for model_idx, model_name in enumerate(model_list):
-                            print(f"category: {category_list[model_idx]}")
-                            print(f"model: {model_list[model_idx]}")
+                            log.info(f"category: {category_list[model_idx]}")
+                            log.info(f"model: {model_list[model_idx]}")
                                 
                             # # Find Top-K candidates
                             candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{category_list[model_idx]}/model/{model_list[model_idx]}" 
@@ -835,9 +837,9 @@ class TaskObjectRetrieval:
                                     )
                             
                             gpt_text_response = self.gpt(nn_selection_payload)
-                            print(f"gpt_text_response: {gpt_text_response}")
+                            log.info(f"gpt_text_response: {gpt_text_response}")
                             if gpt_text_response is None:
-                                print(f"gpt_text_response is None")
+                                log.info(f"gpt_text_response is None")
                                 # Failed, terminate early
                                 return False, None
 
@@ -847,7 +849,7 @@ class TaskObjectRetrieval:
                             if match:
                                 nn_model_index = int(match.group()) - 1
                             else:
-                                print(f"match is empty")
+                                log.info(f"match is empty")
                                 # # No valid integer found, handle this case
                                 # return False, None
                                 nn_model_index = 0
@@ -861,7 +863,7 @@ class TaskObjectRetrieval:
                             }
                             
                             re_axis_mat_list.append(RE_AXIS_MAT[nn_model_index])
-                            print(re_axis_mat_list)
+                            log.info(re_axis_mat_list)
                             
                             shutil.copy(candidate_model_view_imgs[nn_model_index], 
                                         os.path.join(front_pose_select_dir, os.path.basename(candidate_model_view_imgs[nn_model_index])))
@@ -871,7 +873,7 @@ class TaskObjectRetrieval:
                         
                         distractor_extraction_output_info[parent_object_name][distractor_object_name]["re_axis_mat"] = re_axis_mat_list
 
-                    print(distractor_extraction_output_info)       
+                    log.info(distractor_extraction_output_info)       
 
                     index_lists = [
                         range(len(distractor_extraction_output_info[parent_object_name][obj]['model']))
@@ -918,7 +920,7 @@ class TaskObjectRetrieval:
                     # json.dump(task_extraction_output_info, f, indent=4, 
                     #           cls=OneLineListEncoder)
                         json.dump(distractor_json_list, f, indent=4)
-        print("""
+        log.info("""
 
 ##########################################
 ### Completed Task Object Matching! ###
@@ -957,7 +959,7 @@ class TaskObjectRetrieval:
             img = cv2.imread(img_path)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             if img is None:
-                print(f"[경고] 이미지를 불러올 수 없습니다: {img_path}")
+                log.info(f"[경고] 이미지를 불러올 수 없습니다: {img_path}")
                 continue
             img_resized = cv2.resize(img, visualize_resolution)
 
@@ -994,7 +996,7 @@ class TaskObjectRetrieval:
         try:
             full_img = np.concatenate(rows, axis=0)
         except Exception as e:
-            print(f"[에러] 전체 이미지 연결 중 오류 발생: {e}")
+            log.info(f"[에러] 전체 이미지 연결 중 오류 발생: {e}")
             return None
 
         if save_path:

@@ -20,6 +20,8 @@ import re
 import json
 import imageio
 from typing import Optional, List
+from loguru import logger as log
+
 import omnigibson as og
 from our_method.models.gpt import GPT
 from omnigibson.scenes import Scene
@@ -192,7 +194,7 @@ class TaskSceneGenerator:
         # obj = scene.object_registry("name", "cup_0")
         # print(obj._joints)
         # exit()
-        print("cam_pose : ", cam_pose)
+        log.info("cam_pose : ", cam_pose)
         
         scene_rgb = self.take_photo(n_render_steps=10, save_dir=save_dir)
         
@@ -264,7 +266,7 @@ class TaskSceneGenerator:
         scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, scene_graphs = scene_graphs, cam_pose=cam_pose, obj_info_json=task_obj_output_info, save_dir=save_dir, 
                                                    visual_only=True, inside_position_randomization=inside_position_randomization, max_bound=max_bound, rotation_randomization=rotation_randomization, random_degree=random_degree, 
                                                    use_distractor_noise=use_distractor_noise, distractor_output_path=distractor_output_path)
-        print("Task object added to the scene!")
+        log.info("Task object added to the scene!")
         # scene_rgb = self.take_photo(n_render_steps=3000)
         # og.sim.viewer_camera.set_position_orientation(th.tensor([-0.01944, -1.38734,  1.49061], dtype=th.float), th.tensor([0.42473, 0.00847, 0.00533, 0.90527], dtype=th.float))
         # og.sim.viewer_camera.set_position_orientation(th.tensor([-0.3616, -2.9108,  2.2365], dtype=th.float), th.tensor([5.3933e-01, 6.4206e-03, 4.1202e-18, 8.4207e-01], dtype=th.float))
@@ -295,7 +297,7 @@ class TaskSceneGenerator:
         # og.sim.viewer_camera.set_position_orientation(th.tensor(cam_pos, dtype=th.float), th.tensor(cam_quat, dtype=th.float))
         # og.sim.viewer_camera.set_position_orientation(th.tensor(cam_pose[0], dtype=th.float), th.tensor(cam_pose[1], dtype=th.float))
         
-        print(og.sim.viewer_camera.get_position_orientation())
+        log.info(og.sim.viewer_camera.get_position_orientation())
         og.sim.viewer_camera.set_position_orientation(th.tensor([-0.3616, -2.9108,  2.2365], dtype=th.float), th.tensor([5.3933e-01, 6.4206e-03, 4.1202e-18, 8.4207e-01], dtype=th.float))
         
         scene_rgb = self.take_photo(n_render_steps=1000, save_dir=save_dir)
@@ -411,18 +413,18 @@ class TaskSceneGenerator:
             np.ndarray: (H,W,3) RGB frame from viewer camera perspective
         """
         obj = scene.object_registry("name", "cabinet_0") 
-        print(obj.joints.keys())  
+        log.info(obj.joints.keys())  
 
         joint_index = 0
         positions = obj.get_joint_positions() # 기존 joint 위치 가져오기
-        print("Initial positions:", positions)
+        log.info("Initial positions:", positions)
 
         for step in range(n_render_steps):
             # 10번째 스텝마다 joint 위치 변경 (0 ↔ 1.5)
             if step % 50 == 0:
                 positions[joint_index] = 1.5 if positions[joint_index] == 0 else 0
                 obj.set_joint_positions(positions)  # 업데이트
-                print(f"Step {step}: Updated joint position -> {positions[joint_index]}")
+                log.info(f"Step {step}: Updated joint position -> {positions[joint_index]}")
 
             # 물리 시뮬레이션 실행 및 렌더링
             og.sim.step_physics()
@@ -598,18 +600,18 @@ class TaskSceneGenerator:
                         child_center = np.mean(child_corners_2d, axis=0)
                         dists = np.linalg.norm(child_corners_2d - child_center, axis=1)
                         child_radius = np.max(dists)
-                        print(f"Child radius: {child_radius}")
+                        log.info(f"Child radius: {child_radius}")
                         # child_radius = 0.05
 
                         child_obj = scene.object_registry("name", child_obj_name)
 
                         # ✳️ 각 object별로 마스킹 + 실공간 거리 기반 확장 처리
                         for obj_name, obj_info in all_object_info.items():
-                            print(f"Processing object: {obj_name}")
-                            print(obj_name == "parent_obj" or "bbox_world" or child_obj.category not in obj_info)
+                            log.info(f"Processing object: {obj_name}")
+                            log.info(obj_name == "parent_obj" or "bbox_world" or child_obj.category not in obj_info)
                             if obj_name == "parent_obj" or obj_name == child_obj.category or obj_name == "child_obj" or "bbox_world"  not in obj_info:
                                 continue
-                            print(f"Object {obj_name} has bbox_world, processing...")
+                            log.info(f"Object {obj_name} has bbox_world, processing...")
 
                             obj_bbox = obj_info['bbox_world']
                             obj_corners_2d = np.array([(R.T @ (pt - origin))[:2] for pt in obj_bbox])
@@ -636,7 +638,7 @@ class TaskSceneGenerator:
                         plt.savefig(prob_map_save_path, dpi=300)
                         plt.close()
 
-                        print(f"[✅] Saved probability map image to: {prob_map_save_path}")
+                        log.info(f"[✅] Saved probability map image to: {prob_map_save_path}")
 
                         return prob_map
 
@@ -754,7 +756,7 @@ class TaskSceneGenerator:
 
                         plt.savefig(save_path, dpi=300)
                         plt.close()
-                        print(f"[✅] Saved probability map image to: {save_path}")
+                        log.info(f"[✅] Saved probability map image to: {save_path}")
 
                     if not camera_error: 
                         if probability_map:
@@ -767,9 +769,9 @@ class TaskSceneGenerator:
                                     child_front_view_img_path = front_child_img_path)                    
 
                             gpt_text_response = self.gpt(nn_selection_payload)
-                            print(f"gpt_text_response: {gpt_text_response}")
+                            log.info(f"gpt_text_response: {gpt_text_response}")
                             if gpt_text_response is None:
-                                print(f"gpt_text_response is None")
+                                log.info(f"gpt_text_response is None")
                                 # Failed, terminate early
                                 return False, None
 
@@ -803,7 +805,7 @@ class TaskSceneGenerator:
                             # 나중에 3D 좌표 1개 뽑기
                             sampled_point_3d = probability_map_sampler.sample()
                             
-                            print(f"sampled_point_3d: {sampled_point_3d}")
+                            log.info(f"sampled_point_3d: {sampled_point_3d}")
                         else:
                             nn_selection_payload = gpt.payload_above_object_position(
                                     prompt_img_path = blended_number_img_path,
@@ -814,9 +816,9 @@ class TaskSceneGenerator:
                                     child_front_view_img_path = front_child_img_path)                    
 
                             gpt_text_response = gpt(nn_selection_payload)
-                            print(f"gpt_text_response: {gpt_text_response}")
+                            log.info(f"gpt_text_response: {gpt_text_response}")
                             if gpt_text_response is None:
-                                print(f"gpt_text_response is None")
+                                log.info(f"gpt_text_response is None")
                                 # Failed, terminate early
                                 return False, None
 
@@ -825,9 +827,9 @@ class TaskSceneGenerator:
 
                             if match:
                                 selected_index = int(match.group())
-                                print(f"Selected index: {selected_index}")
+                                log.info(f"Selected index: {selected_index}")
                             else:
-                                print("No valid number found.")
+                                log.info("No valid number found.")
                                 return False, None                 
 
 
@@ -835,9 +837,9 @@ class TaskSceneGenerator:
                             probability_map_sampler = None
                             obj_info_json["objects"][obj_name]["probability_map"] = probability_map_sampler
                             sampled_point_3d = grid_centers_world[selected_index-1]
-                            print(f"sampled_point_3d: {sampled_point_3d}")        
+                            log.info(f"sampled_point_3d: {sampled_point_3d}")        
                     else:
-                        print("#####################################################################################")
+                        log.info("#####################################################################################")
                         probability_map_sampler = None
                         obj_info_json["objects"][obj_name]["probability_map"] = probability_map_sampler
 
@@ -859,7 +861,7 @@ class TaskSceneGenerator:
                         # scale fallback 처리
                         scale_arr = np.array(obj_info["scale"], dtype=float)
                         if np.sum(scale_arr) <= 0.1:
-                            print(f"[WARNING] Scale of {obj_name_} too small ({scale_arr}), setting to default (1.0, 1.0, 1.0)")
+                            log.info(f"[WARNING] Scale of {obj_name_} too small ({scale_arr}), setting to default (1.0, 1.0, 1.0)")
                             scale_arr = np.array([1.0, 1.0, 1.0], dtype=float)
 
                         obj = DatasetObject(
@@ -871,8 +873,8 @@ class TaskSceneGenerator:
                         )
                         scene.add_object(obj)
                         obj.set_position_orientation(th.tensor([100, 100, 100], dtype=th.float), th.tensor([0, 0, 0, 1], dtype=th.float))
-        print(obj_name)
-        print("#######################################################")
+        log.info(obj_name)
+        log.info("#######################################################")
         for obj_name, obj_info in obj_info_json["objects"].items():
             child_obj_name = obj_name
             # "task_obj_cup"
@@ -991,7 +993,7 @@ class TaskSceneGenerator:
                 
                 
                 if inside_position_randomization:
-                    print(f"parent_obj_inside_bbox: {parent_obj_inside_bbox}")
+                    log.info(f"parent_obj_inside_bbox: {parent_obj_inside_bbox}")
                     child_obj = scene.object_registry("name", child_obj_name)
                     child_pos, child_quat = child_obj.get_position_orientation()
                     child_pos = child_pos.cpu().numpy() if isinstance(child_pos, th.Tensor) else child_pos
@@ -1010,7 +1012,7 @@ class TaskSceneGenerator:
 
                     # 4. 최종 위치 적용
                     new_pos = np.array([rand_x, rand_y, rand_z])
-                    print(f"Randomized position: {new_pos}")
+                    log.info(f"Randomized position: {new_pos}")
                     child_obj.set_position_orientation(new_pos, child_quat)
 
                 if rotation_randomization:
@@ -1032,7 +1034,7 @@ class TaskSceneGenerator:
                     randomized_rot = R.from_euler('xyz', [roll, pitch, new_yaw])
                     child_quat = randomized_rot.as_quat()
 
-                    print(f"Original yaw: {np.degrees(yaw):.2f}°, Offset: {random_yaw_offset_deg:.2f}°, New yaw: {np.degrees(new_yaw):.2f}°")
+                    log.info(f"Original yaw: {np.degrees(yaw):.2f}°, Offset: {random_yaw_offset_deg:.2f}°, New yaw: {np.degrees(new_yaw):.2f}°")
 
                     # 최종 pose 적용
                     child_obj.set_position_orientation(child_pos, child_quat)
@@ -1047,7 +1049,7 @@ class TaskSceneGenerator:
             #                                 child_obj_name=obj_name)
             # 현재 child의 중심 위치
             obj_pos, obj_quat = obj.get_position_orientation()
-            print(f"obj_pos: {obj_pos}, obj_quat: {obj_quat}")
+            log.info(f"obj_pos: {obj_pos}, obj_quat: {obj_quat}")
 
             # 추가된 오브젝트 Scene Info 추가
             obj_scene_info = {
@@ -1091,7 +1093,7 @@ class TaskSceneGenerator:
                     distractor_obj_list = list(distractor_obj_json.keys())
                     for distractor_obj_name in distractor_obj_list:
                         if distractor_obj_name in skipped_distractors:
-                            print(f"Skipping distractor object {distractor_obj_name} as it is in skipped_distractors")
+                            log.info(f"Skipping distractor object {distractor_obj_name} as it is in skipped_distractors")
                             continue
                         distractor_obj = scene.object_registry("name", distractor_obj_name)
                         # TaskSceneGenerator.align_object_z_axis(scene, 
@@ -1297,7 +1299,7 @@ class TaskSceneGenerator:
                 if 0 <= u < cam.image_width and 0 <= v < cam.image_height:
                     pixel_coords.append((u, v))
                 else:
-                    print(f"[{idx}] ❌ Out of bounds: ({u}, {v})\n")
+                    log.info(f"[{idx}] ❌ Out of bounds: ({u}, {v})\n")
                     pixel_coords.append((-1, -1))
 
             return pixel_coords
@@ -1341,7 +1343,7 @@ class TaskSceneGenerator:
                         thickness=-1
                     )
 
-                    print((u - text_w // 2, v))
+                    log.info((u - text_w // 2, v))
                     # ✅ 흰색 텍스트 (불투명)
                     cv2.putText(
                         blended_cv_bgra,
@@ -1939,7 +1941,7 @@ class TaskSceneGenerator:
 
 
             # parent_dir_local = np.linalg.inv(child_rot_mat @ child_re_axis_mat) @ (parent_pos - child_pos).cpu().numpy()
-            print(parent_pos, child_pos)
+            log.info(parent_pos, child_pos)
             parent_dir_local = np.linalg.inv(child_rot_mat) @ (parent_pos - child_pos).cpu().numpy()
             # print(child_obj_name)
             # print("parent_dir_local: ", parent_dir_local)
@@ -1957,9 +1959,9 @@ class TaskSceneGenerator:
             # clearance_sign = int(np.sign(child_dir[clearance_axis]))
 
 
-            print("\n📐 Clearance 방향 계산 (child local 기준)")
-            print(f"  ▶ clearance_axis: {clearance_axis} ")
-            print(f"  ▶ clearance_sign: {clearance_sign} ")
+            log.info("\n📐 Clearance 방향 계산 (child local 기준)")
+            log.info(f"  ▶ clearance_axis: {clearance_axis} ")
+            log.info(f"  ▶ clearance_sign: {clearance_sign} ")
 
 
             # ✅ 4. clearance 계산 (child 보정 기준 bbox 사용)
@@ -2028,15 +2030,15 @@ class TaskSceneGenerator:
             # 대각선 길이 계산
             diagonal_length = np.sqrt(x_size**2 + y_size**2 + z_size**2)
             
-            print(f"\n📦 Child object size check: {child_obj_name}")
-            print(f"  - x_size: {x_size:.4f}m")
-            print(f"  - y_size: {y_size:.4f}m")
-            print(f"  - z_size: {z_size:.4f}m")
-            print(f"  - diagonal_length: {diagonal_length:.4f}m")
+            log.info(f"\n📦 Child object size check: {child_obj_name}")
+            log.info(f"  - x_size: {x_size:.4f}m")
+            log.info(f"  - y_size: {y_size:.4f}m")
+            log.info(f"  - z_size: {z_size:.4f}m")
+            log.info(f"  - diagonal_length: {diagonal_length:.4f}m")
             
             # ✅ 대각선 길이가 임계값보다 작으면 스킵
             if diagonal_length < min_diagonal_threshold:
-                print(f"⚠️ Object too small (diagonal {diagonal_length:.4f}m < {min_diagonal_threshold}m), skipping snap_to_place")
+                log.info(f"⚠️ Object too small (diagonal {diagonal_length:.4f}m < {min_diagonal_threshold}m), skipping snap_to_place")
                 child_pos, child_quat = child_obj.get_position_orientation()
                 return child_pos.cpu().numpy(), child_quat.cpu().numpy()
 
@@ -2087,14 +2089,14 @@ class TaskSceneGenerator:
             # Step 1: 만약 이미 충돌하고 있다면 → 반대 방향으로 빠질 때까지 이동
             if child_obj.states[Touching].get_value(parent_obj):
                 if verbose := (child_obj_name == "glasses"):
-                    print("🔄 Already touching, moving opposite direction to find separation")
+                    log.info("🔄 Already touching, moving opposite direction to find separation")
 
                 reverse_dir = -step_dir
                 while child_obj.states[Touching].get_value(parent_obj):
                     og.sim.load_state(old_state)
                     new_pos = child_pos + th.tensor(reverse_dir, dtype=th.float) * step_size
                     if verbose:
-                        print(child_obj.states[Touching].get_value(parent_obj), "  ⬅ Moving away from collision: ", new_pos)
+                        log.info(child_obj.states[Touching].get_value(parent_obj), "  ⬅ Moving away from collision: ", new_pos)
                     child_obj.set_position_orientation(position=new_pos)
                     child_pos = new_pos
                     old_state = og.sim.dump_state()
@@ -2104,7 +2106,7 @@ class TaskSceneGenerator:
             # Step 2: 이제 충돌이 없으니 → 다시 원래 방향으로 붙을 때까지 이동
             if not child_obj.states[Touching].get_value(parent_obj):
                 if verbose := (child_obj_name == "glasses"):
-                    print("🔁 Moving to make contact")
+                    log.info("🔁 Moving to make contact")
 
                 while not child_obj.states[Touching].get_value(parent_obj):
                     og.sim.load_state(old_state)
@@ -2112,11 +2114,11 @@ class TaskSceneGenerator:
 
                     # ✅ z값이 0보다 낮아지면 while문 탈출
                     if new_pos[2] < 0:
-                        print(f"⚠️ z값이 0보다 낮아져서 종료: {new_pos[2]:.4f}")
+                        log.info(f"⚠️ z값이 0보다 낮아져서 종료: {new_pos[2]:.4f}")
                         break
 
                     if verbose:
-                        print(child_obj.states[Touching].get_value(parent_obj),"  ➡ Moving toward contact: ", new_pos)
+                        log.info(child_obj.states[Touching].get_value(parent_obj),"  ➡ Moving toward contact: ", new_pos)
                     child_obj.set_position_orientation(position=new_pos)
                     child_pos = new_pos
                     old_state = og.sim.dump_state()
@@ -2215,7 +2217,7 @@ class TaskSceneGenerator:
             either from above or below, using collision checking.
             """
             from omnigibson.prims.joint_prim import create_joint
-            print("distractor_json: ", distractor_list)
+            log.info("distractor_json: ", distractor_list)
             skipped_distractors = []  # <-- 스킵된 오브젝트 이름 저장
             for i in range(len(distractor_list)):
                 distractor_obj_json = distractor_list[i]['objects']
@@ -2293,14 +2295,14 @@ class TaskSceneGenerator:
                     }
                     # --- 조건 1: z가 더 크면 스킵 ---
                     if distractor_bbox_sizes["z_size"] > link_sizes["z_size"] + tol:
-                        print(f"[SKIP] {distractor_obj_name}: z_size {distractor_bbox_sizes['z_size']:.5f} > link z_size {link_sizes['z_size']:.5f}")
+                        log.info(f"[SKIP] {distractor_obj_name}: z_size {distractor_bbox_sizes['z_size']:.5f} > link z_size {link_sizes['z_size']:.5f}")
                         skipped_distractors.append(distractor_obj_name)
                         continue
 
                     # --- 조건 2: x,y는 아래(x,y) 중 '가장 큰 값'이 위(x,y)의 값보다 크면 스킵 ---
                     if max(distractor_bbox_sizes["x_size"], distractor_bbox_sizes["y_size"]) > \
                     max(link_sizes["x_size"], link_sizes["y_size"]) + tol:
-                        print(f"[SKIP] {distractor_obj_name}: max(x,y) {max(distractor_bbox_sizes['x_size'], distractor_bbox_sizes['y_size']):.5f} "
+                        log.info(f"[SKIP] {distractor_obj_name}: max(x,y) {max(distractor_bbox_sizes['x_size'], distractor_bbox_sizes['y_size']):.5f} "
                             f"> link max(x,y) {max(link_sizes['x_size'], link_sizes['y_size']):.5f}")
                         skipped_distractors.append(distractor_obj_name)
                         continue
@@ -2375,13 +2377,13 @@ class TaskSceneGenerator:
                 all_obj.visual_only = True
 
             if dist < dist_diff_threshold and x_diff < x_diff_threshold and y_diff < y_diff_threshold:
-                print("Successfully placed the object!")
+                log.info("Successfully placed the object!")
                 return True
             else:
-                print("dist: ", dist)
-                print("x_diff: ", x_diff)
-                print("y_diff: ", y_diff)
-                print("Failed to place the object, trying again...")
+                log.info("dist: ", dist)
+                log.info("x_diff: ", x_diff)
+                log.info("y_diff: ", y_diff)
+                log.info("Failed to place the object, trying again...")
             
             # print("###################################################################################")
 
@@ -2394,7 +2396,7 @@ class TaskSceneGenerator:
         child_obj = scene.object_registry("name", child_obj_name)
         parent_obj = scene.object_registry("name", parent_obj_name)
         child_obj.visual_only = True
-        print(orig_obj_pos, orig_obj_quat)
+        log.info(orig_obj_pos, orig_obj_quat)
         
         child_pos, child_quat = child_obj.get_position_orientation()
         parent_pos, parent_quat = parent_obj.get_position_orientation()
@@ -2458,13 +2460,13 @@ class TaskSceneGenerator:
                     th.tensor(child_pos, dtype=th.float),
                     th.tensor(orig_obj_quat, dtype=th.float),
                 )
-        print("child_pos: ", child_pos)
-        print("child_quat: ", child_quat)
+        log.info("child_pos: ", child_pos)
+        log.info("child_quat: ", child_quat)
 
         for _ in range(20):
             og.sim.step()
             og.sim.render()
-        print("Successfully placed the object!")
+        log.info("Successfully placed the object!")
         # while True:
         #     # print("above_sampled_point_3d: ", above_sampled_point_3d)
         #     above_sampled_point_3d = probability_map_sampler.sample()
@@ -2509,7 +2511,7 @@ class TaskSceneGenerator:
             og.sim.step()
             og.sim.render()
 
-        print(f"Collision and physics enabled for: {child_obj_name}, {parent_obj_name}")
+        log.info(f"Collision and physics enabled for: {child_obj_name}, {parent_obj_name}")
 
         # return is_touching
 
@@ -2553,9 +2555,9 @@ class TaskSceneGenerator:
         og.sim.step_physics()
 
         if verbose:
-            print(f"✅ '{child_obj_name}' 정렬 완료 (base-aligned z-up).")
-            print(f"  - 위치: {bbox_center}")
-            print(f"  - 쿼터니언: {bbox_quat}")
+            log.info(f"✅ '{child_obj_name}' 정렬 완료 (base-aligned z-up).")
+            log.info(f"  - 위치: {bbox_center}")
+            log.info(f"  - 쿼터니언: {bbox_quat}")
 
 
     def world_to_local(

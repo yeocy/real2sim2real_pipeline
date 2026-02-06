@@ -18,6 +18,8 @@ import shutil
 from itertools import product
 import warnings
 import our_method
+from loguru import logger as log
+
 import supervision as sv
 from torchvision.ops import box_convert
 import our_method.utils.transform_utils as T
@@ -126,10 +128,10 @@ class TaskObjectSpatialReasoning:
         save_dir = os.path.join(save_dir, "task_object_spatial_reasoning")
         Path(save_dir).mkdir(parents=True, exist_ok=True)
         if self.verbose:
-            print(f"Computing digital cousins given output {step_1_output_path}...")
+            log.info(f"Computing digital cousins given output {step_1_output_path}...")
 
         if self.verbose:
-            print("""
+            log.info("""
 
 ##################################################################
 ### 1. Real-Scene Image Annotations ###
@@ -158,7 +160,7 @@ class TaskObjectSpatialReasoning:
         # print(target_object_extraction_info)        
         # print(real_scene_img_path)
         if self.verbose:
-            print("""
+            log.info("""
 
 ##################################################################
 ### 2. Spatial Reasoning using GPT ###
@@ -176,7 +178,7 @@ class TaskObjectSpatialReasoning:
         )
 
         gpt_text_response = gpt(task_object_spatial_reasoning_payload)
-        print("GPT Response:\n", gpt_text_response)
+        log.info("GPT Response:\n", gpt_text_response)
         if gpt_text_response is None:
             # Failed, terminate early
             return False, None
@@ -188,12 +190,12 @@ class TaskObjectSpatialReasoning:
             # ```json 또는 ```으로 감싸진 블록 제거
             gpt_text_response_parsed = re.sub(r"^```[a-z]*\n|\n```$", "", gpt_text_response.strip(), flags=re.IGNORECASE)
         if self.verbose:
-            print("gpt_text_response_parsed:\n", gpt_text_response_parsed)
+            log.info("gpt_text_response_parsed:\n", gpt_text_response_parsed)
 
         try:
             gpt_result = json.loads(gpt_text_response_parsed)
         except json.JSONDecodeError as e:
-            print("❌ JSON Parsing Fail", e)
+            log.info("❌ JSON Parsing Fail", e)
             return False, None
 
         
@@ -233,7 +235,7 @@ class TaskObjectSpatialReasoning:
         # json.dump(task_extraction_output_info, f, indent=4, 
         #           cls=OneLineListEncoder)
             json.dump(task_output_info_path, f, indent=4)
-        print("""
+        log.info("""
 
 ##########################################
 ### Completed Task Object Spatial Reasoning! ###

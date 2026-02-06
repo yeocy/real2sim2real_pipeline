@@ -215,16 +215,16 @@ def set_albedo_texture_direct(obj, texture_path):
                 if tex_input:
                     tex_input.Set(texture_path)
             else:
-                print("No shader prim found, creating new shader")
+                log.info("No shader prim found, creating new shader")
                 create_shader_in_material(material_prim, texture_path)
         else:
-            print(f"Material prim not found at: {material_path}")
+            log.info(f"Material prim not found at: {material_path}")
             
         for _ in range(10):
             og.sim.step()
             
     except Exception as e:
-        print(f"Texture 설정 오류: {e}")
+        log.info(f"Texture 설정 오류: {e}")
         import traceback
         traceback.print_exc()
     
@@ -244,7 +244,7 @@ def create_shader_in_material(material_prim, texture_path):
         material_path = material_prim.GetPath()
         shader_path = f"{material_path}/Shader"
         
-        print(f"Creating shader at: {shader_path}")
+        log.info(f"Creating shader at: {shader_path}")
         
         shader = lazy.pxr.UsdShade.Shader.Define(stage, shader_path)
         shader.CreateIdAttr("UsdPreviewSurface")
@@ -259,10 +259,10 @@ def create_shader_in_material(material_prim, texture_path):
         surface_output = material.CreateSurfaceOutput()
         surface_output.ConnectToSource(shader.ConnectableAPI(), "surface")
         
-        print(f"Created new shader with diffuse_texture: {shader_path}")
+        log.info(f"Created new shader with diffuse_texture: {shader_path}")
         
     except Exception as e:
-        print(f"Shader 생성 오류: {e}")
+        log.info(f"Shader 생성 오류: {e}")
         import traceback
         traceback.print_exc()
 
@@ -354,13 +354,13 @@ def get_wall_pcd(rgb_path, step_1_output_path, cam_pos, cam_quat, scene,
     floor_bbox = np.array(floor_bbox)
     ic(floor_bbox)
 
-    print(f"Estimated floor plane equation: {a:.2f}x + {b:.2f}y + {c:.2f}z + {d:.2f} = 0")
+    log.info(f"Estimated floor plane equation: {a:.2f}x + {b:.2f}y + {c:.2f}z + {d:.2f} = 0")
 
     inlier_cloud = pcd.select_by_index(inliers)
     pc_floor = np.asarray(inlier_cloud.points)
     origin_pos = pc_floor[int(len(pc_floor) // 2)] + pc_floor_mean
 
-    print(f"Selected origin_pos: {origin_pos}")
+    log.info(f"Selected origin_pos: {origin_pos}")
 
     marker_color_palatte = [
         [1.0, 0.0, 0.0, 1.0],
@@ -393,7 +393,7 @@ def get_wall_pcd(rgb_path, step_1_output_path, cam_pos, cam_quat, scene,
         wall_normal_vec = -np.sign(np.dot(wall_normal_vec, start_point)) * wall_normal_vec
         all_wall_mask_planes[wall_mask_path] = {"normal": wall_normal_vec, "point": start_point}
 
-        print(f"Estimated wall {i}'s plane equation: {a:.2f}x + {b:.2f}y + {c:.2f}z + {d:.2f} = 0")
+        log.info(f"Estimated wall {i}'s plane equation: {a:.2f}x + {b:.2f}y + {c:.2f}z + {d:.2f} = 0")
 
         wall_bbox = get_aabb_vertices(pcd_wall.get_axis_aligned_bounding_box())
         wall_bbox = np.array(wall_bbox)
@@ -528,11 +528,11 @@ class WallBuilder:
 
         with og.sim.stopped():
             for obj_name, obj_info in scene_info["objects"].items():
-                print(f"Object Name: {obj_name}")
-                print(f"Category: {obj_info['category']}")
-                print(f"Model: {obj_info['model']}")
-                print(f"Visual Only: {visual_only}")
-                print(f"Scale: {obj_info['scale']}")
+                log.info(f"Object Name: {obj_name}")
+                log.info(f"Category: {obj_info['category']}")
+                log.info(f"Model: {obj_info['model']}")
+                log.info(f"Visual Only: {visual_only}")
+                log.info(f"Scale: {obj_info['scale']}")
 
                 obj = DatasetObject(
                     name=obj_name,
@@ -721,7 +721,7 @@ class ImprovedWallTextureRectifier:
     def _print_debug(self, message):
         """Print debug message if enabled."""
         if self.debug_print:
-            print(message)
+            log.info(message)
             
     def _save_debug_image(self, image, filename):
         """Save debug image if enabled."""

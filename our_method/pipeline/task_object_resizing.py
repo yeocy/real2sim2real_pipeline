@@ -18,6 +18,8 @@ import re
 import shutil
 from itertools import product
 import warnings
+from loguru import logger as log
+
 import omnigibson as og
 from omnigibson.objects import DatasetObject
 from omnigibson.scenes import Scene
@@ -83,7 +85,7 @@ class TaskObjectResizing:
         og.sim.import_scene(scene)
         og.sim.play()
 
-        print(task_object_retrieval_output_info)
+        log.info(task_object_retrieval_output_info)
 
         json_list = []
         for scenario_obj_num_json_path in task_object_retrieval_output_info:
@@ -148,7 +150,7 @@ class TaskObjectResizing:
                 obj_info['scale'] = [1 * scale_factor for _ in range(3)]
                 # obj_info['scale_factor'] = scale_factor
 
-            print(f"task_obj_resize_info: {task_obj_resize_info}")
+            log.info(f"task_obj_resize_info: {task_obj_resize_info}")
             scenario_obj_num = os.path.basename(scenario_obj_num_json_path).replace("step_5_output_info_", "").replace(".json", "")
             task_object_resizing_path = f"{save_dir}/target_object_resizing_output_info_{scenario_obj_num}.json"
             json_list.append(task_object_resizing_path)
@@ -163,7 +165,7 @@ class TaskObjectResizing:
         # json.dump(task_extraction_output_info, f, indent=4, 
         #           cls=OneLineListEncoder)
             json.dump(json_list, f, indent=4)
-        print("""
+        log.info("""
 
 ##########################################
 ### Completed Task Object Resizing! ###
@@ -243,9 +245,9 @@ class TaskObjectResizing:
                     for obj_name, obj_info in distractor_obj_resize_info['objects'].items():
                         # calculate scale factor
                         if resizing:
-                            print(f"gpt_task_obj_resize_result: {gpt_task_obj_resize_result}")
-                            print(f"obj_size_info: {obj_size_info}")
-                            print(obj_name)
+                            log.info(f"gpt_task_obj_resize_result: {gpt_task_obj_resize_result}")
+                            log.info(f"obj_size_info: {obj_size_info}")
+                            log.info(obj_name)
                             scale_factor = gpt_task_obj_resize_result[obj_name] / max(obj_size_info[obj_name])
                         else:
                             scale_factor = 1.0
@@ -253,7 +255,7 @@ class TaskObjectResizing:
                         obj_info['scale'] = [1 * scale_factor for _ in range(3)]
                         # obj_info['scale_factor'] = scale_factor
 
-                    print(f"task_obj_resize_info: {distractor_obj_resize_info}")
+                    log.info(f"task_obj_resize_info: {distractor_obj_resize_info}")
                     scenario_obj_num = os.path.basename(scenario_obj_num_json_path).replace("distractor_output_info_", "").replace(".json", "")
                     distractor_object_resizing_path = f"{distractor_dir}/distractor_object_resizing_output_info_{scenario_obj_num}.json"
                     distractor_json_list.append(distractor_object_resizing_path)
@@ -269,7 +271,8 @@ class TaskObjectResizing:
                 #           cls=OneLineListEncoder)
                     json.dump(distractor_json_list, f, indent=4)
 
-        og.shutdown()
+        # og.shutdown()
+        og.clear()
         return True, task_object_resizing_path
 
     def parse_string(self, input_str):

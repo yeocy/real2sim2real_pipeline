@@ -269,7 +269,8 @@ class TaskObjectResizing:
                 #           cls=OneLineListEncoder)
                     json.dump(distractor_json_list, f, indent=4)
 
-        og.shutdown()
+        # og.shutdown()
+        og.sim.reset()
         return True, task_object_resizing_path
 
     def parse_string(self, input_str):
