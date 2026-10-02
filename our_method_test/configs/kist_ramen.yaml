@@ -5,11 +5,11 @@ seed: 42
 
 # Path settings
 paths:
-  save_dir: "libero_goal"        # Output directory for ACDC results
-  test_rgb_img_path: "inputs/camera_rgb.png"       # Input test image path
-  test_depth_img_path: "inputs/camera_depth.npy"   # Input test depth image path
+  save_dir: "acdc_output_kist_ramen"   # 모든 중간 산출물이 이 아래로 떨어진다
+  test_rgb_img_path: "inputs_kist_ramen/camera_rgb.png"       # Input test image path
+  test_depth_img_path: "inputs_kist_ramen/camera_depth.npy"   # Input test depth image path
   # test_depth_img_path: null   # Input test depth image path
-  camera_intrinsics_matrix_path: "inputs/camera_info.json"   # Input camera intrinsics matrix path
+  camera_intrinsics_matrix_path: "inputs_kist_ramen/camera_info.json"   # Input camera intrinsics matrix path
   # camera_intrinsics_matrix_path: null   # Input camera intrinsics matrix path
 
 # GPT settings
@@ -40,7 +40,7 @@ distractor:
 
 # Task specification
 task:
-  goal_task: "pick up the bottle"
+  goal_task: "put the noodle in the pot"
 
 # ---------------------------------------------------------------------------
 # Retrieval asset 풀
@@ -62,10 +62,10 @@ asset_pool:
 
 # Pipeline steps to run (set to true to enable)
 pipeline_steps:
-  run_step_1: false  # Step 1: Real-world extraction
+  run_step_1: true  # Step 1: Real-world extraction
   run_step_2: false   # Step 2: Digital cousin matching
   run_step_3: false   # Step 3: Scene generation
-  run_visualize_scene: true  # Visualize generated scene
+  run_visualize_scene: false  # Visualize generated scene
   run_step_4_and_5: false  # Steps 4 & 5: Task object extraction and spatial reasoning
   run_step_6: false  # Step 6: Task object retrieval
   run_task_object_resizing: false  # Task object resizing

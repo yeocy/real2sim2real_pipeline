@@ -5,11 +5,11 @@ seed: 42
 
 # Path settings
 paths:
-  save_dir: "libero_goal"        # Output directory for ACDC results
-  test_rgb_img_path: "inputs/camera_rgb.png"       # Input test image path
-  test_depth_img_path: "inputs/camera_depth.npy"   # Input test depth image path
+  save_dir: "acdc_out_cam0"   # 정면 오른쪽
+  test_rgb_img_path: "inputs_kist_cam0/camera_rgb.png"
+  test_depth_img_path: "inputs_kist_cam0/camera_depth.npy"
   # test_depth_img_path: null   # Input test depth image path
-  camera_intrinsics_matrix_path: "inputs/camera_info.json"   # Input camera intrinsics matrix path
+  camera_intrinsics_matrix_path: "inputs_kist_cam0/camera_info.json"
   # camera_intrinsics_matrix_path: null   # Input camera intrinsics matrix path
 
 # GPT settings
@@ -40,7 +40,7 @@ distractor:
 
 # Task specification
 task:
-  goal_task: "pick up the bottle"
+  goal_task: "put the noodle in the pot"
 
 # ---------------------------------------------------------------------------
 # Retrieval asset 풀
@@ -54,7 +54,7 @@ task:
 #
 # 개별 step 의 call: 안에 asset_pool 을 따로 적으면 그 step 만 다른 풀을 쓴다.
 asset_pool:
-  root: null                    # null -> 기본 assets/. 자체 풀이면 절대경로
+  root: "/home/yeocy/robotics/LLMforMani/Simulation/real2sim2real_pipeline/our_method_test/asset_pools/kist_ramen"
   include_categories: null      # null -> 전체. 리스트를 주면 그 카테고리만 후보
   include_categories_file: null # 위 목록을 .json/.txt 파일로 줄 때의 경로
   exclude_categories: []        # 추가로 제외할 카테고리
@@ -62,10 +62,10 @@ asset_pool:
 
 # Pipeline steps to run (set to true to enable)
 pipeline_steps:
-  run_step_1: false  # Step 1: Real-world extraction
-  run_step_2: false   # Step 2: Digital cousin matching
-  run_step_3: false   # Step 3: Scene generation
-  run_visualize_scene: true  # Visualize generated scene
+  run_step_1: true
+  run_step_2: true
+  run_step_3: true
+  run_visualize_scene: false  # Visualize generated scene
   run_step_4_and_5: false  # Steps 4 & 5: Task object extraction and spatial reasoning
   run_step_6: false  # Step 6: Task object retrieval
   run_task_object_resizing: false  # Task object resizing
@@ -98,10 +98,10 @@ pipeline:
   DigitalCousinMatcher:
     call:
       top_k_categories: 3
-      top_k_models: 6
+      top_k_models: 1          # Kist 풀은 카테고리당 모델 1개
       top_k_poses: 3
-      n_digital_cousins: 4
-      n_cousins_reselect_cand: 3
+      n_digital_cousins: 1
+      n_cousins_reselect_cand: 1
       remove_background: false
       gpt_select_cousins: true
       n_cousins_link_count_threshold: 10
@@ -109,7 +109,7 @@ pipeline:
 
   RealSceneGenerator:
     call:
-      n_scenes: 4
+      n_scenes: 1          # 객체당 cousin 이 1개뿐이라 여러 장 뽑아도 같은 씬이 나온다
       sampling_method: random
       resolve_collision: true
       discard_objs: null
@@ -118,6 +118,9 @@ pipeline:
       visualize_scene_radius: 5
       save_visualization: true
       save_camera_info_extrinsic: false
+      snap_yaw_deg: null        # 회전 보정 없음
+      snap_yaw_categories: null
+      yaw_offset_deg: null
 
   VisualizeScene:
     call:
@@ -132,9 +135,9 @@ pipeline:
   TaskObjectRetrieval:
     call:
       top_k_categories: 5
-      top_k_models: 5
-      n_digital_cousins: 2
-      n_cousins_reselect_cand: 3
+      top_k_models: 1          # Kist 풀은 카테고리당 모델 1개
+      n_digital_cousins: 1
+      n_cousins_reselect_cand: 1
       remove_background: false
       gpt_select_cousins: true
       n_cousins_link_count_threshold: 10

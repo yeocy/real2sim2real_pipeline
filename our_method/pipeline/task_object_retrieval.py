@@ -25,6 +25,7 @@ from our_method.models.gpt import GPT
 from our_method.utils.processing_utils import NumpyTorchEncoder, compute_bbox_from_mask
 from our_method.utils.dataset_utils import get_all_dataset_categories, get_all_articulated_categories, \
     extract_info_from_model_snapshot, ARTICULATION_INFO, ARTICULATION_VALID_ANGLES
+from our_method.utils.asset_pool import resolve_asset_pool
 
 
 DO_NOT_MATCH_CATEGORIES = {"walls", "floors", "ceilings"}
@@ -101,6 +102,7 @@ class TaskObjectRetrieval:
             use_distractor_noise=False,
             use_distractor_category=5,
             distractor_top_k=3,
+            asset_pool=None,
     ):
         """
         Runs the digital cousin matcher. This does the following steps for each detected object from Step 1:
@@ -145,6 +147,9 @@ class TaskObjectRetrieval:
         # Sanity check values
         assert n_digital_cousins <= top_k_models, \
             f"n_digital_cousins ({n_digital_cousins}) cannot be greater than top_k_models ({top_k_models})!"
+
+        # Retrieval 후보의 출처. asset_pool 이 None 이면 기존 assets/ 전체와 동일하다.
+        self.asset_pool = resolve_asset_pool(asset_pool, verbose=self.verbose)
 
         # Parse save_dir, and create the directory if it doesn't exist
         if save_dir is None:
@@ -204,7 +209,7 @@ class TaskObjectRetrieval:
                 # print(obj_name)
                 # print(obj_info)
 
-            all_categories = list(get_all_dataset_categories(do_not_include_categories=DO_NOT_MATCH_CATEGORIES, replace_underscores=True))
+            all_categories = list(self.asset_pool.categories(do_not_include_categories=DO_NOT_MATCH_CATEGORIES, replace_underscores=True))
             
 
             clip = CLIPEncoder(backbone_name="ViT-B/32", device=self.device)
@@ -216,18 +221,21 @@ class TaskObjectRetrieval:
             # TODO
             obj_phrases = [i for i in obj_name_list]
 
-            if len(obj_phrases) > 0:
+            if len(obj_phrases) > 0 and len(all_categories) > 0:
+                # 후보 수보다 큰 k 로 검색하면 FAISS 가 -1 로 패딩해 돌려주고
+                # all_categories[-1] 이 엉뚱한 카테고리를 집는다. 풀이 작을 때 걸린다.
+                k = min(top_k_categories, len(all_categories))
                 if self.verbose:
-                    print(f"Computing top-{top_k_categories} for phrases using CLIP...")
-                
+                    print(f"Computing top-{k} for phrases using CLIP...")
+
                 # CLIP 임베딩 계산
                 text_features = clip.get_text_features(text=all_categories)
-                cand_text_features = clip.get_text_features(text=obj_name_list) # 1800개
+                cand_text_features = clip.get_text_features(text=obj_name_list)
 
                 # FAISS를 이용한 최근접 이웃 탐색
                 gpu_index_flat.reset()
                 gpu_index_flat.add(text_features)
-                dists, idxs = gpu_index_flat.search(cand_text_features, top_k_categories)
+                dists, idxs = gpu_index_flat.search(cand_text_features, k)
 
                 # 결과 매핑
                 for obj_idx, topk_idxs in zip(range(len(obj_phrases)), idxs):
@@ -288,7 +296,7 @@ class TaskObjectRetrieval:
 
 
                 # Find Top-K candidates
-                candidate_imgs_fdirs = [f"{digital_cousins.ASSET_DIR}/objects/{og_category.replace(' ', '_')}/snapshot" for og_category in og_categories]
+                candidate_imgs_fdirs = [self.asset_pool.snapshot_dir(og_category) for og_category in og_categories]
                 
                 candidate_imgs = list(sorted(f"{candidate_imgs_fdir}/{model}"
                                 for candidate_imgs_fdir in candidate_imgs_fdirs
@@ -411,7 +419,7 @@ class TaskObjectRetrieval:
                     print(f"model: {model_list[model_idx]}")
                     
                     # Find Top-K candidates
-                    candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{category_list[model_idx]}/model/{model_list[model_idx]}" 
+                    candidate_model_view_fdirs = self.asset_pool.model_view_dir(category_list[model_idx], model_list[model_idx]) 
 
                     candidate_model_view_imgs = sorted(
                         os.path.join(candidate_model_view_fdirs, fname)
@@ -499,7 +507,7 @@ class TaskObjectRetrieval:
                 Path(parent_front_pose_select_dir).mkdir(parents=True, exist_ok=True)
 
                 results = {}
-                parent_candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{parent_object_category}/model/{parent_object_model}" 
+                parent_candidate_model_view_fdirs = self.asset_pool.model_view_dir(parent_object_category, parent_object_model) 
                 parent_candidate_model_view_imgs = sorted(
                         os.path.join(parent_candidate_model_view_fdirs, fname)
                         for fname in os.listdir(parent_candidate_model_view_fdirs)
@@ -647,7 +655,7 @@ class TaskObjectRetrieval:
                     # ============================================
 
                     # 전체 데이터셋에서 사용할 category 불러오기
-                    all_categories = list(get_all_dataset_categories(
+                    all_categories = list(self.asset_pool.categories(
                         do_not_include_categories=DO_NOT_MATCH_CATEGORIES,
                         replace_underscores=True
                     ))
@@ -716,7 +724,7 @@ class TaskObjectRetrieval:
 
 
                         # Find Top-K candidates
-                        candidate_imgs_fdirs = [f"{digital_cousins.ASSET_DIR}/objects/{og_category.replace(' ', '_')}/snapshot" for og_category in og_categories]
+                        candidate_imgs_fdirs = [self.asset_pool.snapshot_dir(og_category) for og_category in og_categories]
                         
                         candidate_imgs = list(sorted(f"{candidate_imgs_fdir}/{model}"
                                         for candidate_imgs_fdir in candidate_imgs_fdirs
@@ -809,7 +817,7 @@ class TaskObjectRetrieval:
                             print(f"model: {model_list[model_idx]}")
                                 
                             # # Find Top-K candidates
-                            candidate_model_view_fdirs = f"{digital_cousins.ASSET_DIR}/objects/{category_list[model_idx]}/model/{model_list[model_idx]}" 
+                            candidate_model_view_fdirs = self.asset_pool.model_view_dir(category_list[model_idx], model_list[model_idx]) 
 
                             candidate_model_view_imgs = sorted(
                                 os.path.join(candidate_model_view_fdirs, fname)

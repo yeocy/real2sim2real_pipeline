@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch as th
 import trimesh
@@ -170,7 +171,10 @@ def align_model_pose(
     obj.keep_still()
     og.sim.step_physics()
     obj_aabb_extent = obj.aabb_extent
-    scale_factor = input_obj_aabb_extent / obj_aabb_extent
+    # GAIA_NO_FIT_SCALE=1 이면 에셋을 점군에 맞춰 늘리지 않고 실치수를 쓴다.
+    # 변수를 주지 않으면 기존 동작 그대로다.
+    scale_factor = (th.ones_like(obj_aabb_extent) if os.environ.get('GAIA_NO_FIT_SCALE')
+                    else input_obj_aabb_extent / obj_aabb_extent)
     og.sim.stop()
     obj_scale = obj.scale * scale_factor
     obj_bbox_quat = T.mat2quat(og_cam_global_tf[:3, :3] @ og_cam_local_tf[:3, :3] @ tilt_mat.T @ z_rot_mat.T)

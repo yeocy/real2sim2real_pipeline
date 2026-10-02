@@ -149,18 +149,51 @@ class TaskObjectExtractionAndSpatialReasoning:
 
     # ---------------- Internal: JSON Extraction ----------------
     def _extract_json(self, text):
-        pattern = r"```json\s*([\s\S]*?)\s*```"
-        m = re.search(pattern, text)
+        """GPT 응답에서 JSON 을 꺼낸다.
 
-        if not m:
-            log.error("No JSON found inside GPT response.")
-            return None
+        ```json 펜스를 붙여 주면 그걸 쓰고, 없으면 본문에서 중괄호 균형을 세어
+        가장 바깥 객체를 찾는다. GPT 가 설명 문장을 앞에 붙이고 펜스 없이 생
+        JSON 을 뱉는 경우가 있어서(task 에 개수를 넣으면 자주 그런다) 펜스만
+        받으면 멀쩡한 응답을 통째로 버리게 된다.
+        """
+        for pattern in (r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"):
+            m = re.search(pattern, text)
+            if m:
+                try:
+                    return json.loads(m.group(1))
+                except json.JSONDecodeError as e:
+                    log.error(f"JSON parsing failed: {e}")
+                    return None
 
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError as e:
-            log.error(f"JSON parsing failed: {e}")
-            return None
+        # 펜스가 없다 -> 중괄호 균형으로 가장 바깥 JSON 객체를 잘라낸다
+        start = text.find("{")
+        while start != -1:
+            depth, in_str, esc = 0, False, False
+            for i in range(start, len(text)):
+                c = text[i]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif c == "\\":
+                        esc = True
+                    elif c == '"':
+                        in_str = False
+                    continue
+                if c == '"':
+                    in_str = True
+                elif c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(text[start:i + 1])
+                        except json.JSONDecodeError:
+                            break
+            start = text.find("{", start + 1)
+
+        log.error("No JSON found inside GPT response.")
+        return None
 
     # ---------------- Internal: Saving ----------------
     def _save_scenarios(self, scenario_json, goal_task):

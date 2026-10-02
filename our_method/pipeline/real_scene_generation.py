@@ -118,7 +118,10 @@ class RealSceneGenerator:
             visualize_scene_tilt_angle=0,
             visualize_scene_radius=1,
             save_visualization=True,
-            save_camera_info_extrinsic=False
+            save_camera_info_extrinsic=False,
+            snap_yaw_deg=None,
+            snap_yaw_categories=None,
+            yaw_offset_deg=None,
     ):
         """
         Runs the simulated scene generator. This does the following steps for all detected objects from Step and all
@@ -137,6 +140,14 @@ class RealSceneGenerator:
         self.visualize_scene_radius = visualize_scene_radius
         self.save_visualization = save_visualization
         self.save_camera_info_extrinsic = save_camera_info_extrinsic
+        # 원본 씬이 축 정렬이면 최종 yaw 를 격자에 붙여 매칭 노이즈를 없앨 수 있다.
+        # None/0 이면 끈다 (기존 동작과 동일).
+        # snap_yaw_categories 를 주면 그 카테고리에만 적용한다 (None 이면 전체).
+        self.snap_yaw_deg = snap_yaw_deg
+        self.snap_yaw_categories = set(snap_yaw_categories) if snap_yaw_categories else None
+        # 카테고리별 yaw 강제 오프셋 (도 단위). {"stove": 90} 처럼 준다.
+        # 뷰 매칭이 특정 물체에서만 크게 어긋날 때 그 물체만 돌려놓는 용도다.
+        self.yaw_offset_deg = dict(yaw_offset_deg) if yaw_offset_deg else {}
 
         # Load step 2 info
         with open(self.step_2_output_path, "r") as f:
@@ -263,6 +274,23 @@ class RealSceneGenerator:
             obj_mask = np.array(Image.open(f"{seg_dir}/{obj_name}_nonprojected_mask_pruned.png"))
             pc_obj = self.pc.reshape(-1, 3)[np.array(obj_mask).flatten().nonzero()[0]]
 
+            # GAIA_PC_OUTLIER_FILTER=1 이면 마스크 경계가 배경을 물어 생긴 depth 이상치를 잘라낸다.
+            # align_model_pose 는 점군의 min/max 로 AABB 를 잡으므로(scene_utils.py:170)
+            # 배경에 걸린 점 몇 %만 있어도 크기와 위치가 함께 망가진다. 물체는 연속된
+            # 하나의 덩어리이므로 median depth 에서 크게 떨어진 점은 배경으로 본다.
+            # 허용 폭은 3*IQR 로 물체 두께에 맞춰 늘어나되 최소 0.15m 는 보장한다.
+            # 변수를 주지 않으면 기존 동작 그대로다.
+            if os.environ.get("GAIA_PC_OUTLIER_FILTER") and len(pc_obj) > 20:
+                z = pc_obj[:, 2]
+                q1, q3 = np.percentile(z, [25, 75])
+                band = max(3.0 * (q3 - q1), 0.15)
+                keep = np.abs(z - np.median(z)) <= band
+                if keep.sum() >= 20 and keep.sum() < len(z):
+                    if self.verbose:
+                        log.info(f"[{obj_name}] depth 이상치 {len(z) - keep.sum()}/{len(z)} 점 제거 "
+                                 f"(median {np.median(z):.3f}m, 허용 ±{band:.3f}m)")
+                    pc_obj = pc_obj[keep]
+
             cousin_info = obj_info["cousins"][obj_cousin_idx]
 
             # Import the cousin asset
@@ -280,8 +308,32 @@ class RealSceneGenerator:
 
             take_photo(n_render_steps=50)
             # Align object model to point cloud
+            # 뷰 매칭은 3.6도 간격이라 축 정렬 물체도 수십 도씩 어긋날 수 있다.
+            # snap_yaw_deg 가 주어지면 재투영 보정까지 끝낸 최종 yaw 를 그 격자에 붙인다.
+            final_z_angle = cousin_info["z_angle"] + pan_angle_offset
+
+            extra = self.yaw_offset_deg.get(cousin_info["category"])
+            if extra:
+                if self.verbose:
+                    log.info(f"  yaw offset [{cousin_info['category']}]: "
+                             f"{np.rad2deg(final_z_angle):+.1f}° {extra:+.0f}° -> "
+                             f"{np.rad2deg(final_z_angle) + extra:+.1f}°")
+                final_z_angle += np.deg2rad(extra)
+
+            snap_this = bool(self.snap_yaw_deg) and (
+                self.snap_yaw_categories is None
+                or cousin_info["category"] in self.snap_yaw_categories
+            )
+            if snap_this:
+                step = np.deg2rad(self.snap_yaw_deg)
+                snapped = round(final_z_angle / step) * step
+                if self.verbose:
+                    log.info(f"  yaw snap: {np.rad2deg(final_z_angle):+.1f}° -> "
+                             f"{np.rad2deg(snapped):+.1f}° (격자 {self.snap_yaw_deg}°)")
+                final_z_angle = snapped
+
             obj_scale, obj_bbox_extent, tf_from_cam = align_model_pose(
-                obj=obj, pc_obj=pc_obj, obj_z_angle=cousin_info["z_angle"] + pan_angle_offset,
+                obj=obj, pc_obj=pc_obj, obj_z_angle=final_z_angle,
                 obj_ori_offset=cousin_info["ori_offset"], z_dir=deepcopy(self.z_dir),
                 cam_pos=self.cam_pos, cam_quat=self.cam_quat, is_articulated=is_articulated, verbose=self.verbose,
             )

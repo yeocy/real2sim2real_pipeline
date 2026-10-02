@@ -34,6 +34,7 @@ from our_method.utils.dataset_utils import (
     ARTICULATION_INFO,
     ARTICULATION_VALID_ANGLES,
 )
+from our_method.utils.asset_pool import resolve_asset_pool
 
 
 
@@ -76,6 +77,7 @@ class DigitalCousinMatcher:
         n_cousins_link_count_threshold=3,
         save_dir=None,
         start_at_name=None,
+        asset_pool=None,
     ):
         """
         Run the digital cousin matching pipeline.
@@ -93,6 +95,8 @@ class DigitalCousinMatcher:
         self.gpt_select_cousins = gpt_select_cousins
         self.n_cousins_link_count_threshold = n_cousins_link_count_threshold
         self.start_at_name = start_at_name
+        # Retrieval 후보의 출처. asset_pool 이 None 이면 기존 assets/ 전체와 동일하다.
+        self.asset_pool = resolve_asset_pool(asset_pool, verbose=self.verbose)
 
         assert self.n_digital_cousins <= self.top_k_models, (
             f"n_digital_cousins ({self.n_digital_cousins}) cannot be greater than "
@@ -157,13 +161,13 @@ class DigitalCousinMatcher:
 
     def _compute_topk_categories(self):
         all_categories = list(
-            get_all_dataset_categories(
+            self.asset_pool.categories(
                 do_not_include_categories=DO_NOT_MATCH_CATEGORIES,
                 replace_underscores=True,
             )
         )
         all_articulated_categories = list(
-            get_all_articulated_categories(
+            self.asset_pool.articulated_categories(
                 do_not_include_categories=DO_NOT_MATCH_CATEGORIES,
                 replace_underscores=True,
             )
@@ -190,14 +194,28 @@ class DigitalCousinMatcher:
             if len(obj_phrases) == 0:
                 continue
 
+            # articulated 로 검출됐는데 풀에 articulated 카테고리가 없으면 매칭할 대상이
+            # 없다. 전체 카테고리로 되돌리면 ARTICULATION_INFO 에 없는 카테고리가 후보로
+            # 들어와 _select_model_candidates_for_iteration 에서 KeyError 가 난다.
+            # 풀의 articulation_info.json 에 해당 카테고리를 등록하는 것이 올바른 해법이다.
+            if len(categories) == 0:
+                log.warning(
+                    f"asset pool 에 articulated 카테고리가 없어 {obj_phrases} 를 건너뛴다. "
+                    f"풀의 articulation_info.json 에 (문 수, 서랍 수) 를 등록해야 매칭된다."
+                )
+                continue
+
+            # 후보 수보다 큰 k 로 검색하면 FAISS 가 -1 로 패딩해 돌려준다.
+            k = min(self.top_k_categories, len(categories))
+
             if self.verbose:
-                log.info(f"Computing top-{self.top_k_categories} for phrases: {obj_phrases}")
+                log.info(f"Computing top-{k} for phrases: {obj_phrases}")
 
             text_features = clip.get_text_features(text=categories)
             cand_text_features = clip.get_text_features(text=obj_phrases)
             gpu_index_flat.reset()
             gpu_index_flat.add(text_features)
-            _dists, idxs = gpu_index_flat.search(cand_text_features, self.top_k_categories)
+            _dists, idxs = gpu_index_flat.search(cand_text_features, k)
 
             for obj_idx, topk_idxs in zip(obj_indexes, idxs):
                 selected_categories[self.names[obj_idx]] = [
@@ -330,7 +348,7 @@ class DigitalCousinMatcher:
             candidate_model = current_candidates[nn_model_index]
             selected_models.add(candidate_model.split("/")[-1])
 
-            og_category = candidate_model.split("/objects/")[-1].split("/snapshot/")[0]
+            og_category = self.asset_pool.category_from_snapshot_path(candidate_model)
             og_model = candidate_model.split(".")[0].split(f"{og_category}_")[-1]
             cousin_topk_pose_candidates_dir = f"{topk_pose_candidates_dir}/cousin{i}"
 
@@ -409,7 +427,7 @@ class DigitalCousinMatcher:
             log.info(f"Reselecting candidates using {self.fm.encoder_name}...")
 
         candidate_imgs_fdirs = [
-            f"{our_method.ASSET_DIR}/objects/{og_category.replace(' ', '_')}/snapshot"
+            self.asset_pool.snapshot_dir(og_category)
             for og_category in og_categories
         ]
 
@@ -439,8 +457,11 @@ class DigitalCousinMatcher:
                     filename = candidate_img_fpath.split("/")[-1].split(".")[0]
                     cand_category = candidate_img_fpath.split("/")[-3]
                     model = filename.split("_")[-1]
-                    n_doors = int(ARTICULATION_INFO[cand_category][model][0])
-                    n_drawers = int(ARTICULATION_INFO[cand_category][model][1])
+                    art = self.asset_pool.articulation_info.get(cand_category, {}).get(model)
+                    if art is None:
+                        # 풀의 articulation_info.json 에 없는 모델은 문/서랍 0 으로 본다
+                        art = [0, 0]
+                    n_doors, n_drawers = int(art[0]), int(art[1])
                     candidates_door_drawer_count[candidate_img_fpath] = [n_doors, n_drawers]
 
                 if input_n_doors_drawers <= 2:
@@ -642,7 +663,7 @@ class DigitalCousinMatcher:
             og_model, [0, 99]
         )
         candidate_imgs = [
-            f"{our_method.ASSET_DIR}/objects/{og_category}/model/{og_model}/{og_model}_{rot_idx}.png"
+            self.asset_pool.model_view_path(og_category, og_model, rot_idx)
             for rot_idx in range(start_idx, end_idx + 1)
         ]
 

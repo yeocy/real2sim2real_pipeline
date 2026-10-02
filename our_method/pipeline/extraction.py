@@ -398,6 +398,21 @@ class RealWorldExtractor:
         rgb_flat = self.rgb.reshape(-1, 3)
 
         floor_idx = floor_mask.flatten().nonzero()[0]
+
+        # GAIA_ROBUST_FLOOR=1 이면 depth 가 없는 픽셀을 바닥 점군에서 뺀다.
+        # 무효 depth 는 역투영하면 (0,0,0) 즉 카메라 원점이 되는데, 이 씬의 바닥
+        # 마스크는 42~56% 가 무효다(광택 있는 흰 테이블에서 L515 가 반환 실패).
+        # 그 원점 뭉치가 pc_floor_mean 을 카메라 쪽으로 끌어당겨,
+        # 아래 _compute_z_direction_and_tilt 의 floor2obj 부호 판정을 뒤집는다
+        # (측정값: view 3/4 의 dot 이 +0.062 -> -0.066 으로 뒤집혔다).
+        # 변수를 주지 않으면 기존 동작 그대로다.
+        if os.environ.get("GAIA_ROBUST_FLOOR"):
+            valid = pc_flat[floor_idx][:, 2] > 0
+            if valid.sum() >= 100:
+                if self.verbose:
+                    log.info(f"바닥 점군에서 무효 depth {(~valid).sum()}/{valid.size} 점 제외")
+                floor_idx = floor_idx[valid]
+
         pc_floor = pc_flat[floor_idx]
         rgb_floor = rgb_flat[floor_idx]
 
@@ -416,11 +431,16 @@ class RealWorldExtractor:
             self._run_o3d_vis(vis_floor)
         pcd.points = o3d.utility.Vector3dVector(pc_floor - pc_floor_mean.reshape(-1, 3))
         pcd.colors = o3d.utility.Vector3dVector(rgb_floor / 255.0)
-        plane_model, inliers = pcd.segment_plane(
-            distance_threshold=0.1,
-            ransac_n=3,
-            num_iterations=10,
-        )
+        # GAIA_ROBUST_FLOOR=1 이면 바닥 평면 적합을 아래 벽 평면과 같은 수준으로 조인다.
+        # 기본값(0.1m / 10회)은 허용폭이 테이블 두께보다 크고 반복도 10회뿐이라
+        # 실행마다 법선이 흔들린다(같은 입력에서 z_dir[0] 이 0.03~0.19 로 요동쳤다).
+        # 그 흔들림이 아래 abs(z_dir[0]) < 0.1 검사를 우연히 통과시키거나 막는다.
+        # 변수를 주지 않으면 기존 동작 그대로다.
+        if os.environ.get("GAIA_ROBUST_FLOOR"):
+            floor_ransac = dict(distance_threshold=0.01, ransac_n=3, num_iterations=1000)
+        else:
+            floor_ransac = dict(distance_threshold=0.1, ransac_n=3, num_iterations=10)
+        plane_model, inliers = pcd.segment_plane(**floor_ransac)
         a, b, c, d = plane_model
         z_dir_plane = np.array([a, b, c])
 
@@ -490,12 +510,18 @@ class RealWorldExtractor:
     def _parse_detected_objects(self):
         detected_objs = {}
         for raw_caption in self.captions:
-            obj_category = raw_caption.split("(")[0]
+            obj_category = raw_caption.split("(")[0].strip() # strip() 추가로 공백 제거 추천
             if obj_category in detected_objs:
                 continue
             if "(" in raw_caption and ")" in raw_caption:
-                n_doors = int(raw_caption.split(" door")[0][-1]) if "door" in raw_caption else 0
-                n_drawers = int(raw_caption.split(" drawer")[0][-1]) if "drawer" in raw_caption else 0
+                # Door 개수 파싱
+                door_part = raw_caption.split(" door")[0]
+                n_doors = int(door_part[-1]) if "door" in raw_caption and door_part[-1].isdigit() else 0
+                
+                # Drawer 개수 파싱
+                drawer_part = raw_caption.split(" drawer")[0]
+                n_drawers = int(drawer_part[-1]) if "drawer" in raw_caption and drawer_part[-1].isdigit() else 0
+                
                 detected_objs[obj_category] = (n_doors, n_drawers)
             else:
                 detected_objs[obj_category] = None

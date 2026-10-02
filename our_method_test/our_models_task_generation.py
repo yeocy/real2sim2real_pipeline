@@ -28,6 +28,11 @@ os.environ["OMNIGIBSON_HEADLESS"] = "1"
 # Directory configuration
 TEST_DIR = os.path.dirname(__file__)
 
+# 중간 산출물(step_1_output ~ task_object_resizing) 경로는 모두 args.save_dir 아래로
+# 떨어진다. 예전에는 save_dir 과 무관하게 {TEST_DIR}/acdc_output 에서 읽도록 하드코딩돼
+# 있어서, save_dir 을 바꾸면 step 1 은 새 위치에 쓰고 step 2 이후는 옛 위치에서 읽는
+# 불일치가 생겼다. save_dir 은 configs/*.yaml 의 paths.save_dir 로 정한다.
+
 def set_seed(seed):
     """Set random seed for reproducibility across all libraries."""
     random.seed(seed)
@@ -98,6 +103,11 @@ def create_args_from_config(config):
     
     # Position randomization settings
     args.inside_position_randomization = config['position']['inside_position_randomization']
+    # 그릇 안 배치 방식. center = 안쪽 bbox 한가운데, random = 안쪽에서 무작위,
+    # keep = 앞 단계가 잡은 위치 그대로. 안 적으면 기존 동작(랜덤 켬/끔)을 따른다.
+    args.inside_placement = config['position'].get(
+        'inside_placement',
+        'random' if config['position']['inside_position_randomization'] else 'keep')
     args.max_bound = config['position']['max_bound']
     
     # Rotation randomization settings
@@ -181,7 +191,7 @@ def gaia_step_2(args, config_path):
         run_step_1=False,
         run_step_2=True,
         run_step_3=False,
-        step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
+        step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
         step_2_output_path=None,
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
@@ -200,8 +210,8 @@ def gaia_step_3(args, config_path):
         run_step_1=False,
         run_step_2=False,
         run_step_3=True,
-        step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
-        step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
+        step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
+        step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
         gpt_token_print=args.token_print
@@ -222,9 +232,9 @@ def gaia_step_4_and_5(args, config_path):
         run_step_6=False,
         run_task_object_resizing=False,
         run_step_7=False,
-        step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
-        step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
-        step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
+        step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
+        step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
+        step_3_output_path=f"{args.save_dir}/step_3_output/step_3_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
         gpt_token_print=args.token_print,
@@ -246,10 +256,10 @@ def gaia_step_6(args, config_path):
         run_step_6=True,
         run_task_object_resizing=False,
         run_step_7=False,
-        step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
-        step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
-        step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
-        task_spatial_reasoning_output_path=f"{TEST_DIR}/acdc_output/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
+        step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
+        step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
+        step_3_output_path=f"{args.save_dir}/step_3_output/step_3_output_info.json",
+        task_spatial_reasoning_output_path=f"{args.save_dir}/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
         gpt_token_print=args.token_print,
@@ -274,11 +284,11 @@ def gaia_object_resizing(args, config_path):
         run_step_6=False,
         run_task_object_resizing=True,
         run_step_7=False,
-        step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
-        step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
-        step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
-        task_spatial_reasoning_output_path=f"{TEST_DIR}/acdc_output/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
-        task_object_retrieval_path=f"{TEST_DIR}/acdc_output/task_object_retrieval/task_obj_output_info.json",
+        step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
+        step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
+        step_3_output_path=f"{args.save_dir}/step_3_output/step_3_output_info.json",
+        task_spatial_reasoning_output_path=f"{args.save_dir}/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
+        task_object_retrieval_path=f"{args.save_dir}/task_object_retrieval/task_obj_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
         gpt_token_print=args.token_print,
@@ -302,18 +312,19 @@ def gaia_step_7(args, config_path):
         run_step_6=False,
         run_task_object_resizing=False,
         run_step_7=True,
-        step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
-        step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
-        step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
-        task_spatial_reasoning_output_path=f"{TEST_DIR}/acdc_output/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
-        task_object_retrieval_path=f"{TEST_DIR}/acdc_output/task_object_retrieval/task_obj_output_info.json",
-        task_object_resizing_path=f"{TEST_DIR}/acdc_output/task_object_resizing/task_obj_output_info.json",
+        step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
+        step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
+        step_3_output_path=f"{args.save_dir}/step_3_output/step_3_output_info.json",
+        task_spatial_reasoning_output_path=f"{args.save_dir}/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
+        task_object_retrieval_path=f"{args.save_dir}/task_object_retrieval/task_obj_output_info.json",
+        task_object_resizing_path=f"{args.save_dir}/task_object_resizing/task_obj_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
         gpt_token_print=args.token_print,
         find_front_view=args.find_front_view,
         resizing=args.no_resizing,
         inside_position_randomization=args.inside_position_randomization,
+        inside_placement=args.inside_placement,
         max_bound=args.max_bound,
         rotation_randomization=args.rotation_randomization,
         random_degree=args.random_degree,
@@ -332,9 +343,9 @@ def run_visualize_scene(args, config_path):
         run_step_2=False,
         run_step_3=False,
         run_visualize_scene=True,
-        step_1_output_path=f"{TEST_DIR}/acdc_output/step_1_output/step_1_output_info.json",
-        step_2_output_path=f"{TEST_DIR}/acdc_output/step_2_output/step_2_output_info.json",
-        step_3_output_path=f"{TEST_DIR}/acdc_output/step_3_output/step_3_output_info.json",
+        step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
+        step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
+        step_3_output_path=f"{args.save_dir}/step_3_output/step_3_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
         gpt_token_print=args.token_print,

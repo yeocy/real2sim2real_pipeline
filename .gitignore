@@ -21,3 +21,15 @@ chatgpt_api_key
 execute
 logs/
 
+
+###############
+# our_method_test: 실험 산출물 디렉토리 전부 차단, 코드/설정/입력만 통과
+our_method_test/*/
+!our_method_test/configs/
+!our_method_test/inputs/
+
+our_method_test/*.zip
+
+# 백업 파일
+*.bak
+*.bak2

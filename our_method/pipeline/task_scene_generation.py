@@ -105,6 +105,7 @@ class TaskSceneGenerator:
             find_front_view = None,
             resizing = None,
             inside_position_randomization=False,
+            inside_placement=None,
             max_bound=1.0,
             rotation_randomization=True,
             random_degree=45.0,
@@ -261,8 +262,9 @@ class TaskSceneGenerator:
         # og.sim.viewer_camera.set_position_orientation(th.tensor([1.84928, -3.39455,  3.48315], dtype=th.float), th.tensor([ 0.52228, 0.00643, 0.007, 0.85272], dtype=th.float)) # bottle, drawer
         # og.sim.viewer_camera.set_position_orientation(th.tensor([0.89556, -1.76199,  1.12694], dtype=th.float), th.tensor([ 0.67224, -0.00203, -0.00488, 0.74031], dtype=th.float)) # bottle, drawer
         
-        scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, scene_graphs = scene_graphs, cam_pose=cam_pose, obj_info_json=task_obj_output_info, save_dir=save_dir, 
-                                                   visual_only=True, inside_position_randomization=inside_position_randomization, max_bound=max_bound, rotation_randomization=rotation_randomization, random_degree=random_degree, 
+        scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, scene_graphs = scene_graphs, cam_pose=cam_pose, obj_info_json=task_obj_output_info, save_dir=save_dir,
+                                                      gpt=self.gpt, 
+                                                   visual_only=True, inside_position_randomization=inside_position_randomization, inside_placement=inside_placement, max_bound=max_bound, rotation_randomization=rotation_randomization, random_degree=random_degree, 
                                                    use_distractor_noise=use_distractor_noise, distractor_output_path=distractor_output_path)
         print("Task object added to the scene!")
         # scene_rgb = self.take_photo(n_render_steps=3000)
@@ -431,7 +433,8 @@ class TaskSceneGenerator:
         return rgb
     
     def add_task_object(scene, scene_info, scene_graphs, cam_pose, obj_info_json, save_dir, visual_only=False, probability_map = True, capture_env=False, camera_error=False, 
-                        inside_position_randomization=False, max_bound=0.2, rotation_randomization=False, random_degree=5.0, use_distractor_noise=False, distractor_output_path=None):
+                        inside_position_randomization=False, inside_placement=None, max_bound=0.2, rotation_randomization=False, random_degree=5.0, use_distractor_noise=False, distractor_output_path=None,
+                        gpt=None):
          # Load all objects
         object_retrieval_save_dir = os.path.join(os.path.dirname(save_dir), "task_object_retrieval")
         count = 1
@@ -756,9 +759,13 @@ class TaskSceneGenerator:
                         plt.close()
                         print(f"[✅] Saved probability map image to: {save_path}")
 
-                    if not camera_error: 
+                    # config 의 position.inside_placement 가 center 면 확률맵/GPT 로
+                    # 자리를 고르는 이 경로를 건너뛴다. 아래 center 분기가 부모 윗면
+                    # 한가운데에 놓아 준다. (이 경로는 above 전용이라 그동안 안 돌았고,
+                    # GPT.payload_above_object_distribution 이라는 메서드도 없다.)
+                    if not camera_error and inside_placement != "center":
                         if probability_map:
-                            nn_selection_payload = self.gpt.payload_above_object_distribution(
+                            nn_selection_payload = gpt.payload_above_object_distribution(
                                     prompt_img_path = blended_number_img_path,
                                     parent_obj_name = parent_obj_name,
                                     placement = placement,
@@ -766,7 +773,7 @@ class TaskSceneGenerator:
                                     # parent_front_view_img_path = front_parent_img_path,
                                     child_front_view_img_path = front_child_img_path)                    
 
-                            gpt_text_response = self.gpt(nn_selection_payload)
+                            gpt_text_response = gpt(nn_selection_payload)
                             print(f"gpt_text_response: {gpt_text_response}")
                             if gpt_text_response is None:
                                 print(f"gpt_text_response is None")
@@ -979,7 +986,10 @@ class TaskSceneGenerator:
                     # TaskSceneGenerator.enable_collision_and_physics(scene, child_obj_name=obj_name, parent_obj_name=obj_info["parent_object"])
                     scene_rgb = take_photo_position(n_render_steps=10, iteration=i, save_dir=save_dir)
 
-            if placement == "inside":
+            # above 도 같은 처리를 한다. get_inside_bbox 는 부모 aabb 의 윗면을 기준으로
+            # 안쪽 사각형을 잡으므로 '위에 올린다' 에도 그대로 쓸 수 있고, 그래야
+            # inside_placement=center 가 above 물체에도 걸린다.
+            if placement in ("inside", "above"):
                 parent_obj_inside_bbox = TaskSceneGenerator.get_inside_bbox(scene, 
                                                                             parent_obj_name=parent_obj_name, 
                                                                             child_obj_name=child_obj_name,
@@ -990,7 +1000,44 @@ class TaskSceneGenerator:
                 
                 
                 
-                if inside_position_randomization:
+                # inside_placement 가 우선한다. 안 주면 기존 불리언을 따른다.
+                mode = inside_placement or ("random" if inside_position_randomization else "keep")
+
+                if mode == "center":
+                    # 안쪽 bbox 네 꼭짓점의 평균 = 그릇 한가운데. z 는 앞 단계 값을 쓴다.
+                    child_obj = scene.object_registry("name", child_obj_name)
+                    child_pos, child_quat = child_obj.get_position_orientation()
+                    child_pos = child_pos.cpu().numpy() if isinstance(child_pos, th.Tensor) else child_pos
+                    child_quat = child_quat.cpu().numpy() if isinstance(child_quat, th.Tensor) else child_quat
+
+                    cx = float(np.mean(parent_obj_inside_bbox[:, 0]))
+                    cy = float(np.mean(parent_obj_inside_bbox[:, 1]))
+
+                    # 같은 그릇에 여러 개가 들어가면 한가운데 한 점에 전부 겹친다.
+                    # 형제 수를 세어 원형으로 벌린다. 반지름은 그릇 안쪽 크기의
+                    # 1/4 로 잡아 벽에 안 닿게 한다.
+                    sibs = [n for n, o in obj_info_json["objects"].items()
+                            if o.get("parent_object") == parent_obj_name
+                            and o.get("placement") in ("inside", "above")]
+                    if len(sibs) > 1:
+                        k = sibs.index(child_obj_name)
+                        rx = (np.max(parent_obj_inside_bbox[:, 0])
+                              - np.min(parent_obj_inside_bbox[:, 0])) / 4
+                        ry = (np.max(parent_obj_inside_bbox[:, 1])
+                              - np.min(parent_obj_inside_bbox[:, 1])) / 4
+                        ang = 2 * np.pi * k / len(sibs)
+                        cx += rx * np.cos(ang)
+                        cy += ry * np.sin(ang)
+                        print(f"inside_placement=center {k + 1}/{len(sibs)} "
+                              f"-> ({cx:.4f}, {cy:.4f})")
+                    else:
+                        print(f"inside_placement=center -> ({cx:.4f}, {cy:.4f})")
+                    child_obj.set_position_orientation(
+                        th.tensor([cx, cy, child_pos[2]], dtype=th.float),
+                        th.tensor(child_quat, dtype=th.float),
+                    )
+
+                elif mode == "random":
                     print(f"parent_obj_inside_bbox: {parent_obj_inside_bbox}")
                     child_obj = scene.object_registry("name", child_obj_name)
                     child_pos, child_quat = child_obj.get_position_orientation()
@@ -1800,18 +1847,20 @@ class TaskSceneGenerator:
         
         for i in range(4):
             inside_pos_local = parent_obj_inside_bbox[i]
-            inside_pos_world_xy = inside_pos_local[:3] + parent_pos  # 회전 없는 경우
 
-            # ✅ 절댓값 비교 후 클램핑
-            x = inside_pos_world_xy[0]
+            # 부모 로컬에서 먼저 자른다. 예전에는 월드 좌표 절댓값으로 잘라서,
+            # 그릇이 원점에서 떨어져 있으면 클램핑이 그릇과 무관하게 동작했다.
+            x, y = float(inside_pos_local[0]), float(inside_pos_local[1])
             if abs(x) > max_xy:
                 x = max_xy if x > 0 else -max_xy
-
-            y = inside_pos_world_xy[1]
             if abs(y) > max_xy:
                 y = max_xy if y > 0 else -max_xy
 
-            inside_pos_world[i] = [x, y, child_z]
+            # 부모 회전을 반영해 월드로 되돌린다. 예전에는 parent_pos 만 더해서
+            # (주석에 '회전 없는 경우'), 그릇이 yaw 로 돌아가 있으면 안쪽 영역이
+            # 실제 그릇 밖으로 나갔다 (실측: 8.6cm 어긋남).
+            p_world = parent_rot_mat @ np.array([x, y, 0.0]) + parent_pos
+            inside_pos_world[i] = [p_world[0], p_world[1], child_z]
 
 
         return inside_pos_world
@@ -2005,7 +2054,7 @@ class TaskSceneGenerator:
             child_obj_name: str,
             parent_obj_name: str,
             placement: str = "above",
-            min_diagonal_threshold: float = 0.20,  # 최소 대각선 길이 임계값 (10cm)
+            min_diagonal_threshold: float = 0.10,  # 최소 대각선 길이 임계값 (10cm)
             
         ):
             """

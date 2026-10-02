@@ -66,6 +66,7 @@ class GAIA:
             resizing = None,
             find_front_view = None,
             inside_position_randomization = None,
+            inside_placement = None,
             max_bound = None,
             rotation_randomization = None,
             random_degree = None,
@@ -111,6 +112,16 @@ class GAIA:
             assert cur_save_dir is None, f"save_dir should not be specified in {step} config! Got: {cur_save_dir}"
             config["pipeline"][step]["call"]["save_dir"] = save_dir
 
+
+        # Asset pool 설정.
+        # 최상위 `asset_pool:` 을 retrieval 단계(2, 6)의 기본값으로 깔고,
+        # 각 step 의 `call:` 안에 asset_pool 이 따로 있으면 그쪽을 우선한다.
+        # (예: 배경은 기본 풀, task object 만 자체 풀 — 같은 구성이 가능하다)
+        default_asset_pool = config.get("asset_pool", None)
+        for step in ["DigitalCousinMatcher", "TaskObjectRetrieval"]:
+            step_call = config["pipeline"][step]["call"]
+            if step_call.get("asset_pool", None) is None:
+                step_call["asset_pool"] = default_asset_pool
 
         # if gpt_api_key is not None:
         #     config["pipeline"][step]["call"]["gpt_api_key"] = gpt_api_key
@@ -273,6 +284,7 @@ class GAIA:
                 find_front_view=find_front_view,
                 resizing=resizing,
                 inside_position_randomization=inside_position_randomization,
+                inside_placement=inside_placement,
                 max_bound=max_bound,
                 rotation_randomization=rotation_randomization,
                 random_degree=random_degree,
