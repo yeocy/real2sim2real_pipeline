@@ -84,7 +84,8 @@ class GroundedSAMv2(torch.nn.Module):
             text_threshold=self.text_threshold,
         )
 
-    def predict_segmentation(self, img_source, boxes, cxcywh=True, multimask_output=False):
+    def predict_segmentation(self, img_source, boxes, cxcywh=True, multimask_output=False,
+                             return_scores=False):
         # 원본 이미지 크기 출력
         # print(f"Original image shape: {img_source.shape}")  # (907, 1612, 3)
         
@@ -116,7 +117,7 @@ class GroundedSAMv2(torch.nn.Module):
 
         # torch.save(boxes_xyxy, "boxes.pt")
 
-        masks, _, _ = self.gsamv2.predict(
+        masks, scores, _ = self.gsamv2.predict(
             point_coords=None,
             point_labels=None,
             box=boxes_xyxy,
@@ -126,5 +127,12 @@ class GroundedSAMv2(torch.nn.Module):
         # Make sure masks is always shape 4
         if len(masks.shape) == 3:
             masks = masks.reshape(1, *masks.shape)
+        # scores 도 마스크와 같은 (N, num_masks) 로 맞춘다
+        scores = np.asarray(scores)
+        if scores.ndim == 1:
+            scores = scores.reshape(1, *scores.shape)
 
-        return masks.astype(bool)
+        masks = masks.astype(bool)
+        # SAM 이 후보마다 매기는 예측 IoU. 어떤 후보가 맞는지 고르려면 이게 필요한데
+        # 예전에는 버리고 있었다. 기본값은 기존 호출부와 호환되게 마스크만 돌려준다.
+        return (masks, scores) if return_scores else masks

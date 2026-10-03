@@ -56,6 +56,12 @@ class RealWorldExtractor:
     POLYGON_RELATIVE_INTERSECTION_THRESHOLD = 0.97
     POLYGON_RELATIVE_AREA_THRESHOLD = 0.9
     OBJ_MASK_INTERSECT_AREA_THRESHOLD = 0.8
+    # SAM multimask 후보 중 무엇을 물체 마스크로 쓸지.
+    #   "best_score"          SAM 예측 IoU 1등 (겹쳐 놓인 물체를 분리한다)
+    #   "union_two_smallest"  면적 작은 두 개를 OR (2026-10 이전 동작)
+    SAM_MASK_SELECTION = "best_score"
+    # 재캡션용 크롭의 배경색. 검정이면 어두운 물체(검은 인덕션)가 배경에 묻힌다.
+    RECAPTION_BG_COLOR = (130, 130, 130)
 
 
     def __init__(self, feature_matcher, gpt=None, verbose: bool = False):
@@ -623,10 +629,11 @@ class RealWorldExtractor:
                     idxs_to_remove.add(larger_idx)
                     break
 
-        all_masks = self.fm.gsam.predict_segmentation(
+        all_masks, all_scores = self.fm.gsam.predict_segmentation(
             self.image_source,
             self.boxes,
             multimask_output=True,
+            return_scores=True,
         )
         assert len(all_masks.shape) == 4, (
             "Expected masks to have shape 4 (N, num_masks, W, H), "
@@ -635,12 +642,23 @@ class RealWorldExtractor:
         _, _, W, H = all_masks.shape
 
         masks = []
-        for obj_all_mask in all_masks:
-            mask_area_idx = [(np.sum(obj_all_mask[i]), i) for i in range(3)]
-            mask_area_idx.sort()
-            masks.append(
-                obj_all_mask[mask_area_idx[0][1]] | obj_all_mask[mask_area_idx[1][1]]
-            )
+        for obj_idx, obj_all_mask in enumerate(all_masks):
+            if self.SAM_MASK_SELECTION == "best_score":
+                # SAM 이 후보마다 매긴 예측 IoU 중 가장 높은 것 하나만 쓴다.
+                #
+                # 면적으로 고르던 기존 방식(아래 legacy)은 한 box 안에 물체가 겹쳐
+                # 놓여 있을 때 깨진다. 인덕션 위에 냄비가 놓인 경우 SAM 은
+                # (슬랩 / 슬랩+냄비 / 슬랩+냄비) 를 내놓는데, 작은 둘을 OR 하면
+                # 슬랩+냄비가 되어 냄비 쪽 검출이 통째로 억제돼 사라졌다.
+                # 슬랩만 잡은 후보가 점수 1등이었는데 그걸 버리고 있었다.
+                masks.append(obj_all_mask[int(np.argmax(all_scores[obj_idx]))])
+            else:
+                # legacy: 면적이 작은 두 후보를 OR
+                mask_area_idx = [(np.sum(obj_all_mask[i]), i) for i in range(3)]
+                mask_area_idx.sort()
+                masks.append(
+                    obj_all_mask[mask_area_idx[0][1]] | obj_all_mask[mask_area_idx[1][1]]
+                )
 
         for i, mask in enumerate(masks):
             masks[i] = morphology.remove_small_objects(
@@ -768,11 +786,28 @@ class RealWorldExtractor:
             Image.fromarray(mask.astype(np.uint8) * 255).save(mask_img_path)
             cv2.imwrite(annotated_bbox_img_path, annotated_frame)
 
+            # 재캡션 전용 이미지. 위의 nonprojected 는 전체 해상도라 작은 물체가 화면의
+            # 1% 도 안 되고(인덕션 0.89%), 배경이 검정이라 어두운 물체는 실루엣조차 안 보인다.
+            # 그래서 GPT 가 bbox 이미지 쪽만 보고 답하게 되는데, 거기엔 가린 물체가 같이
+            # 들어있다 (인덕션 bbox 안의 냄비 -> "cooking pot" 으로 재캡션되던 원인).
+            # 물체 bbox 로 자르고 배경을 중간 회색으로 깔아 실루엣이 드러나게 한다.
+            crop_img_path = f"{self.segmentation_dir}/{name}_nonprojected_crop.png"
+            ys, xs = np.nonzero(mask)
+            if len(xs) > 0:
+                pad = max(8, int(0.08 * max(xs.max() - xs.min(), ys.max() - ys.min())))
+                y0, y1 = max(0, ys.min() - pad), min(mask.shape[0], ys.max() + 1 + pad)
+                x0, x1 = max(0, xs.min() - pad), min(mask.shape[1], xs.max() + 1 + pad)
+                crop = self.rgb[y0:y1, x0:x1].copy()
+                crop[~mask[y0:y1, x0:x1]] = self.RECAPTION_BG_COLOR
+            else:
+                crop = original_obj_img
+            Image.fromarray(crop).save(crop_img_path)
+
             payload = self.gpt.payload_select_object_from_list(
                 img_path=self.input_path,
                 obj_list=list(self.detected_objs.keys()),
                 bbox_img_path=annotated_bbox_img_path,
-                nonproject_obj_img_path=nonprojected_img_path,
+                nonproject_obj_img_path=crop_img_path,
             )
             if self.verbose:
                 log.info("Inferring caption...")

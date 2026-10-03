@@ -429,9 +429,10 @@ class FeatureMatcher(torch.nn.Module):
         with open(f"{save_dir}/{save_prefix}_feature_matcher_results.json", "w+") as f:
             json.dump(results, f)
 
-        import torch
+        # torch 는 파일 상단에서 이미 import 했다. 여기서 다시 import 하면 함수 전체에서
+        # torch 가 지역변수가 되어, 294행(remove_background=True 경로)이 할당 전 참조로 터진다.
         import gc
-        
+
         # GPU 인덱스 명시적으로 삭제
         del gpu_index_flat
         if hasattr(self, 'res'):
