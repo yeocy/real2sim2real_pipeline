@@ -314,14 +314,18 @@ class RealWorldExtractor:
 
 
     def _estimate_depth(self):
+        use_gt_depth = self.input_depth_path is not None and os.path.exists(self.input_depth_path)
         if self.verbose:
-            log.debug(f"Sub-Step 2. Run {self.depth_model} to extract synthetic depth map")
-            log.info("Estimating depth map...")
+            if use_gt_depth:
+                log.debug(f"Sub-Step 2. Load GT depth map from {self.input_depth_path}")
+            else:
+                log.debug(f"Sub-Step 2. Run {self.depth_model} to extract synthetic depth map")
+                log.info("Estimating depth map...")
 
         depth_path = f"{self.save_dir}/step_1_depth.png"
         depth_limits = np.array([0, self.depth_max_limit])
 
-        if self.input_depth_path is not None and os.path.exists(self.input_depth_path):
+        if use_gt_depth:
             depth = np.load(self.input_depth_path)
             output_shape = (self.new_height, self.new_width)
             depth_image = process_depth_linear(

@@ -27,8 +27,9 @@ os.environ["OMNIGIBSON_HEADLESS"] = "1"
 
 # Directory configuration
 TEST_DIR = os.path.dirname(__file__)
+ONLY_STEP_7 = False
 
-# 중간 산출물(step_1_output ~ task_object_resizing) 경로는 모두 args.save_dir 아래로
+# 중간 산출물(step_1_output ~ task_scene_generation) 경로는 모두 args.save_dir 아래로
 # 떨어진다. 예전에는 save_dir 과 무관하게 {TEST_DIR}/acdc_output 에서 읽도록 하드코딩돼
 # 있어서, save_dir 을 바꾸면 step 1 은 새 위치에 쓰고 step 2 이후는 옛 위치에서 읽는
 # 불일치가 생겼다. save_dir 은 configs/*.yaml 의 paths.save_dir 로 정한다.
@@ -98,7 +99,6 @@ def create_args_from_config(config):
     args.token_print = config['gpt']['token_print']
 
     # Scene generation settings
-    args.no_resizing = config['scene']['no_resizing']
     args.find_front_view = config['scene']['find_front_view']
     
     # Position randomization settings
@@ -230,7 +230,6 @@ def gaia_step_4_and_5(args, config_path):
         run_step_3=False,
         run_step_4_and_5=True,
         run_step_6=False,
-        run_task_object_resizing=False,
         run_step_7=False,
         step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
         step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
@@ -254,7 +253,6 @@ def gaia_step_6(args, config_path):
         run_step_3=False,
         run_step_4_and_5=False,
         run_step_6=True,
-        run_task_object_resizing=False,
         run_step_7=False,
         step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
         step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
@@ -271,34 +269,6 @@ def gaia_step_6(args, config_path):
     del pipeline
 
 
-def gaia_object_resizing(args, config_path):
-    """Run GAIA pipeline: Task object resizing."""
-    pipeline = GAIA(config=config_path)
-    pipeline.run(
-        input_path=args.test_img_path,
-        save_dir=args.save_dir,
-        run_step_1=False,
-        run_step_2=False,
-        run_step_3=False,
-        run_step_4_and_5=False,
-        run_step_6=False,
-        run_task_object_resizing=True,
-        run_step_7=False,
-        step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
-        step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
-        step_3_output_path=f"{args.save_dir}/step_3_output/step_3_output_info.json",
-        task_spatial_reasoning_output_path=f"{args.save_dir}/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
-        task_object_retrieval_path=f"{args.save_dir}/task_object_retrieval/task_obj_output_info.json",
-        gpt_api_key=args.gpt_api_key,
-        gpt_version=args.gpt_version,
-        gpt_token_print=args.token_print,
-        goal_task=args.goal_task,
-        resizing=args.no_resizing,
-        use_distractor_noise=args.use_distractor_noise,
-    )
-    del pipeline
-
-
 def gaia_step_7(args, config_path):
     """Run GAIA pipeline step 7: Task-following scene generation."""
     pipeline = GAIA(config=config_path)
@@ -310,19 +280,16 @@ def gaia_step_7(args, config_path):
         run_step_3=False,
         run_step_4_and_5=False,
         run_step_6=False,
-        run_task_object_resizing=False,
         run_step_7=True,
         step_1_output_path=f"{args.save_dir}/step_1_output/step_1_output_info.json",
         step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
         step_3_output_path=f"{args.save_dir}/step_3_output/step_3_output_info.json",
         task_spatial_reasoning_output_path=f"{args.save_dir}/task_object_extraction_and_spatial_reasoning/task_obj_output_info.json",
         task_object_retrieval_path=f"{args.save_dir}/task_object_retrieval/task_obj_output_info.json",
-        task_object_resizing_path=f"{args.save_dir}/task_object_resizing/task_obj_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
         gpt_token_print=args.token_print,
         find_front_view=args.find_front_view,
-        resizing=args.no_resizing,
         inside_position_randomization=args.inside_position_randomization,
         inside_placement=args.inside_placement,
         max_bound=args.max_bound,
@@ -390,11 +357,21 @@ def main(config, config_path):
     if steps.get('run_step_6', False):
         gaia_step_6(args, config_path)
 
-    if steps.get('run_task_object_resizing', False):
-        gaia_object_resizing(args, config_path)
-
     if steps.get('run_step_7', False):
-        gaia_step_7(args, config_path)
+        ran_heavy = any(steps.get(k, False) for k in
+                        ('run_step_1', 'run_step_2', 'run_step_4_and_5', 'run_step_6'))
+        if ran_heavy and not ONLY_STEP_7:
+            # Step 6 의 FeatureMatcher(GSAM/DINO/CLIP) 가 남은 프로세스에서 Isaac 을 띄우면
+            # RAM 이 모자라 OOM 으로 죽는다 (exit 137). Step 7 은 새 프로세스로 돌린다.
+            import subprocess, sys
+            log.info("Running Step 7 in a fresh process to free memory...")
+            ret = subprocess.run([sys.executable, os.path.abspath(__file__),
+                                  "--config", config_path, "--only_step_7"]).returncode
+            # Isaac 은 종료 시 segfault(139) 를 내지만 결과는 정상이다.
+            if ret not in (0, -11, 139):
+                raise RuntimeError(f"Step 7 subprocess failed with exit code {ret}")
+        else:
+            gaia_step_7(args, config_path)
 
     # Note: test_og() cannot run together with test_gaia_step_3()
     # because the simulator can only be launched once
@@ -412,7 +389,14 @@ if __name__ == "__main__":
         help="Path to configuration file (default: configs/default_config.yaml)"
     )
     
+    parser.add_argument(
+        "--only_step_7",
+        action="store_true",
+        help="config 의 pipeline_steps 를 무시하고 Step 7 만 돌린다 (Step 7 을 새 프로세스로 띄울 때 사용)"
+    )
+    
     cli_args = parser.parse_args()
+    ONLY_STEP_7 = cli_args.only_step_7
     
     # Get absolute path for config
     config_path = os.path.join(TEST_DIR, cli_args.config) if not os.path.isabs(cli_args.config) else cli_args.config
@@ -422,6 +406,9 @@ if __name__ == "__main__":
     
     # Set random seed for reproducibility
     set_seed(config.get('seed', 42))
+
+    if ONLY_STEP_7:
+        config['pipeline_steps'] = {'run_step_7': True}
     
     
 

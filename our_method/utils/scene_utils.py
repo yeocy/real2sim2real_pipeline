@@ -84,6 +84,7 @@ def align_model_pose(
         cam_quat,
         is_articulated,
         verbose=False,
+        refine_yaw=True,
 ):
     """
     Computes an object model's pose expressed in the OG world frame, given camera information, the object's model,
@@ -102,6 +103,8 @@ def align_model_pose(
         cam_quat (np.ndarray): (x,y,z,w) quaternion orientation of the camera in the OG world frame
         is_articulatd (bool): Whether the object is articulated or not
         verbose (bool): Whether to use verbose print out or not
+        refine_yaw (bool): Whether to refine @obj_z_angle with the point cloud's 2D oriented bounds. 호출 측이
+            이미 외곽선 등으로 yaw 를 확정했다면 False 로 꺼서 그 값을 그대로 쓴다.
 
     Returns:
         3-tuple:
@@ -141,7 +144,7 @@ def align_model_pose(
     # Depends on whether the object is articulated or not
     # In general, non-articulated object point clouds are much more noisy, so we use a smaller threshold for them
     refine_angle_threshold = 20 if is_articulated else 15
-    if abs(z_offset * 180 / np.pi) <= refine_angle_threshold:
+    if refine_yaw and abs(z_offset * 180 / np.pi) <= refine_angle_threshold:
         z_refine_rot_mat = T.euler2mat([0, 0, z_offset])
         pc_obj_rot_refined = pc_obj_rot @ z_refine_rot_mat.T
 

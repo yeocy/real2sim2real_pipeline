@@ -1,0 +1,245 @@
+# ACDC Pipeline Default Configuration
+
+# Random seed for reproducibility
+seed: 42
+
+# Path settings
+paths:
+  save_dir: "acdc_out_s5_tablefix"   # 현재 기준 결과: 섹션 1(인덕션) + 3(그릇 안 내용물) + 5(물리 안착)
+  test_rgb_img_path: "inputs_kist_twin_full/camera_rgb.png"
+  test_depth_img_path: "inputs_kist_twin_full/camera_depth.npy"
+  # test_depth_img_path: null   # Input test depth image path
+  camera_intrinsics_matrix_path: "inputs_kist_twin_full/camera_info.json"
+  # camera_intrinsics_matrix_path: null   # Input camera intrinsics matrix path
+
+# GPT settings
+gpt:
+  version: "5.1"
+  token_print: true        # Enable token usage printing
+
+# Scene generation settings
+scene:
+  find_front_view: true      # Enable find_front_view
+
+# Position randomization settings
+position:
+  inside_position_randomization: true  # Enable inside position randomization
+  max_bound: 1.0                       # Maximum bound for position randomization
+
+# Rotation randomization settings
+rotation:
+  rotation_randomization: false  # Enable random rotation around yaw
+  random_degree: 5.0             # Maximum yaw rotation degree
+
+# Distractor settings
+distractor:
+  use_distractor_noise: false     # Add distractor objects in the scene
+  use_distractor_category: 3      # Number of distractor categories
+  distractor_top_k: 1             # Number of distractor objects per category
+
+# Task specification
+task:
+  goal_task: "put the noodle in the pot"
+
+# ---------------------------------------------------------------------------
+# Retrieval asset 풀
+# ---------------------------------------------------------------------------
+# Step 2(DigitalCousinMatcher)와 Step 6(TaskObjectRetrieval)이 후보를 끌어오는 곳.
+# 통째로 생략하거나 null 로 두면 기존과 동일하게 assets/ 전체(1800 카테고리)를 쓴다.
+#
+# 풀 디렉터리는 기존 assets/ 와 같은 레이아웃이어야 한다:
+#   <root>/objects/<category>/snapshot/<category>_<model>.png
+#   <root>/objects/<category>/model/<model>/<model>_<0..99>.png
+#
+# 개별 step 의 call: 안에 asset_pool 을 따로 적으면 그 step 만 다른 풀을 쓴다.
+#
+# kist_mujoco_final 은 digital twin 씬이 실제로 스폰한 조합만 담되, 씬이 거는 scale 을
+# USD 메시에 구워 넣은 변종을 쓴다 (10 카테고리 / 13 모델). 즉 에셋의 실치수가 곧 씬에
+# 놓인 크기다. 같은 모델이 씬에서 여러 크기로 쓰이면 모델을 나눴다:
+#   white_table/kwtable      앞 테이블 1.2 x 0.8 x 0.74 (원본)
+#   white_table/kwtablet2   뒤 받침대 0.65 x 0.55 x 0.74
+#   plate/aewthqdish        만두·파 접시 0.16 x 0.16 x 0.056
+#   plate/aewthqnoodle      면 접시     0.126 x 0.126 x 0.09
+#   plate/aewthqcup          수프 컵     0.06 x 0.06 x 0.056
+#
+# 모델명에 '_' 를 쓰면 안 된다. 코드가 스냅샷을 <category>_<model>.png, 뷰를
+# <model>_<idx>.png 로 보고 '_' 로 가른다 (dataset_utils.py:140, matching.py:459).
+#
+# 뷰 렌더를 앙각 40도로 뽑았다. 입력 영상이 물체를 29~48도로 내려다보는데 기존 풀은
+# 20도로 렌더돼 있어서, 평평한 가구(테이블)의 yaw 매칭이 크게 틀어졌다.
+#
+# 이 풀은 크기를 이미 맞춰 놨으므로 GAIA_NO_FIT_SCALE=1 로 돌려야 한다.
+# 그래야 점군 AABB 에 맞춰 늘리지 않고 에셋 실치수를 쓴다 (scene_utils.py:176).
+#   GAIA_NO_FIT_SCALE=1 python our_models_task_generation.py --config configs/kist_mujoco_final.yaml
+asset_pool:
+  root: "/home/yeocy/robotics/LLMforMani/Simulation/real2sim2real_pipeline/our_method_test/asset_pools/kist_mujoco_final_el40"
+  include_categories: null      # null -> 전체. 리스트를 주면 그 카테고리만 후보
+  include_categories_file: null # 위 목록을 .json/.txt 파일로 줄 때의 경로
+  exclude_categories: []        # 추가로 제외할 카테고리
+  strict: true                  # include 에 실존하지 않는 카테고리가 있으면 에러
+
+# Pipeline steps to run (set to true to enable)
+pipeline_steps:
+  run_step_1: false
+  run_step_2: false
+  run_step_3: true
+  run_visualize_scene: false  # Visualize generated scene
+  run_step_4_and_5: false  # Steps 4 & 5: Task object extraction and spatial reasoning
+  run_step_6: false  # Step 6: Task object retrieval
+  run_step_7: true  # Step 7: Task-following scene generation
+  run_og_test: false  # OmniGibson test (Note: cannot run with step 3)
+
+# Model configurations (from our_method/configs/default.yaml)
+models:
+  FeatureMatcher:
+    # encoder kwargs
+    encoder: DinoV2Encoder
+    encoder_kwargs: null
+
+    # Grounded SAM v2 kwargs
+    gsam_box_threshold: 0.25
+    gsam_text_threshold: 0.25
+
+# Pipeline configurations (from our_method/configs/default.yaml)
+pipeline:
+  verbose: true
+
+  RealWorldExtractor:
+    call:
+      captions: null
+      depth_model: "UniDepthV2" # "UniDepthV2" or "DepthAnythingV2"
+      filter_backsplash: true
+      infer_aligned_wall: true
+      visualize: false
+
+  DigitalCousinMatcher:
+    call:
+      top_k_categories: 3
+      # 카테고리당 모델은 1개뿐이지만, top_k_models 를 2 로 올려야
+      # n_digital_cousins <= top_k_models 단언(matching.py:101)을 통과한다.
+      # 그래야 물체마다 후보를 2개 받아서 그중 맞는 것을 고를 수 있다.
+      top_k_models: 2
+      top_k_poses: 3
+      n_digital_cousins: 2
+      n_cousins_reselect_cand: 1
+      remove_background: false
+      gpt_select_cousins: true
+      n_cousins_link_count_threshold: 10
+      start_at_name: null # Object Matching을 중간부터 시작할지 비었을 경우 null으로 작성해야함
+
+  RealSceneGenerator:
+    call:
+      n_scenes: 1          # 객체당 cousin 이 1개뿐이라 여러 장 뽑아도 같은 씬이 나온다
+      sampling_method: ordered   # random 은 객체마다 cousin 을 무작위로 골라
+                                 # 2순위가 섞여 들어온다. ordered 는 scene 0 에서
+                                 # 전부 1순위(cousin#0)를 쓴다.
+      resolve_collision: true
+      discard_objs: null
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true
+      save_camera_info_extrinsic: false
+      snap_yaw_deg: null        # 회전 보정 없음
+      snap_yaw_categories: null
+      yaw_offset_deg: null
+      # 섹션 1(인덕션 배치) 설정. 결과 폴더의 step_3 scene_0_info.json 기록
+      # (support_yaw_align.flip_source = "match+180deg")에서 복원했다.
+      # 지지 물체 위 직사각형 물체의 yaw 를 외곽선 + 지지 물체 기준으로 정한다.
+      support_yaw_align:
+        post_offset_deg:
+          electric_stove: 180
+        floor_categories: [white_table]   # 바닥에 선 책상도 외곽선 장축으로 90도 모호성을 푼다
+      # 섹션 5: 저장 직전 관통 해소 + 중력 안착 (our_method/utils/physics_settle.py).
+      # 빼거나 enabled: false 면 기존 동작(_resolve_vertical_placement) 그대로다.
+      physics_settle:
+        enabled: true
+        steps: 300                # 중력 안착 스텝
+        check_steps: 150          # 안정성 검사 스텝
+        fixed_categories: [white_table]   # 고정할 큰 가구
+        lift_margin_m: 0.001      # 관통 해소 후 받침과의 간격
+        xy_tol_m: 0.02            # 안착 전후 xy 허용치
+        yaw_tol_deg: 5.0          # 안착 전후 yaw 허용치
+        revert_xy_yaw: true       # 허용치를 넘으면 xy·자세는 안착 전으로, 높이만 반영
+
+  VisualizeScene:
+    call:
+      scene_idx: 0
+      output: null
+      n_render_steps: 10000000
+      visual_only: false
+
+  TaskObjectExtractionAndSpatialReasoning:
+    call:
+      # observed_contents: 사진에서 그릇/컵/냄비 안에 보이는 내용물을 뽑는다
+      #   (어느 부모 / 무엇 / 몇 개). task: 기존처럼 goal_task 로 새 물체를 상상.
+      mode: observed_contents
+      use_asset_pool_vocabulary: true   # 내용물 이름을 asset_pool 카테고리에 맞추라고 힌트
+      max_count_per_object: 10
+      max_container_box_area: 0.1       # 이보다 큰 bbox(테이블)는 확대 크롭에서 제외
+
+  TaskObjectRetrieval:
+    call:
+      top_k_categories: 5
+      top_k_models: 1          # Kist 풀은 카테고리당 모델 1개
+      n_digital_cousins: 1
+      n_cousins_reselect_cand: 1
+      remove_background: false
+      gpt_select_cousins: true
+      n_cousins_link_count_threshold: 10
+      start_at_name: null
+      # Step 6 만 섹션 3 전용 풀을 쓴다. 원본 풀을 카테고리 단위로 링크하고
+      # instant_noodle_block 만 세운 라면사리(vnoodles)로 바꿨다 (s3_build_upright_noodle.py).
+      asset_pool:
+        root: "/home/yeocy/robotics/LLMforMani/Simulation/airlab_twin/our_method_test/asset_pools_local/kist_el40_s3"
+        include_categories: null
+        exclude_categories: []
+        strict: true
+      exact_category_match: true   # 이름이 풀 카테고리와 같으면 GPT 선택 없이 바로 사용
+      allow_no_match: true         # 맞는 에셋이 없으면(GPT 가 0) 그 물체는 빼고 진행
+  
+  TaskSceneGenerator:
+    call:
+      n_scenes: 1
+      sampling_method: ordered   # random 은 객체마다 cousin 을 무작위로 골라
+                                 # 2순위가 섞여 들어온다. ordered 는 scene 0 에서
+                                 # 전부 1순위(cousin#0)를 쓴다.
+      resolve_collision: true
+      discard_objs: null
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true
+      # inside 물체: drop = count 만큼 그릇 안쪽 반경에 떨어뜨려 물리로 안착시키고 검사
+      #              legacy = 기존 add_task_object 경로
+      inside_mode: drop
+      inside_radius_ratio: 0.6
+      inside_settle_steps: 300
+      inside_check_steps: 150
+      inside_max_retries: 3
+      inside_drop_flat: true       # 여러 조각(파, 만두)은 눕혀 떨어뜨리고, 세워진 채 멈추면 다시 떨어뜨림
+      # 섹션 5: 저장 직전 관통 해소 + 중력 안착 (our_method/utils/physics_settle.py).
+      # 빼거나 enabled: false 면 기존 동작(_resolve_vertical_placement) 그대로다.
+      physics_settle:
+        enabled: true
+        steps: 300                # 중력 안착 스텝
+        check_steps: 150          # 안정성 검사 스텝
+        fixed_categories: [white_table]   # 고정할 큰 가구
+        lift_margin_m: 0.001      # 관통 해소 후 받침과의 간격
+        xy_tol_m: 0.02            # 안착 전후 xy 허용치
+        yaw_tol_deg: 5.0          # 안착 전후 yaw 허용치
+        revert_xy_yaw: true       # 허용치를 넘으면 xy·자세는 안착 전으로, 높이만 반영
+
+  SimulatedSceneVisualize:
+    call:
+      n_scenes: 1
+      sampling_method: ordered   # random 은 객체마다 cousin 을 무작위로 골라
+                                 # 2순위가 섞여 들어온다. ordered 는 scene 0 에서
+                                 # 전부 1순위(cousin#0)를 쓴다.
+      resolve_collision: true
+      discard_objs: null
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true
+

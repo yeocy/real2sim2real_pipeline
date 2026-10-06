@@ -17,7 +17,6 @@ from our_method.pipeline.real_scene_generation import RealSceneGenerator
 from our_method.pipeline.task_object_extraction_and_spatial_reasoning import TaskObjectExtractionAndSpatialReasoning
 from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
-from our_method.pipeline.task_object_resizing import TaskObjectResizing
 import omnigibson as og
 
 class GAIA:
@@ -52,18 +51,15 @@ class GAIA:
             run_step_4_and_5=False,
             run_step_6=False,
             run_step_7=False,
-            run_task_object_resizing=False,
             step_1_output_path=None,
             step_2_output_path=None,
             step_3_output_path=None,
             task_spatial_reasoning_output_path=None,
             task_object_retrieval_path=None,
-            task_object_resizing_path=None,
             gpt_api_key=None,
             gpt_version=None,
             gpt_token_print=None,
             goal_task = None,
-            resizing = None,
             find_front_view = None,
             inside_position_randomization = None,
             inside_placement = None,
@@ -107,7 +103,7 @@ class GAIA:
             save_dir = f"{os.path.dirname(input_path)}/acdc_output"
         
         # Cfg에 Save dir 설정
-        for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "TaskObjectExtractionAndSpatialReasoning", "TaskObjectRetrieval", "TaskObjectResizing", "TaskSceneGenerator"]:
+        for step in ["RealWorldExtractor", "DigitalCousinMatcher", "RealSceneGenerator", "TaskObjectExtractionAndSpatialReasoning", "TaskObjectRetrieval", "TaskSceneGenerator"]:
             cur_save_dir = config["pipeline"][step]["call"].get("save_dir", None)
             assert cur_save_dir is None, f"save_dir should not be specified in {step} config! Got: {cur_save_dir}"
             config["pipeline"][step]["call"]["save_dir"] = save_dir
@@ -122,6 +118,10 @@ class GAIA:
             step_call = config["pipeline"][step]["call"]
             if step_call.get("asset_pool", None) is None:
                 step_call["asset_pool"] = default_asset_pool
+        # Step 4·5 observed_contents 모드는 내용물 이름을 풀 카테고리에 맞추는 힌트로 쓴다.
+        step45_call = config["pipeline"]["TaskObjectExtractionAndSpatialReasoning"]["call"]
+        if step45_call.get("mode", "task") == "observed_contents" and step45_call.get("asset_pool", None) is None:
+            step45_call["asset_pool"] = default_asset_pool
 
         # if gpt_api_key is not None:
         #     config["pipeline"][step]["call"]["gpt_api_key"] = gpt_api_key
@@ -250,23 +250,6 @@ class GAIA:
             if not success:
                 raise ValueError("Failed GAIA Step 6!")
                 
-        # Task Object Resizing
-        if run_task_object_resizing:
-            log.debug("Running GAIA: Task Object Resizing")
-
-            obj_resizing = TaskObjectResizing(
-                gpt=self.gpt,
-                verbose=config["pipeline"]["verbose"],
-            )
-            success, obj_resizing_output_path = obj_resizing(
-                task_feature_matching_path=task_object_retrieval_path,
-                **config["pipeline"]["TaskObjectResizing"]["call"],
-                resizing=resizing,
-                use_distractor_noise=use_distractor_noise,
-            )
-            if not success:
-                raise ValueError("Failed Task Object Resizing!")
-            
         # Step 7: Task-following Scene Generation
         if run_step_7:
             log.debug("Running GAIA: Step 7 -- Task-following Scene Generation")
@@ -279,10 +262,9 @@ class GAIA:
                 step_1_output_path=step_1_output_path,
                 step_2_output_path=step_2_output_path,
                 step_3_output_path=step_3_output_path,
-                task_feature_matching_path=task_object_resizing_path,
+                task_feature_matching_path=task_object_retrieval_path,
                 **config["pipeline"]["TaskSceneGenerator"]["call"],
                 find_front_view=find_front_view,
-                resizing=resizing,
                 inside_position_randomization=inside_position_randomization,
                 inside_placement=inside_placement,
                 max_bound=max_bound,

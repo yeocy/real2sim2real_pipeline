@@ -103,6 +103,8 @@ class TaskObjectRetrieval:
             use_distractor_category=5,
             distractor_top_k=3,
             asset_pool=None,
+            exact_category_match=False,
+            allow_no_match=False,
     ):
         """
         Runs the digital cousin matcher. This does the following steps for each detected object from Step 1:
@@ -137,6 +139,11 @@ class TaskObjectRetrieval:
                 If set larger than n_digital_cousins, this threshold will always be used.
             save_dir (None or str): If specified, the absolute path to the directory to save all generated outputs. If
                 not specified, will generate a new directory in the same directory as @step_1_output_path
+            exact_category_match (bool): 물체 이름(끝의 _숫자 제외)이 풀 카테고리 이름과 똑같으면 GPT 선택 없이
+                그 카테고리의 모델을 바로 쓴다. Step 4·5 observed_contents 가 풀 카테고리 이름을 힌트로
+                받아 그대로 돌려주는 경우가 많다.
+            allow_no_match (bool): GPT 선택에 '맞는 후보 없음(0)' 선택지를 준다. 0 이면 그 물체를 결과에서
+                뺀다 (풀에 없는 물체를 엉뚱한 에셋으로 채우지 않기 위해).
 
         Returns:
             2-tuple:
@@ -273,6 +280,9 @@ class TaskObjectRetrieval:
 
             should_start = start_at_name is None
             n_instances = len(obj_name_list)
+            pool_category_set = set(self.asset_pool.categories(
+                do_not_include_categories=DO_NOT_MATCH_CATEGORIES, replace_underscores=False))
+            dropped_objects = []
 
             
             for instance_idx, name in enumerate(obj_name_list):
@@ -311,7 +321,45 @@ class TaskObjectRetrieval:
                     save_path=concat_img_save_dir
                 )
                 
-                if task_extraction_output_info["objects"][name]["new"]:
+                obj_entry = task_extraction_output_info["objects"][name]
+                base_name = re.sub(r"_\d+$", "", name)
+                exact_cat = next((c for c in (name, base_name) if c in pool_category_set), None)
+                if exact_category_match and exact_cat is not None:
+                    exact_dir = self.asset_pool.snapshot_dir(exact_cat)
+                    n_candidates = sorted(f"{exact_dir}/{m}" for m in os.listdir(exact_dir)
+                                          if m.startswith(f"{exact_cat}_"))[:top_k_models]
+                    print(f"[exact_category_match] {name} -> {exact_cat}: {n_candidates}")
+                    gpt_text_response = None
+                elif allow_no_match:
+                    caption = name.replace("_", " ")
+                    if obj_entry.get("description"):
+                        caption += f" ({obj_entry['description']})"
+                    nn_selection_payload = self._payload_select_or_none(
+                        sim_real_img_path=input_sim_real_rgb_path,
+                        parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{obj_entry['parent_object']}_annotated_bboxes.png",
+                        parent_obj_name=obj_entry["parent_object"],
+                        placement=obj_entry["placement"],
+                        caption=caption,
+                        candidates_path=concat_img_save_dir,
+                        top_k=top_k_models,
+                    )
+                    gpt_text_response = self.gpt(nn_selection_payload)
+                    print(f"GPT Response (select or none): {gpt_text_response}")
+                    if gpt_text_response is None:
+                        return False, None
+                    nums = [int(m) for m in re.findall(r'\b\d+\b', gpt_text_response)]
+                    if not nums or nums[0] == 0:
+                        print(f"[allow_no_match] no asset matches {name} -> drop")
+                        dropped_objects.append(name)
+                        continue
+                    n_candidates = [candidate_imgs[i - 1] for i in nums[:top_k_models]
+                                    if 1 <= i <= len(candidate_imgs)]
+                else:
+                    n_candidates = None
+
+                if n_candidates is not None:
+                    pass
+                elif task_extraction_output_info["objects"][name]["new"]:
                     nn_selection_payload = self.gpt.payload_nearest_neighbor_text_ref_scene(
                                         sim_real_img_path=input_sim_real_rgb_path,
                                         # parent_obj_bbox_img_path=f"{os.path.dirname(step_1_output_path)}/segmented_objects/{task_extraction_output_info['objects'][name]['parent_object']}_annotated_bboxes.png",
@@ -332,37 +380,38 @@ class TaskObjectRetrieval:
                                         candidates_path=concat_img_save_dir,
                                         top_k=top_k_models)
 
-                gpt_text_response = self.gpt(nn_selection_payload)
+                if n_candidates is None:
+                    gpt_text_response = self.gpt(nn_selection_payload)
 
-                print("GPT Response :")
-                print(f"   {gpt_text_response}")
+                    print("GPT Response :")
+                    print(f"   {gpt_text_response}")
 
-                if gpt_text_response is None:
-                    print(f"gpt_text_response is None")
-                    # Failed, terminate early
-                    return False, None
-                # 숫자 모두 추출
-                matches = re.findall(r'\b\d+\b', gpt_text_response)
+                    if gpt_text_response is None:
+                        print(f"gpt_text_response is None")
+                        # Failed, terminate early
+                        return False, None
+                    # 숫자 모두 추출
+                    matches = re.findall(r'\b\d+\b', gpt_text_response)
 
-                print("Extract number list :")
-                print(f"   {matches}")
+                    print("Extract number list :")
+                    print(f"   {matches}")
 
-                # 최대 top_k개만 선택
-                nn_model_indices = [int(m) for m in matches[:top_k_models]]  # 0-based 인덱스로 변환
-                print("final number list :")
-                print(f"   {nn_model_indices}\n")
+                    # 최대 top_k개만 선택
+                    nn_model_indices = [int(m) for m in matches[:top_k_models]]  # 0-based 인덱스로 변환
+                    print("final number list :")
+                    print(f"   {nn_model_indices}\n")
 
 
-                # # # 숫자가 하나도 없을 경우 → 실패 처리
-                # # if not matches:
-                # #     return False, None
-                # if name == "cup":
-                #     nn_model_indices = [18, 6, 27]
-                # else : 
-                #     nn_model_indices = [1, 2, 3]
+                    # # # 숫자가 하나도 없을 경우 → 실패 처리
+                    # # if not matches:
+                    # #     return False, None
+                    # if name == "cup":
+                    #     nn_model_indices = [18, 6, 27]
+                    # else : 
+                    #     nn_model_indices = [1, 2, 3]
                 
-                # 후보 이미지 리스트에서 선택된 인덱스만 추출
-                n_candidates = [candidate_imgs[i-1] for i in nn_model_indices]
+                    # 후보 이미지 리스트에서 선택된 인덱스만 추출
+                    n_candidates = [candidate_imgs[i-1] for i in nn_model_indices]
                 
                 results = {
                     "k": top_k_models,
@@ -393,6 +442,15 @@ class TaskObjectRetrieval:
 
                 # 정면 포즈 찾기
 
+            if dropped_objects:
+                keep = [i for i, n in enumerate(obj_name_list) if n not in dropped_objects]
+                obj_phrases = [obj_phrases[i] for i in keep]
+                obj_name_list = [obj_name_list[i] for i in keep]
+                for n in dropped_objects:
+                    task_extraction_output_info["objects"].pop(n, None)
+                with open(f"{save_dir}/dropped_objects.json", "w") as f:
+                    json.dump(dropped_objects, f, indent=4)
+                print(f"Dropped (no matching asset in pool): {dropped_objects}")
             print(f"task_extraction_output_info: {task_extraction_output_info}")
 
             if self.verbose:
@@ -945,6 +1003,9 @@ class TaskObjectRetrieval:
 
 
 
+    def _payload_select_or_none(self, **kwargs):
+        return _payload_select_or_none_impl(self.gpt, **kwargs)
+
     def make_concat_images(self, snapshot_imgs_path, visualize_resolution=(640, 480), images_per_row=10, fontscale = 4, save_path=None):
         """
         snapshot_list_files 내 이미지들을 한 줄에 10개씩 정렬하고, 왼쪽 위에 파일명 숫자 라벨을 추가.
@@ -1009,6 +1070,41 @@ class TaskObjectRetrieval:
             Image.fromarray(full_img).save(save_path)
 
         return full_img
+
+def _payload_select_or_none_impl(gpt, sim_real_img_path, parent_obj_bbox_img_path, parent_obj_name,
+                                 placement, caption, candidates_path, top_k):
+    """후보 중 고르되, 맞는 게 없으면 0 을 답하게 하는 선택 프롬프트."""
+    instructions = (
+        "You are an expert in 3D assets and feature matching. "
+        "You will see a real-world scene, the parent object that contains the target object, and a numbered "
+        "list of candidate simulation assets. Decide which candidates represent the target object."
+    )
+    text = (
+        f"The target object is: {caption}. It is located {placement} the {parent_obj_name}.\n"
+        f"Select up to {top_k} candidate indices that are the SAME KIND of object as the target "
+        "(same category; geometry matters more than color; scale can be changed), best first.\n"
+        "If none of the candidates is the same kind of object, answer exactly 0. "
+        "Do not pick a candidate just because it is the closest - a different kind of object is not a match.\n"
+        "Only output the indices separated by commas, or 0. No explanation."
+    )
+    content = [{"type": "input_text", "text": text}]
+    for label, path in (("Scene (left: real, right: simulation):", sim_real_img_path),
+                        (f"Bounding box of the parent object ({parent_obj_name}):", parent_obj_bbox_img_path),
+                        ("Numbered candidate assets (black background):", candidates_path)):
+        if path is None or not os.path.exists(path):
+            continue
+        content.append({"type": "input_text", "text": label})
+        content.append({"type": "input_image",
+                        "image_url": f"data:image/png;base64,{gpt.encode_image(path)}",
+                        "detail": "high"})
+    return {
+        "model": gpt.VERSIONS[gpt.version],
+        "instructions": instructions,
+        "input": [{"role": "user", "content": content}],
+        "temperature": 0,
+        "max_output_tokens": 500,
+    }
+
 
 def write_json_like(data, file, indent=0):
     spacing = " " * indent

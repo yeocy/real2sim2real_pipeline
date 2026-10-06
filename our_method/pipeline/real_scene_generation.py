@@ -9,6 +9,7 @@ import torch as th
 import numpy as np
 from PIL import Image
 import imageio
+import cv2
 from loguru import logger as log
 
 # OmniGibson Libraries
@@ -22,6 +23,7 @@ from our_method.utils.processing_utils import prepare_output_dir, NumpyTorchEnco
     get_reproject_offset, resize_image
 from our_method.utils.scene_utils import create_scene, take_photo, compute_relative_cam_pose_from, align_model_pose, compute_object_z_offset, \
     compute_obj_bbox_info, align_obj_with_wall, get_vis_cam_trajectory
+from our_method.utils.physics_settle import resolve_cfg as resolve_physics_settle_cfg, settle_scene
 import our_method.utils.transform_utils as T
 
 
@@ -62,6 +64,26 @@ class RealSceneGenerator:
     SAMPLING_METHODS = {
         "random",
         "ordered",
+    }
+
+    # support_yaw_align 기본값. config 에서 준 키만 덮어쓴다.
+    SUPPORT_YAW_ALIGN_DEFAULTS = {
+        "enabled": True,
+        "min_rect_fill": 0.9,        # 위에서 본 외곽선(convex hull)이 최소 외접 사각형을 채우는 비율. 원형은 ~0.785
+        "snap_tol_deg": 10.0,        # 외곽선 yaw 가 지지 물체 yaw(90도 단위)와 이 안이면 지지 물체에 붙인다
+        "support_gap_m": [-0.05, 0.10],  # (물체 바닥 - 지지 물체 윗면) 허용 범위
+        "min_aspect": 1.15,          # 장단변 비가 이보다 크면 장축 방향으로 90도 모호성을 푼다
+        "categories": None,          # None 이면 규칙에 맞는 모든 물체. 리스트면 그 카테고리만
+        "flip": "match",             # 180도 모호성 해소: "match"(뷰 매칭 yaw 에 가까운 쪽) | "gpt"(두 뷰를 GPT 에 물음)
+        "gpt_version": "5.1",
+        # 정렬이 끝난 yaw 에 카테고리별로 더하는 각도(도). {"electric_stove": 180} 처럼 준다.
+        # 입력 사진에 앞뒤 단서가 없을 때(버튼이 안 보이는 검은 판 등) 알고 있는 방향을 넣는 용도다.
+        "post_offset_deg": None,
+        # 받침 물체가 없는(바닥에 선) 물체도 정렬할 카테고리. 바닥과 평행 맞춤은 건너뛰고, 외곽선 장축으로
+        # 90도 모호성만 푼다. 거의 정사각형인 책상(0.65 x 0.55)은 뷰 매칭이 90도 틀리기 쉽다.
+        "floor_categories": None,
+        "floor_min_rect_fill": 0.8,  # 바닥 물체는 앞 물체에 가려 외곽선이 덜 찬다
+        "floor_min_aspect": 1.05,    # 바닥 물체의 90도 모호성 판정 장단변 비. 받침대 0.65x0.55(1.18)가 가려서 1.14 로 잡힌다
     }
 
     def __init__(
@@ -122,6 +144,8 @@ class RealSceneGenerator:
             snap_yaw_deg=None,
             snap_yaw_categories=None,
             yaw_offset_deg=None,
+            support_yaw_align=None,
+            physics_settle=None,
     ):
         """
         Runs the simulated scene generator. This does the following steps for all detected objects from Step and all
@@ -148,6 +172,18 @@ class RealSceneGenerator:
         # 카테고리별 yaw 강제 오프셋 (도 단위). {"stove": 90} 처럼 준다.
         # 뷰 매칭이 특정 물체에서만 크게 어긋날 때 그 물체만 돌려놓는 용도다.
         self.yaw_offset_deg = dict(yaw_offset_deg) if yaw_offset_deg else {}
+        # 지지 물체 위에 놓인 직사각형 물체의 yaw 를 뷰 매칭 대신 위에서 본 외곽선과 지지 물체로 정한다.
+        # 인덕션처럼 위에서 보면 대칭인 판은 DINOv2 매칭이 yaw 를 못 가리고, 위에 놓인 물체가 마스크
+        # 가운데를 가려도 외곽선(convex hull)은 그대로 남는다. None/false 면 끈다 (기존 동작과 동일).
+        if support_yaw_align is True:
+            support_yaw_align = {}
+        if isinstance(support_yaw_align, dict) and support_yaw_align.get("enabled", True):
+            self.support_yaw_align = {**self.SUPPORT_YAW_ALIGN_DEFAULTS, **support_yaw_align}
+        else:
+            self.support_yaw_align = None
+        self.footprints = {}
+        # 저장 직전 관통 해소 + 중력 안착 (our_method/utils/physics_settle.py). None/false 면 끈다 (기존 동작과 동일).
+        self.physics_settle = resolve_physics_settle_cfg(physics_settle)
 
         # Load step 2 info
         with open(self.step_2_output_path, "r") as f:
@@ -173,6 +209,8 @@ class RealSceneGenerator:
 
         # Load input data and compute 3D context
         self._load_and_setup_environment()
+        if self.support_yaw_align is not None:
+            self._compute_footprints()
 
         # Launch omnigibson
         og.launch()
@@ -220,6 +258,7 @@ class RealSceneGenerator:
 
         seg_dir = self.detected_categories["segmentation_dir"]
         self.K = np.array(step_1_output_info["K"])
+        self.step_1_input_rgb = step_1_output_info["input_rgb"]
         self.rgb = np.array(Image.open(step_1_output_info["input_rgb"]))
         raw_depth = np.array(Image.open(step_1_output_info["input_depth"]))
         depth_limits = np.array(step_1_output_info["depth_limits"])
@@ -271,26 +310,7 @@ class RealSceneGenerator:
             obj_info = self.step_2_output_info["objects"][obj_name]
             is_articulated = obj_info["articulated"]
             
-            obj_mask = np.array(Image.open(f"{seg_dir}/{obj_name}_nonprojected_mask_pruned.png"))
-            pc_obj = self.pc.reshape(-1, 3)[np.array(obj_mask).flatten().nonzero()[0]]
-
-            # GAIA_PC_OUTLIER_FILTER=1 이면 마스크 경계가 배경을 물어 생긴 depth 이상치를 잘라낸다.
-            # align_model_pose 는 점군의 min/max 로 AABB 를 잡으므로(scene_utils.py:170)
-            # 배경에 걸린 점 몇 %만 있어도 크기와 위치가 함께 망가진다. 물체는 연속된
-            # 하나의 덩어리이므로 median depth 에서 크게 떨어진 점은 배경으로 본다.
-            # 허용 폭은 3*IQR 로 물체 두께에 맞춰 늘어나되 최소 0.15m 는 보장한다.
-            # 변수를 주지 않으면 기존 동작 그대로다.
-            if os.environ.get("GAIA_PC_OUTLIER_FILTER") and len(pc_obj) > 20:
-                z = pc_obj[:, 2]
-                q1, q3 = np.percentile(z, [25, 75])
-                band = max(3.0 * (q3 - q1), 0.15)
-                keep = np.abs(z - np.median(z)) <= band
-                if keep.sum() >= 20 and keep.sum() < len(z):
-                    if self.verbose:
-                        log.info(f"[{obj_name}] depth 이상치 {len(z) - keep.sum()}/{len(z)} 점 제거 "
-                                 f"(median {np.median(z):.3f}m, 허용 ±{band:.3f}m)")
-                    pc_obj = pc_obj[keep]
-
+            pc_obj = self._load_obj_pc(obj_name, verbose=self.verbose)
             cousin_info = obj_info["cousins"][obj_cousin_idx]
 
             # Import the cousin asset
@@ -332,10 +352,19 @@ class RealSceneGenerator:
                              f"{np.rad2deg(snapped):+.1f}° (격자 {self.snap_yaw_deg}°)")
                 final_z_angle = snapped
 
+            # 지지 물체 기준 yaw 정렬. 적용되면 align_model_pose 의 점군 기반 yaw 보정은 끈다.
+            support_yaw_info = None
+            if self.support_yaw_align is not None:
+                support_yaw_info = self._support_aligned_yaw(obj_name, obj, cousin_info, final_z_angle,
+                                                             pan_angle_offset)
+                if support_yaw_info is not None:
+                    final_z_angle = support_yaw_info["z_angle"]
+
             obj_scale, obj_bbox_extent, tf_from_cam = align_model_pose(
                 obj=obj, pc_obj=pc_obj, obj_z_angle=final_z_angle,
                 obj_ori_offset=cousin_info["ori_offset"], z_dir=deepcopy(self.z_dir),
                 cam_pos=self.cam_pos, cam_quat=self.cam_quat, is_articulated=is_articulated, verbose=self.verbose,
+                refine_yaw=support_yaw_info is None,
             )
             
             take_photo(n_render_steps=50)
@@ -359,6 +388,8 @@ class RealSceneGenerator:
                 "bbox_extent": obj_bbox_extent, "tf_from_cam": tf_from_cam,
                 "mount": self.detected_categories["mount"][obj_idx],
             }
+            if support_yaw_info is not None:
+                obj_scene_info["support_yaw_align"] = support_yaw_info
             with open(f"{obj_save_dir}/{obj_name}_scene_info.json", "w+") as f:
                 json.dump(obj_scene_info, f, indent=4, cls=NumpyTorchEncoder)
 
@@ -377,6 +408,220 @@ class RealSceneGenerator:
         scene_info["scene_graph"] = f"{scene_save_dir}/scene_{scene_count}_graph.json"
 
         return scene_info
+
+    def _load_obj_pc(self, obj_name, verbose=False):
+        """Returns the (N, 3) camera-frame point cloud of @obj_name from its pruned mask."""
+        seg_dir = self.detected_categories["segmentation_dir"]
+        obj_mask = np.array(Image.open(f"{seg_dir}/{obj_name}_nonprojected_mask_pruned.png"))
+        pc_obj = self.pc.reshape(-1, 3)[np.array(obj_mask).flatten().nonzero()[0]]
+
+        # GAIA_PC_OUTLIER_FILTER=1 이면 마스크 경계가 배경을 물어 생긴 depth 이상치를 잘라낸다.
+        # align_model_pose 는 점군의 min/max 로 AABB 를 잡으므로(scene_utils.py:170)
+        # 배경에 걸린 점 몇 %만 있어도 크기와 위치가 함께 망가진다. 물체는 연속된
+        # 하나의 덩어리이므로 median depth 에서 크게 떨어진 점은 배경으로 본다.
+        # 허용 폭은 3*IQR 로 물체 두께에 맞춰 늘어나되 최소 0.15m 는 보장한다.
+        # 변수를 주지 않으면 기존 동작 그대로다.
+        if os.environ.get("GAIA_PC_OUTLIER_FILTER") and len(pc_obj) > 20:
+            z = pc_obj[:, 2]
+            q1, q3 = np.percentile(z, [25, 75])
+            band = max(3.0 * (q3 - q1), 0.15)
+            keep = np.abs(z - np.median(z)) <= band
+            if keep.sum() >= 20 and keep.sum() < len(z):
+                if verbose:
+                    log.info(f"[{obj_name}] depth 이상치 {len(z) - keep.sum()}/{len(z)} 점 제거 "
+                             f"(median {np.median(z):.3f}m, 허용 ±{band:.3f}m)")
+                pc_obj = pc_obj[keep]
+        return pc_obj
+
+    @staticmethod
+    def _wrap_angle(a, period=2 * np.pi):
+        """Wraps @a into [-period / 2, period / 2)."""
+        return (a + period / 2) % period - period / 2
+
+    def _compute_footprints(self):
+        """
+        물체마다 중력 정렬(tilt 보정) 평면에서 본 외곽선과 높이 범위를 구한다.
+        align_model_pose 와 같은 tilt 회전을 쓰므로, 여기서 구한 각도는 obj_z_angle 과 같은 좌표다
+        (물체 로컬 x 축이 tilt 프레임 xy 평면에서 obj_z_angle 방향을 향한다).
+        convex hull 을 쓰므로 위에 놓인 물체가 마스크 가운데를 가려도 외곽선은 변하지 않는다.
+        """
+        tilt_angle = np.arctan2(self.z_dir[1], self.z_dir[2])
+        tilt_mat = T.euler2mat([tilt_angle, 0, 0])
+        for obj_name in self.cousins.keys():
+            pc_obj = self._load_obj_pc(obj_name)
+            if len(pc_obj) < 20:
+                continue
+            pc_rot = pc_obj @ tilt_mat.T
+            hull = cv2.convexHull(pc_rot[:, :2].astype(np.float32))
+            box = cv2.boxPoints(cv2.minAreaRect(hull))
+            edge_a, edge_b = box[1] - box[0], box[2] - box[1]
+            len_a, len_b = float(np.linalg.norm(edge_a)), float(np.linalg.norm(edge_b))
+            self.footprints[obj_name] = {
+                "hull": hull,
+                "center": box.mean(axis=0),
+                "theta": float(np.arctan2(edge_a[1], edge_a[0])),   # edge_a 방향
+                "len_a": len_a,
+                "len_b": len_b,
+                "area": len_a * len_b,
+                "fill": float(cv2.contourArea(hull) / max(len_a * len_b, 1e-9)),
+                "z_lo": float(np.percentile(pc_rot[:, 2], 5)),
+                "z_hi": float(np.percentile(pc_rot[:, 2], 95)),
+            }
+
+    def _find_support(self, obj_name):
+        """외곽선이 직사각형이고 @obj_name 바로 아래에서 그 중심을 받치는 물체 이름을 찾는다. 없으면 None."""
+        cfg = self.support_yaw_align
+        fp = self.footprints[obj_name]
+        gap_lo, gap_hi = cfg["support_gap_m"]
+        best, best_z = None, -np.inf
+        for other, ofp in self.footprints.items():
+            if other == obj_name or ofp["fill"] < cfg["min_rect_fill"] or ofp["area"] < 1.5 * fp["area"]:
+                continue
+            center = tuple(float(c) for c in fp["center"])
+            if cv2.pointPolygonTest(ofp["hull"], center, False) < 0:
+                continue
+            gap = fp["z_lo"] - ofp["z_hi"]
+            if gap_lo <= gap <= gap_hi and ofp["z_hi"] > best_z:
+                best, best_z = other, ofp["z_hi"]
+        return best
+
+    def _support_aligned_yaw(self, obj_name, obj, cousin_info, matched_z_angle, pan_angle_offset):
+        """
+        지지 물체 위의 직사각형 물체에 대해 외곽선 기반 obj_z_angle 을 돌려준다. 해당하지 않으면 None.
+
+        1. 외곽선의 최소 외접 사각형으로 yaw 를 구한다 (90도 모호).
+        2. 지지 물체의 외곽선 yaw 와 snap_tol_deg 이내면 지지 물체에 평행하게 붙인다.
+        3. 에셋 footprint 의 장축이 외곽선 장축과 맞는 쪽으로 90도 모호성을 푼다.
+        4. 남은 180도 모호성은 flip 설정에 따라 뷰 매칭 yaw(@matched_z_angle)에 가까운 쪽을 고르거나,
+           두 후보에 해당하는 에셋 뷰를 GPT 에 보여주고 고르게 한다.
+        """
+        cfg = self.support_yaw_align
+        fp = self.footprints.get(obj_name)
+        if fp is None or cousin_info["ori_offset"] is not None:
+            return None
+        if cfg["categories"] is not None and cousin_info["category"] not in cfg["categories"]:
+            return None
+        support = self._find_support(obj_name) if fp["fill"] >= cfg["min_rect_fill"] else None
+        if support is None:
+            if cousin_info["category"] not in (cfg["floor_categories"] or []) or fp["fill"] < cfg["floor_min_rect_fill"]:
+                return None
+            support = "floor"
+
+        theta = fp["theta"]
+        sup_theta, snapped = None, False
+        if support != "floor":
+            sup_theta = self.footprints[support]["theta"]
+            delta = self._wrap_angle(sup_theta - theta, np.pi / 2)
+            snapped = abs(np.rad2deg(delta)) <= cfg["snap_tol_deg"]
+            if snapped:
+                theta += delta
+
+        # 에셋 footprint (로컬 x, y). 기본 자세에서 aabb 를 잰다.
+        obj.set_position_orientation(th.tensor([0, 0, 0], dtype=th.float), th.tensor([0, 0, 0, 1], dtype=th.float))
+        obj.keep_still()
+        og.sim.step_physics()
+        ex, ey = [float(v) for v in obj.aabb_extent[:2]]
+
+        # k 짝수면 로컬 x 가 edge_a, 홀수면 edge_b 에 놓인다
+        cands = [theta + k * np.pi / 2 for k in range(4)]
+        errs = [abs(ex - fp["len_a"]) + abs(ey - fp["len_b"]) if k % 2 == 0
+                else abs(ex - fp["len_b"]) + abs(ey - fp["len_a"]) for k in range(4)]
+        asset_aspect = max(ex, ey) / max(min(ex, ey), 1e-6)
+        fp_aspect = max(fp["len_a"], fp["len_b"]) / max(min(fp["len_a"], fp["len_b"]), 1e-6)
+        min_aspect = cfg["floor_min_aspect"] if support == "floor" else cfg["min_aspect"]
+        if asset_aspect >= min_aspect and fp_aspect >= min_aspect:
+            best_parity = int(np.argmin(errs)) % 2
+            cands = [c for k, c in enumerate(cands) if k % 2 == best_parity]
+        cands = sorted(cands, key=lambda c: abs(self._wrap_angle(c - matched_z_angle)))
+        z_angle = cands[0]
+        flip_source = "match"
+        if cfg["flip"] == "gpt":
+            # 남은 후보 중 매칭에 가장 가까운 것과 그 180도 반대편을 비교한다
+            pair = [cands[0], cands[0] + np.pi]
+            choice = self._ask_gpt_flip(obj_name, cousin_info, pair, pan_angle_offset)
+            if choice is not None:
+                z_angle = pair[choice]
+                flip_source = "gpt"
+        post_offset = (cfg["post_offset_deg"] or {}).get(cousin_info["category"])
+        if post_offset:
+            z_angle += np.deg2rad(post_offset)
+            flip_source += f"{post_offset:+.0f}deg"
+        z_angle = float(self._wrap_angle(z_angle))
+
+        info = {
+            "support": support,
+            "footprint_deg": float(np.rad2deg(fp["theta"])),
+            "support_footprint_deg": None if sup_theta is None else float(np.rad2deg(sup_theta)),
+            "snapped_to_support": bool(snapped),
+            "footprint_size": [fp["len_a"], fp["len_b"]],
+            "footprint_fill": fp["fill"],
+            "asset_xy_extent": [ex, ey],
+            "matched_z_angle_deg": float(np.rad2deg(matched_z_angle)),
+            "flip_source": flip_source,
+            "z_angle_deg": float(np.rad2deg(z_angle)),
+            "z_angle": z_angle,
+        }
+        if self.verbose:
+            log.info(f"  support yaw align [{obj_name} on {support}]: 외곽선 {info['footprint_deg']:+.1f}° "
+                     f"(지지 {info['support_footprint_deg'] if sup_theta is None else round(info['support_footprint_deg'], 1)}°, snap={snapped}), "
+                     f"외곽선 {fp['len_a']:.3f}x{fp['len_b']:.3f} / 에셋 {ex:.3f}x{ey:.3f}, "
+                     f"매칭 {info['matched_z_angle_deg']:+.1f}° -> {info['z_angle_deg']:+.1f}° (앞뒤: {flip_source})")
+        return info
+
+    def _ask_gpt_flip(self, obj_name, cousin_info, z_angles, pan_angle_offset):
+        """
+        @z_angles (180도 차이 나는 두 obj_z_angle) 에 해당하는 에셋 뷰 스냅샷을 GPT 에 보여주고 입력 사진과
+        앞뒤가 맞는 쪽의 인덱스를 받는다. 실패하면 None.
+
+        Step 2 와 같은 각도 규약을 쓴다: 뷰 i 의 z_angle = i * 2pi/100 - pi, 그리고
+        Step 3 의 obj_z_angle = 뷰 z_angle + pan_angle_offset.
+        """
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            log.warning(f"  [{obj_name}] OPENAI_API_KEY 가 없어 앞뒤 판단을 매칭 yaw 로 대신한다")
+            return None
+        from our_method.models.gpt import GPT
+
+        view_dir = os.path.dirname(cousin_info["snapshot"])
+        step = 2 * np.pi / 100
+        cand_paths = []
+        for z in z_angles:
+            view_idx = int(round((self._wrap_angle(z - pan_angle_offset) + np.pi) / step)) % 100
+            cand_paths.append(f"{view_dir}/{cousin_info['model']}_{view_idx}.png")
+
+        seg_dir = self.detected_categories["segmentation_dir"]
+        step_2_dir = os.path.dirname(self.step_2_output_path)
+        gpt = GPT(api_key=api_key, version=self.support_yaw_align["gpt_version"], log_dir_tail="_GAIA")
+        caption = obj_name.rsplit("_", 1)[0].replace("_", " ")
+        payload = gpt.payload_nearest_neighbor_pose(
+            caption=caption,
+            img_path=self.step_1_input_rgb,
+            bbox_img_path=f"{step_2_dir}/{obj_name}/top_k_model_candidates/{obj_name}_annotated_bboxes.png",
+            nonproject_obj_img_path=f"{seg_dir}/{obj_name}_nonprojected.png",
+            candidates_fpaths=cand_paths,
+        )
+        # 두 후보는 같은 외곽선의 180도 반대 자세다. 위에 놓인 물체가 단서가 될 수 있다고 알려준다.
+        on_top = [n for n in self.footprints if n != obj_name and self._find_support(n) == obj_name]
+        note = ("Note: both candidates already have the correct footprint alignment; they differ only by a "
+                "180-degree flip (front/back swapped). Decide which end of the asset faces the camera. ")
+        if on_top:
+            note += (f"In the input image, {', '.join(n.rsplit('_', 1)[0].replace('_', ' ') for n in on_top)} "
+                     "rests on top of the target and occludes part of it. Where it rests is a strong cue: such "
+                     "objects usually sit on the functional area of the target (e.g., cookware on the heating zone), "
+                     "and the uncovered part shows where the other features are.")
+        payload["input"][0]["content"].insert(-1, {"type": "input_text", "text": note})
+
+        resp = gpt(payload=payload, verbose=self.verbose)
+        if resp is None:
+            return None
+        digits = [int(c) for c in resp if c.isdigit()]
+        if not digits or digits[0] not in (0, 1):
+            log.warning(f"  [{obj_name}] GPT 앞뒤 응답을 해석하지 못함: {resp!r}")
+            return None
+        if self.verbose:
+            log.info(f"  [{obj_name}] GPT 앞뒤 선택: {digits[0]} ({os.path.basename(cand_paths[digits[0]])}, "
+                     f"후보 {[os.path.basename(p) for p in cand_paths]})")
+        return digits[0]
 
     def _refine_scene_and_resolve_physics(
         self,
@@ -407,10 +652,19 @@ class RealSceneGenerator:
                 log.info(f"[Scene {scene_count + 1} / {1}] skip depenetrating collisions.")
 
         # --- 3. Final Placement (Vertical Drop) ---
-        self._resolve_vertical_placement(scene_count, scene, obj_names, scene_graph_info, all_obj_bbox_info, final_scene_info)
+        if self.physics_settle is None:
+            self._resolve_vertical_placement(scene_count, scene, obj_names, scene_graph_info, all_obj_bbox_info, final_scene_info)
 
-        # Take final physics step, then save visualization + info
-        og.sim.step_physics()
+            # Take final physics step, then save visualization + info
+            og.sim.step_physics()
+        else:
+            # _resolve_vertical_placement 는 Touching 이 늦게 잡혀 물체를 수 cm 씩 받침 안으로 내린다.
+            # 대신 AABB 로 관통을 풀고 씬 전체를 중력으로 안착시킨다. 안착된 새 씬은 렌더링에만 쓴다.
+            if self.verbose:
+                log.info(f"[Scene {scene_count + 1} / {1}] physics settle...")
+            scene, settle_report = settle_scene(scene, final_scene_info, self.physics_settle)
+            with open(f"{scene_save_dir}/physics_settle_report.json", "w+") as f:
+                json.dump(settle_report, f, indent=4, cls=NumpyTorchEncoder)
         
         # --- 4. Save Final Visualization and Info ---
         self._save_final_outputs(scene_count, scene_save_dir, final_scene_info)
@@ -465,6 +719,10 @@ class RealSceneGenerator:
                 obj.set_bbox_center_position_orientation(position=th.tensor(new_center, dtype=th.float), orientation=None)
                 og.sim.step_physics()
                 sorted_z_obj_bbox_info[name].update(compute_obj_bbox_info(obj=obj))
+                if self.verbose and obj_name_beneath in sorted_z_obj_bbox_info:
+                    gap = sorted_z_obj_bbox_info[name]["lower"][2] - sorted_z_obj_bbox_info[obj_name_beneath]["upper"][2]
+                    log.info(f"  height adjust [{name} on {obj_name_beneath}]: z_offset {z_offset * 1000:+.1f}mm "
+                             f"-> 간격 {gap * 1000:+.1f}mm")
 
             # Update relative transformation
             obj_pos, obj_quat = obj.get_position_orientation()
@@ -564,7 +822,10 @@ class RealSceneGenerator:
             center_step_size = 0.005
             og.sim.step_physics()
 
-            if not obj1.states[Touching].get_value(obj_beneath):
+            touching_at_start = obj1.states[Touching].get_value(obj_beneath)
+            gap_at_start = obj1.aabb[0][-1].item() - obj_beneath.aabb[1][-1].item()
+            if not touching_at_start:
+                n_down = 0
                 while obj1_low_z >= max(0, obj_beneath_low_z) and \
                     not obj1.states[Touching].get_value(obj_beneath):
                     og.sim.load_state(old_state)
@@ -573,6 +834,7 @@ class RealSceneGenerator:
                     obj1.set_position_orientation(position=new_center)
                     old_state = og.sim.dump_state()
                     og.sim.step_physics()
+                    n_down += 1
 
                 og.sim.load_state(old_state)
                 final_position = obj1.get_position_orientation()[0] - th.tensor([0, 0, -1.0]) * center_step_size
@@ -580,8 +842,14 @@ class RealSceneGenerator:
                 obj_pos, obj_quat = obj1.get_position_orientation()
                 rel_tf = T.relative_pose_transform(obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), self.cam_pos, self.cam_quat)
                 final_scene_info["objects"][obj1_name]["tf_from_cam"] = T.pose2mat(rel_tf)
+                if self.verbose:
+                    log.info(f"  vertical place [{obj1_name} on {obj_beneath_name}]: 시작 간격 {gap_at_start * 1000:+.1f}mm, "
+                             f"{n_down}번 내림 -> 간격 {(obj1.aabb[0][-1] - obj_beneath.aabb[1][-1]).item() * 1000:+.1f}mm")
             else:
                 og.sim.load_state(old_state)
+                if self.verbose:
+                    log.info(f"  vertical place [{obj1_name} on {obj_beneath_name}]: 시작부터 접촉 "
+                             f"(간격 {gap_at_start * 1000:+.1f}mm), 그대로 둠")
 
             obj_beneath.keep_still()
             obj1.keep_still()

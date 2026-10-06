@@ -35,6 +35,7 @@ from our_method.utils.processing_utils import NumpyTorchEncoder, unprocess_depth
 from our_method.utils.scene_utils import compute_relative_cam_pose_from, align_model_pose, compute_object_z_offset, compute_object_z_offset_non_articulated, \
     compute_obj_bbox_info, align_obj_with_wall, get_vis_cam_trajectory
 import our_method.utils.transform_utils as T
+from our_method.utils.physics_settle import resolve_cfg as resolve_physics_settle_cfg, settle_scene
 
 # Set of non-collidable categories
 NON_COLLIDABLE_CATEGORIES = {
@@ -103,14 +104,19 @@ class TaskSceneGenerator:
             visualize_scene_radius=5,
             save_visualization=True,
             find_front_view = None,
-            resizing = None,
             inside_position_randomization=False,
             inside_placement=None,
             max_bound=1.0,
             rotation_randomization=True,
             random_degree=45.0,
             use_distractor_noise=False,
-            
+            inside_mode="legacy",
+            inside_radius_ratio=0.6,
+            inside_settle_steps=300,
+            inside_check_steps=150,
+            inside_max_retries=3,
+            inside_drop_flat=False,
+            physics_settle=None,
     ):
         """
         Runs the simulated scene generator. This does the following steps for all detected objects from Step and all
@@ -156,6 +162,20 @@ class TaskSceneGenerator:
                 This parameter is only used when @visualize_scene is set to True
             save_visualization (bool): Whether to save the visualization results. This parameter is only used when 
                 @visualize_scene is set to True
+
+            inside_mode (str): placement == "inside" 물체를 놓는 방식.
+                "legacy" 기존 경로(add_task_object: 부모 원점에 놓고 Touching 으로 스냅).
+                "drop"   place_inside_contents: count 만큼 인스턴스를 만들어 그릇 안쪽 반경 안,
+                         림 바로 위에서 떨어뜨리고 물리로 안착시킨 뒤 그릇 안에 남았는지 검사한다.
+            inside_radius_ratio (float): drop 모드에서 그릇 AABB 반폭 대비 뿌리는 반경 비율.
+            inside_settle_steps / inside_check_steps (int): 안착 / 안정성 확인 시뮬 스텝 수.
+            inside_max_retries (int): 그릇 밖으로 나간 그룹을 반경을 줄여 다시 떨어뜨리는 횟수.
+            inside_drop_flat (bool): 한 그릇에 여러 조각을 넣을 때(파, 만두) 각 조각을 가장 얇은 축이 세로인
+                누운 자세로 떨어뜨리고, 안착 후 그 자세에서 45도 넘게 기운 조각(세워진 파 고리 등)이 있으면 그룹을
+                다시 떨어뜨린다. False 면 기존처럼 re_axis_mat 자세로 떨어뜨린다 (이 자세는 파 고리가 세워진다).
+            physics_settle (None or dict): 최종 저장 직전 씬 전체 관통 해소 + 중력 안착
+                (our_method/utils/physics_settle.py). place_inside_contents 는 Step 3 물체를 고정한 채 내용물만
+                떨어뜨리고, 이 단계는 그 결과를 받아 Step 3 물체까지 포함해 한 번 더 안착시킨다. None 이면 끈다.
 
         Returns:
             2-tuple:
@@ -207,15 +227,14 @@ class TaskSceneGenerator:
         
         # print(f"task_obj_output_info: {task_obj_output_info}")
         # print(f"find_front_view: {find_front_view}")
-        # print(f"resizing: {resizing}")
         # exit()
         if not find_front_view:
             for obj in task_obj_output_info['objects'].values():
                 obj['re_axis_mat'] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
                 obj['parent_re_axis_mat'] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-        if not resizing:
-            for obj in task_obj_output_info['objects'].values():
-                obj['scale'] = [1.0, 1.0, 1.0]
+        # 리사이즈 단계는 없앴다. 풀 에셋이 실치수라 scale 1 을 쓴다.
+        for obj in task_obj_output_info['objects'].values():
+            obj.setdefault('scale', [1.0, 1.0, 1.0])
         
         # scene_rgb = self.take_photo(n_render_steps=100000)
         # TODO
@@ -262,10 +281,51 @@ class TaskSceneGenerator:
         # og.sim.viewer_camera.set_position_orientation(th.tensor([1.84928, -3.39455,  3.48315], dtype=th.float), th.tensor([ 0.52228, 0.00643, 0.007, 0.85272], dtype=th.float)) # bottle, drawer
         # og.sim.viewer_camera.set_position_orientation(th.tensor([0.89556, -1.76199,  1.12694], dtype=th.float), th.tensor([ 0.67224, -0.00203, -0.00488, 0.74031], dtype=th.float)) # bottle, drawer
         
-        scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, scene_graphs = scene_graphs, cam_pose=cam_pose, obj_info_json=task_obj_output_info, save_dir=save_dir,
-                                                      gpt=self.gpt, 
-                                                   visual_only=True, inside_position_randomization=inside_position_randomization, inside_placement=inside_placement, max_bound=max_bound, rotation_randomization=rotation_randomization, random_degree=random_degree, 
-                                                   use_distractor_noise=use_distractor_noise, distractor_output_path=distractor_output_path)
+        # drop 모드에서는 inside 물체를 따로 떼서 place_inside_contents 로 놓는다.
+        inside_objs = {}
+        if inside_mode == "drop":
+            inside_objs = {k: v for k, v in task_obj_output_info['objects'].items() if v.get("placement") == "inside"}
+            for k in inside_objs:
+                task_obj_output_info['objects'].pop(k)
+
+        if task_obj_output_info['objects']:
+            scene = TaskSceneGenerator.add_task_object(scene=scene, scene_info=scene_info, scene_graphs = scene_graphs, cam_pose=cam_pose, obj_info_json=task_obj_output_info, save_dir=save_dir,
+                                                          gpt=self.gpt, 
+                                                       visual_only=True, inside_position_randomization=inside_position_randomization, inside_placement=inside_placement, max_bound=max_bound, rotation_randomization=rotation_randomization, random_degree=random_degree, 
+                                                       use_distractor_noise=use_distractor_noise, distractor_output_path=distractor_output_path)
+        if inside_objs:
+            report = TaskSceneGenerator.place_inside_contents(
+                scene=scene, inside_objs=inside_objs, cam_pose=cam_pose, scene_info=scene_info,
+                radius_ratio=inside_radius_ratio, settle_steps=inside_settle_steps,
+                check_steps=inside_check_steps, max_retries=inside_max_retries,
+                drop_flat=inside_drop_flat,
+            )
+            with open(f"{save_dir}/inside_placement_report.json", "w+") as f:
+                json.dump(report, f, indent=4, cls=NumpyTorchEncoder)
+            n_ok = sum(r["ok"] for r in report["instances"].values())
+            print(f"Inside contents placed: {n_ok}/{len(report['instances'])} instances inside their parent")
+        physics_settle = resolve_physics_settle_cfg(physics_settle)
+        if physics_settle is not None:
+            # settle_scene 은 scene_info 의 물체만 새 씬에 다시 로드한다. 그 밖의 물체는 저장되지도 않으므로 알리기만 한다.
+            missing = [o.name for o in scene.objects
+                       if o.name not in scene_info["objects"] and o.category not in ("floors", "background")]
+            if missing:
+                print(f"[physics_settle] scene_info 에 없는 물체는 안착 씬에서 빠진다: {missing}")
+            scene, settle_report = settle_scene(scene, scene_info, physics_settle)
+            with open(f"{save_dir}/physics_settle_report.json", "w+") as f:
+                json.dump(settle_report, f, indent=4, cls=NumpyTorchEncoder)
+        if inside_objs:
+            self.take_photo_named("final_cam_view", n_render_steps=50, save_dir=save_dir,
+                                  pose=(cam_pose[0], cam_pose[1]))
+            close_pose = TaskSceneGenerator.look_at_pose(
+                target=np.mean([g["center"] for g in report["parents"].values()], axis=0),
+                cam_pos=np.array(cam_pose[0]), distance_ratio=0.35)
+            self.take_photo_named("final_closeup", n_render_steps=50, save_dir=save_dir, pose=close_pose)
+            for parent_name, g in report["parents"].items():
+                self.take_photo_named(f"final_closeup_{parent_name}", n_render_steps=20, save_dir=save_dir,
+                                      pose=TaskSceneGenerator.look_at_pose(target=np.array(g["center"]),
+                                                                           cam_pos=np.array(cam_pose[0]),
+                                                                           distance=0.45))
         print("Task object added to the scene!")
         # scene_rgb = self.take_photo(n_render_steps=3000)
         # og.sim.viewer_camera.set_position_orientation(th.tensor([-0.01944, -1.38734,  1.49061], dtype=th.float), th.tensor([0.42473, 0.00847, 0.00533, 0.90527], dtype=th.float))
@@ -298,9 +358,10 @@ class TaskSceneGenerator:
         # og.sim.viewer_camera.set_position_orientation(th.tensor(cam_pose[0], dtype=th.float), th.tensor(cam_pose[1], dtype=th.float))
         
         print(og.sim.viewer_camera.get_position_orientation())
-        og.sim.viewer_camera.set_position_orientation(th.tensor([-0.3616, -2.9108,  2.2365], dtype=th.float), th.tensor([5.3933e-01, 6.4206e-03, 4.1202e-18, 8.4207e-01], dtype=th.float))
+        # 예전에는 다른 씬(office)용으로 박아 둔 카메라 포즈로 찍었다. 입력 카메라 포즈로 찍는다.
+        og.sim.viewer_camera.set_position_orientation(th.tensor(cam_pose[0], dtype=th.float), th.tensor(cam_pose[1], dtype=th.float))
         
-        scene_rgb = self.take_photo(n_render_steps=1000, save_dir=save_dir)
+        scene_rgb = self.take_photo(n_render_steps=100, save_dir=save_dir)
 
         final_scene_info = deepcopy(scene_info)
 
@@ -401,6 +462,275 @@ class TaskSceneGenerator:
         img.save(f"{save_dir}/viewer_rgb.png")
 
         return rgb
+
+    def take_photo_named(self, name, n_render_steps=5, save_dir=".", pose=None):
+        """pose=(pos, quat) 로 뷰어 카메라를 옮겨 {save_dir}/{name}.png 로 저장한다."""
+        if pose is not None:
+            og.sim.viewer_camera.set_position_orientation(th.tensor(np.asarray(pose[0]), dtype=th.float),
+                                                          th.tensor(np.asarray(pose[1]), dtype=th.float))
+        for _ in range(n_render_steps):
+            og.sim.render()
+        rgb = og.sim.viewer_camera.get_obs()[0]["rgb"][:, :, :3].cpu().detach().numpy()
+        if rgb.dtype != np.uint8:
+            rgb = (rgb * 255).astype(np.uint8)
+        Image.fromarray(rgb).save(f"{save_dir}/{name}.png")
+        return rgb
+
+    @staticmethod
+    def look_at_pose(target, cam_pos, distance_ratio=None, distance=None):
+        """cam_pos 쪽에서 target 을 바라보는 카메라 포즈. USD 카메라는 -z 로 보고 +y 가 위다."""
+        target = np.asarray(target, dtype=float)
+        cam_pos = np.asarray(cam_pos, dtype=float)
+        d = cam_pos - target
+        if distance is not None:
+            d = d / np.linalg.norm(d) * distance
+        elif distance_ratio is not None:
+            d = d * distance_ratio
+        pos = target + d
+        z_axis = d / np.linalg.norm(d)
+        x_axis = np.cross([0.0, 0.0, 1.0], z_axis)
+        x_axis /= np.linalg.norm(x_axis)
+        y_axis = np.cross(z_axis, x_axis)
+        quat = T.mat2quat(np.stack([x_axis, y_axis, z_axis], axis=1))
+        return pos, quat
+
+    @staticmethod
+    def place_inside_contents(scene, inside_objs, cam_pose, scene_info, radius_ratio=0.6,
+                              settle_steps=300, check_steps=150, max_retries=3, seed=0, drop_flat=False):
+        """그릇 안 내용물을 count 만큼 떨어뜨려 물리로 안착시킨다.
+
+        1. 내용물마다 count 개 인스턴스를 만든다 (count 1 이면 원래 이름, 아니면 name_i).
+        2. 부모 AABB 의 안쪽 반경(반폭 x radius_ratio - 자식 반폭) 안에 해바라기 배치로 펼치고,
+           림 바로 위(겹치지 않게 조금씩 높이를 달리해서)에 놓는다.
+        3. Step 3 물체는 fixed_base + visual_only 로 로드돼 있으므로 충돌만 켠다. 자식은 동적 물체.
+        4. settle_steps 만큼 시뮬레이션한 뒤 검사: 자식 중심이 부모 반폭 안, 자식 바닥이 림보다 아래,
+           부모 바닥보다 위. check_steps 더 돌려 움직임이 작은지도 본다.
+        5. 실패한 부모 그룹은 반경을 줄여 다시 떨어뜨린다 (max_retries).
+           drop_flat 이면 여러 조각 그룹은 누운 자세로 떨어뜨리고, 그 자세에서 FLAT_TILT_TOL_DEG 넘게 기운 것
+           (세워지거나 뒤집힌 것)도 실패로 본다.
+        최종 포즈는 scene_info["objects"] 에 tf_from_cam 으로 넣는다.
+        """
+        rng = np.random.default_rng(seed)
+        golden = np.pi * (3 - np.sqrt(5))
+
+        def np_(x):
+            return x.cpu().numpy() if isinstance(x, th.Tensor) else np.asarray(x)
+
+        # 1. 인스턴스 생성
+        groups = {}
+        up_local = {}   # drop_flat 으로 눕혀 떨어뜨린 인스턴스의, 떨어뜨릴 때 월드 +z 를 향한 로컬 축
+        FLAT_TILT_TOL_DEG = 45.0
+        # 로컬 축 i 를 월드 z 로 세우는 회전 (x -> y 축 기준 -90도, y -> x 축 기준 +90도)
+        to_vertical = [R.from_euler("y", -90, degrees=True).as_matrix(),
+                       R.from_euler("x", 90, degrees=True).as_matrix(), np.eye(3)]
+        with og.sim.stopped():
+            far = 0
+            for name, info in inside_objs.items():
+                n = max(1, int(info.get("count", 1)))
+                for i in range(n):
+                    inst = name if n == 1 else f"{name}_{i}"
+                    obj = DatasetObject(
+                        name=inst,
+                        category=info["category"],
+                        model=info["model"],
+                        visual_only=False,
+                        scale=np.array(info.get("scale", [1.0, 1.0, 1.0])),
+                    )
+                    scene.add_object(obj)
+                    far += 1
+                    obj.set_position_orientation(th.tensor([50.0 + far, 50.0, 1.0], dtype=th.float),
+                                                 th.tensor([0, 0, 0, 1], dtype=th.float))
+                    groups.setdefault(info["parent_object"], []).append((inst, name, info))
+        og.sim.step()
+
+        # 3. Step 3 물체에 충돌을 켠다 (fixed_base 라 움직이지 않는다)
+        for obj_name in list(scene_info["objects"].keys()):
+            o = scene.object_registry("name", obj_name)
+            if o is not None and o.visual_only:
+                o.visual_only = False
+        og.sim.step()
+
+        def parent_geom(parent_name):
+            p = scene.object_registry("name", parent_name)
+            lo, hi = (np_(v) for v in p.aabb)
+            center = np.array([(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2]])
+            half = min(hi[0] - lo[0], hi[1] - lo[1]) / 2
+            return p, lo, hi, center, half
+
+        def drop_group(parent_name, ratio, only=None):
+            """only 가 주어지면 그 인스턴스만 다시 집어 그릇 안 무작위 위치에 떨어뜨린다 (나머지는 그대로)."""
+            p, lo, hi, center, half = parent_geom(parent_name)
+            p_quat = np_(p.get_position_orientation()[1])
+            members = groups[parent_name]
+            z_cursor = hi[2] + 0.005
+            if only is not None:
+                # 다시 놓을 때는 림이 아니라 이미 누운 조각들의 바닥 바로 위에서, 그 조각들과 먼 빈자리에 놓는다.
+                # 림 높이에서 경사진 벽에 떨어뜨리면 같은 조각이 매번 굴러 뒤집힌다.
+                settled = [scene.object_registry("name", m[0]) for m in members if m[0] not in only]
+                settled_xy = [np_(o.get_position_orientation()[0])[:2] for o in settled]
+                if settled:
+                    z_cursor = min(np_(o.aabb[0])[2] for o in settled) + 0.01
+            for k, (inst, name, info) in enumerate(members):
+                if only is not None and inst not in only:
+                    continue
+                obj = scene.object_registry("name", inst)
+                parent_re = np.array(info.get("parent_re_axis_mat", np.eye(3)))
+                child_re = np.array(info.get("re_axis_mat", np.eye(3)))
+                rot = parent_re @ np.linalg.inv(child_re) @ T.quat2mat(p_quat)
+                flat = drop_flat and len(members) > 1
+                if flat:
+                    # 가장 얇은 로컬 축을 세로로: 썬 파 고리, 만두처럼 쏟아 넣는 조각이 눕는 자세
+                    pts = np_(obj.root_link.collision_boundary_points_local)
+                    rot = to_vertical[int(np.argmin(pts.max(axis=0) - pts.min(axis=0)))]
+                if len(members) > 1:
+                    yaw = rng.uniform(-np.pi, np.pi)
+                    rot = R.from_euler("z", yaw).as_matrix() @ rot
+                quat = T.mat2quat(rot)
+                if flat:
+                    up_local[inst] = rot.T @ np.array([0.0, 0.0, 1.0])
+                obj.set_position_orientation(th.tensor([50.0, 50.0 + k, 1.0], dtype=th.float),
+                                             th.tensor(quat, dtype=th.float))
+                obj.keep_still()
+                og.sim.step()
+                clo, chi = (np_(v) for v in obj.aabb)
+                c_half = max(chi[0] - clo[0], chi[1] - clo[1]) / 2
+                c_h = chi[2] - clo[2]
+                c_off = np_(obj.get_position_orientation()[0])[2] - clo[2]   # 원점 - 바닥
+                r_allow = max(0.0, half * ratio - c_half)
+                n = len(members)
+                if n == 1:
+                    dx = dy = 0.0
+                elif only is not None:
+                    cands = []
+                    for _ in range(32):
+                        rho = r_allow * np.sqrt(rng.uniform(0, 1))
+                        th_ = rng.uniform(0, 2 * np.pi)
+                        cands.append(np.array([rho * np.cos(th_), rho * np.sin(th_)]))
+                    dist = [min([np.linalg.norm(center[:2] + c - q) for q in settled_xy] or [0.0]) for c in cands]
+                    dx, dy = cands[int(np.argmax(dist))]
+                    settled_xy.append(center[:2] + np.array([dx, dy]))
+                else:
+                    rho = r_allow * np.sqrt((k + 0.5) / n)
+                    th_ = k * golden + rng.uniform(0, 2 * np.pi) * 0.1
+                    dx, dy = rho * np.cos(th_), rho * np.sin(th_)
+                z = z_cursor + c_off
+                z_cursor += c_h * 0.6 + 0.002 if n > 1 else 0.0
+                obj.set_position_orientation(th.tensor([center[0] + dx, center[1] + dy, z], dtype=th.float),
+                                             th.tensor(quat, dtype=th.float))
+                obj.keep_still()
+
+        def check_group(parent_name):
+            p, lo, hi, center, half = parent_geom(parent_name)
+            res = {}
+            for inst, name, info in groups[parent_name]:
+                obj = scene.object_registry("name", inst)
+                pos = np_(obj.get_position_orientation()[0])
+                clo, chi = (np_(v) for v in obj.aabb)
+                r = float(np.linalg.norm(pos[:2] - center[:2]))
+                tilt = None
+                if inst in up_local:
+                    up_now = T.quat2mat(np_(obj.get_position_orientation()[1])) @ up_local[inst]
+                    tilt = float(np.rad2deg(np.arccos(np.clip(up_now[2], -1.0, 1.0))))
+                res[inst] = {
+                    "tilt_from_flat_deg": tilt,
+                    "upright": tilt is None or tilt <= FLAT_TILT_TOL_DEG,
+                    "pos": pos.tolist(),
+                    "r_xy": r,
+                    "parent_half": float(half),
+                    "child_bottom_z": float(clo[2]),
+                    "parent_bottom_z": float(lo[2]),
+                    "parent_rim_z": float(hi[2]),
+                    "inside_xy": r <= half,
+                    "below_rim": float(clo[2]) < float(hi[2]),
+                    "above_bottom": float(clo[2]) > float(lo[2]) - 0.005,
+                }
+            return res
+
+        def settle(n):
+            for _ in range(n):
+                og.sim.step()
+
+        ratios = {pn: radius_ratio for pn in groups}
+        pending = list(groups.keys())
+        attempts = {pn: 0 for pn in groups}
+        results = {}
+        redrop = {}   # 부모 -> 넘어지기만 한 인스턴스 (그것만 다시 떨어뜨린다)
+        while pending:
+            for pn in pending:
+                drop_group(pn, ratios[pn], only=redrop.pop(pn, None))
+                attempts[pn] += 1
+            settle(settle_steps)
+            before = {pn: check_group(pn) for pn in pending}
+            settle(check_steps)
+            next_pending = []
+            for pn in pending:
+                after = check_group(pn)
+                ok_all = True
+                for inst, a in after.items():
+                    moved = float(np.linalg.norm(np.array(a["pos"]) - np.array(before[pn][inst]["pos"])))
+                    a["moved_during_check"] = moved
+                    a["stable"] = moved < 0.01
+                    a["ok"] = a["inside_xy"] and a["below_rim"] and a["above_bottom"] and a["stable"] and a["upright"]
+                    ok_all &= a["ok"]
+                results[pn] = after
+                if not ok_all and attempts[pn] <= max_retries:
+                    bad = [k for k, a in after.items() if not a["ok"]]
+                    # 그릇 밖으로 나갔을 때만 반경을 줄인다. 넘어지기만 했으면 반경을 줄이면 더 겹쳐 쌓이므로 그대로 둔다.
+                    left = any(not (a["inside_xy"] and a["below_rim"] and a["above_bottom"]) for a in after.values())
+                    print(f"[place_inside_contents] {pn}: some contents left the parent or tipped over {bad} "
+                          f"(attempt {attempts[pn]}), retry" + (" with smaller radius" if left else ""))
+                    if left:
+                        ratios[pn] *= 0.6
+                    elif drop_flat:
+                        # 그릇 안에는 다 있고 일부가 넘어지기만 했다: 넘어진 조각만 다시 집어 떨어뜨린다
+                        redrop[pn] = set(bad)
+                    next_pending.append(pn)
+            pending = next_pending
+
+        # scene_info 에 기록
+        report = {"parents": {}, "instances": {}}
+        for pn, members in groups.items():
+            _, lo, hi, center, half = parent_geom(pn)
+            report["parents"][pn] = {"center": [center[0], center[1], (lo[2] + hi[2]) / 2],
+                                     "half_width": half, "bottom_z": lo[2], "rim_z": hi[2],
+                                     "attempts": attempts[pn], "radius_ratio": ratios[pn],
+                                     "members": [m[0] for m in members]}
+            for inst, name, info in members:
+                obj = scene.object_registry("name", inst)
+                obj_pos, obj_quat = obj.get_position_orientation()
+                scene_info["objects"][inst] = {
+                    "category": obj.category,
+                    "model": obj.model,
+                    "scale": obj.scale,
+                    "bbox_extent": obj.aabb_extent.cpu().detach().numpy(),
+                    "tf_from_cam": T.pose2mat(T.relative_pose_transform(
+                        obj_pos, obj_quat, cam_pose[0], cam_pose[1])),
+                    "mount": {"floor": False, "wall": False},
+                    "parent_object": pn,
+                    "placement": "inside",
+                    "source_object": name,
+                }
+                report["instances"][inst] = {**results[pn][inst], "parent": pn, "category": obj.category}
+
+        def to_builtin(x):
+            if isinstance(x, dict):
+                return {k: to_builtin(v) for k, v in x.items()}
+            if isinstance(x, (list, tuple)):
+                return [to_builtin(v) for v in x]
+            if isinstance(x, th.Tensor):
+                return x.cpu().tolist()
+            if isinstance(x, np.ndarray):
+                return x.tolist()
+            if isinstance(x, (np.floating, np.integer, np.bool_)):
+                return x.item()
+            return x
+
+        report = to_builtin(report)
+        for inst, r in report["instances"].items():
+            print(f"  {inst:24s} parent={r['parent']:12s} ok={r['ok']} r_xy={r['r_xy']:.3f}/{r['parent_half']:.3f} "
+                  f"bottom={r['child_bottom_z']:.3f} (bowl {r['parent_bottom_z']:.3f}~{r['parent_rim_z']:.3f}) "
+                  f"moved={r['moved_during_check']:.4f} tilt={r['tilt_from_flat_deg']}")
+        return report
 
     def joint_test(self, scene, n_render_steps=5):
         """
