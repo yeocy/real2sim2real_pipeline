@@ -22,6 +22,7 @@ os.environ["OMNIGIBSON_HEADLESS"] = "1"
 import numpy as np
 import torch as th
 import omnigibson as og
+from our_method.utils.asset_pool import use_pool_usd, DEFAULT_POOL_ROOT  # launch 전에 import (PIL 충돌)
 from omnigibson.object_states import Touching
 
 from our_method.utils.physics_settle import (np_, world_pose, yaw_tilt, wrap, supports_of, load_scene,
@@ -112,6 +113,8 @@ def main():
     ap.add_argument("--z_tol", type=float, default=0.005)
     ap.add_argument("--yaw_tol", type=float, default=3.0)
     ap.add_argument("--pen_tol", type=float, default=0.003)
+    ap.add_argument("--usd_pool", default=None,
+                    help="USD 를 먼저 불러올 풀 (기본: 통합 풀 kist_twin). 'none' 이면 OG 데이터셋만 쓴다")
     args = ap.parse_args()
 
     with open(args.scene_info) as f:
@@ -119,6 +122,8 @@ def main():
     sup = supports_of(scene_info)
 
     og.launch()
+    if (args.usd_pool or "").lower() != "none":
+        use_pool_usd(args.usd_pool or DEFAULT_POOL_ROOT)
 
     scene = load_scene(scene_info, "static", args.fixed_categories)
     og.sim.step()

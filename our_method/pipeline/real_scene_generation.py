@@ -25,6 +25,7 @@ from our_method.utils.scene_utils import create_scene, take_photo, compute_relat
     compute_obj_bbox_info, align_obj_with_wall, get_vis_cam_trajectory
 from our_method.utils.physics_settle import resolve_cfg as resolve_physics_settle_cfg, settle_scene
 import our_method.utils.transform_utils as T
+from our_method.utils.asset_pool import sam3d_pose
 
 
 class RealSceneGenerator:
@@ -312,6 +313,15 @@ class RealSceneGenerator:
             
             pc_obj = self._load_obj_pc(obj_name, verbose=self.verbose)
             cousin_info = obj_info["cousins"][obj_cousin_idx]
+            # SAM3D 생성 모드: 검출마다 자기 메시를 만들고 [align] 이 입력 이미지에 yaw/xy 를 맞춰 두었다.
+            # 그러면 Step 2 의 cousin/yaw 대신 자기 에셋을 그 pose 로 놓는다 (asset_pool.sam3d_pose).
+            aligned = sam3d_pose(obj_name)
+            if aligned is not None:
+                if self.verbose and (aligned["category"], aligned["model"]) != (cousin_info["category"],
+                                                                              cousin_info["model"]):
+                    log.info(f"  [{obj_name}] cousin {cousin_info['category']}/{cousin_info['model']} -> "
+                             f"자기 SAM3D 에셋 {aligned['category']}/{aligned['model']}")
+                cousin_info = {**cousin_info, "category": aligned["category"], "model": aligned["model"]}
 
             # Import the cousin asset
             with og.sim.stopped():
@@ -354,7 +364,7 @@ class RealSceneGenerator:
 
             # 지지 물체 기준 yaw 정렬. 적용되면 align_model_pose 의 점군 기반 yaw 보정은 끈다.
             support_yaw_info = None
-            if self.support_yaw_align is not None:
+            if self.support_yaw_align is not None and aligned is None:
                 support_yaw_info = self._support_aligned_yaw(obj_name, obj, cousin_info, final_z_angle,
                                                              pan_angle_offset)
                 if support_yaw_info is not None:
@@ -365,6 +375,7 @@ class RealSceneGenerator:
                 obj_ori_offset=cousin_info["ori_offset"], z_dir=deepcopy(self.z_dir),
                 cam_pos=self.cam_pos, cam_quat=self.cam_quat, is_articulated=is_articulated, verbose=self.verbose,
                 refine_yaw=support_yaw_info is None,
+                pose_cam=aligned["pose_cam"] if aligned is not None else None,
             )
             
             take_photo(n_render_steps=50)
@@ -390,6 +401,8 @@ class RealSceneGenerator:
             }
             if support_yaw_info is not None:
                 obj_scene_info["support_yaw_align"] = support_yaw_info
+            if aligned is not None:
+                obj_scene_info["sam3d_aligned"] = {k: aligned[k] for k in ("yaw", "symmetric", "ambiguous")}
             with open(f"{obj_save_dir}/{obj_name}_scene_info.json", "w+") as f:
                 json.dump(obj_scene_info, f, indent=4, cls=NumpyTorchEncoder)
 

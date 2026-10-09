@@ -175,6 +175,8 @@ def main():
     ap.add_argument("--depth", default=None, help="GT depth (기본: camera_info 옆 camera_depth.npy). fit 에서 쓴다")
     ap.add_argument("--seg_dir", default=None, help="Step 1 마스크 폴더 (기본: scene_info 위쪽에서 찾음). fit 에서 쓴다")
     ap.add_argument("--out_dir", default=None)
+    ap.add_argument("--usd_pool", default=None,
+                    help="USD 를 먼저 불러올 풀 (기본: 통합 풀 kist_twin). 'none' 이면 OG 데이터셋만 쓴다")
     ap.add_argument("--suffix", default="", help="출력 파일 이름 뒤에 붙일 말 (예: whitefloor)")
     ap.add_argument("--lighting", choices=["default", "mujoco"], default="mujoco",
                     help="default: OG 기본 skybox / mujoco: 흰 dome + 카메라 방향광 (MuJoCo headlight 흉내)")
@@ -246,8 +248,11 @@ def main():
     import omnigibson as og
     from omnigibson.objects import LightObject
     from our_method.utils.physics_settle import load_scene
+    from our_method.utils.asset_pool import use_pool_usd, DEFAULT_POOL_ROOT  # launch 전에 import (PIL 충돌)
 
     og.launch()
+    if (args.usd_pool or "").lower() != "none":
+        use_pool_usd(args.usd_pool or DEFAULT_POOL_ROOT)
     scene = load_scene(new_info, "static", [])
     intr = cam["intrinsics"]
     W, H = int(intr["image_width"]), int(intr["image_height"])

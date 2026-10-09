@@ -13,8 +13,8 @@ add_soup_powder). 알갱이는 USD prim 이라 GAIA retrieval 에 잡히지 않�
      으로 알갱이를 쌓고 안착시킨 뒤 위치를 저장한다 (_build/soup_grains_settled.npy).
   2. 굽기: soup_powder/kpowderclean 을 틀로 삼아 visual 은 알갱이 2000개를 합친 메시
      (정점색 = SOUP_COLOR), collision 은 그 볼록 껍질로 바꿔 .../kgrains.encrypted.usd 로 저장.
-  3. 렌더: 검은 배경, 앙각 40도, 뷰 100장 + 스냅샷을 섹션 3 로컬 풀
-     (asset_pools_local/kist_el40_s3/objects/soup_powder) 에 넣는다.
+  3. 렌더: 검은 배경, 앙각 40도, 뷰 100장 + 스냅샷을 통합 풀
+     (asset_pools_local/kist_twin/objects/soup_powder) 에 넣는다.
 
 실행 (acdc env, PYTHONPATH 에 airlab_twin):
   python build_soup_grains_asset.py [--force] [--skip-sim] [--skip-usd] [--skip-render]
@@ -33,7 +33,7 @@ from scipy.spatial.transform import Rotation as R
 import our_method.utils.transform_utils as T
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
-DST_POOL = os.path.join(TEST_DIR, "asset_pools_local", "kist_el40_s3")
+DST_POOL = os.path.join(TEST_DIR, "asset_pools_local", "kist_twin")
 BUILD_DIR = os.path.join(TEST_DIR, "asset_pools_local", "_build")
 SETTLED_NPY = os.path.join(BUILD_DIR, "soup_grains_settled.npy")
 CATEGORY = "soup_powder"

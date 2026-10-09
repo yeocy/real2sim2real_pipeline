@@ -8,7 +8,7 @@
 **출발점 (섹션 3에서 생김)**: `our_method_test/s3_build_upright_noodle.py`가 모델 **하나**(`instant_noodle_block/vnoodles`)에 대해 전 과정을 이미 구현했다. 이걸 일반화하는 것이 이 섹션의 핵심이다.
 - USD 복호화 → 축별 스케일 굽기(메시 points/extent + 루트 `ig:nativeBB`) → 재암호화 (`bake_usd`)
 - 검은 배경, 앙각 40°, 1280×720, yaw 3.6° 간격 100장 + 스냅샷 렌더 (`render_views`)
-- 로컬 풀 생성: 바꾼 카테고리만 실제 파일로 두고, 나머지는 원본 풀로 심볼릭 링크 → `asset_pools_local/kist_el40_s3/`
+- 풀 채우기: 원본 풀의 나머지 카테고리를 실제 파일로 복사하고, 바꾼 카테고리만 새로 넣는다 → 통합 풀 `asset_pools_local/kist_twin/`
 - 상수(`SRC_POOL`, `N_VIEWS=100`, `ELEVATION_DEG=40`, 카테고리/모델명)가 하드코딩돼 있다.
 **SAM3D 결과물(메시/USD) 폴더를 주면 GAIA가 바로 쓸 수 있는 asset pool을 자동으로 만들어 주는 도구**를 만든다.
 
@@ -36,7 +36,7 @@
 |---|---|
 | `our_method_test/asset_pools/kist_mujoco_final_el40/` | **정답 예시** (카테고리 10개 / 모델 13개) |
 | `our_method_test/s3_build_upright_noodle.py` | **단일 모델용 구현** (스케일 굽기 + 렌더 + 로컬 풀). 일반화 대상 |
-| `our_method_test/asset_pools_local/kist_el40_s3/` | 위 스크립트의 결과. 섹션 3의 Step 6이 쓰는 중이니 **덮어쓰지 말 것** |
+| `our_method_test/asset_pools_local/kist_twin/` | 현재 통합 풀 (Step 2·6 공용, 카테고리 11개). 파이프라인이 쓰는 중이니 **기존 카테고리를 덮어쓰지 말 것** |
 | `our_method_test/asset_pool_tool.py` | 기존 도구: `check`(풀 검증), `subset`(기존 assets 일부를 링크), `search` |
 | `our_method/utils/asset_pool.py` | `AssetPool`, `resolve_asset_pool`, `validate()` |
 | `our_method/utils/dataset_utils.py` | 카테고리/모델 열거, 파일명 파싱 |
@@ -63,7 +63,7 @@ python asset_pool_tool.py build \
 - 사용법을 이 문서 아래나 스크립트 docstring에 적는다.
 
 ## 주의할 점
-- 기존 풀(`asset_pools/kist_mujoco_final_el40`), `asset_pools_local/kist_el40_s3`, KIST 원본 폴더는 **덮어쓰지 않는다.** 새 이름으로 만든다.
+- 기존 풀(`asset_pools/kist_mujoco_final_el40`), 통합 풀 `asset_pools_local/kist_twin`, KIST 원본 폴더는 **덮어쓰지 않는다.** 새 풀은 새 이름으로 만든다.
 - 일반화한 뒤 `s3_build_upright_noodle.py`를 새 도구의 한 사용 예로 대체할 수 있다. 다만 기존 스크립트는 지우지 말고, 새 도구로 같은 풀을 재현할 수 있다는 것까지 확인한 뒤 사용자에게 정리할지 묻는다.
 - 재현성 검증은 현재 기준 결과(`acdc_out_s5_physics`, config `s5_physics.yaml`)로 한다.
 - 참고 구현이 하나 더 있다: `our_method_test/build_soup_grains_asset.py`. 알갱이 2000개를 시뮬레이션으로 안착시킨 모양을 메시 하나로 합치고, 템플릿 USD(`kpowderclean`)의 visual·collision·질량·`ig:nativeBB`를 바꿔 새 에셋을 만든다. "메시를 새로 만들어 넣는" 경우의 예시다.

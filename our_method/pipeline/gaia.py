@@ -14,6 +14,9 @@ from our_method.models.feature_matcher import FeatureMatcher
 from our_method.pipeline.extraction import RealWorldExtractor
 from our_method.pipeline.matching import DigitalCousinMatcher
 from our_method.pipeline.real_scene_generation import RealSceneGenerator
+from our_method.pipeline.scene_object_filter import SceneObjectFilter
+from our_method.pipeline.sam3d_asset_generation import sam3d_enabled, sam3d_pool_root
+import json
 from our_method.pipeline.task_object_extraction_and_spatial_reasoning import TaskObjectExtractionAndSpatialReasoning
 from our_method.pipeline.task_object_retrieval import TaskObjectRetrieval
 from our_method.pipeline.task_scene_generation import TaskSceneGenerator
@@ -114,6 +117,12 @@ class GAIA:
         # 각 step 의 `call:` 안에 asset_pool 이 따로 있으면 그쪽을 우선한다.
         # (예: 배경은 기본 풀, task object 만 자체 풀 — 같은 구성이 가능하다)
         default_asset_pool = config.get("asset_pool", None)
+        # SAM3D 생성 모드: Step 1.5 가 만든 풀(sam3d_pool_root)이 retrieval 풀이다
+        if sam3d_enabled(config):
+            default_asset_pool = {"root": sam3d_pool_root(config, save_dir), "include_categories": None,
+                                  "include_categories_file": None, "exclude_categories": [], "strict": True}
+            for step in ["DigitalCousinMatcher", "TaskObjectRetrieval"]:
+                config["pipeline"][step]["call"]["asset_pool"] = None
         for step in ["DigitalCousinMatcher", "TaskObjectRetrieval"]:
             step_call = config["pipeline"][step]["call"]
             if step_call.get("asset_pool", None) is None:
@@ -183,6 +192,31 @@ class GAIA:
 
         # Step 3: Simulated Scene Generation
         if run_step_3:
+            # Step 2.5: 배치하지 않을 검출(배경, 중복, 엉뚱한 매칭)을 GPT 로 고른다 (scene_object_filter.py).
+            # config 의 pipeline.SceneObjectFilter.call.enabled 가 true 일 때만. 수동 discard_objs 와 합친다.
+            filter_call = config["pipeline"].get("SceneObjectFilter", {}).get("call", {})
+            if sam3d_enabled(config):
+                # Step 1.5 필터 결과를 그대로 쓴다 (discard 된 물체는 풀에 에셋이 없다)
+                f15 = os.path.join(save_dir, "step_1_5_output", "object_filter.json")
+                auto_discard = json.load(open(f15))["discard"] if os.path.exists(f15) else []
+                step_3_call = config["pipeline"]["RealSceneGenerator"]["call"]
+                manual = [n for n in (step_3_call.get("discard_objs") or "").split(",") if n]
+                merged = sorted(set(manual) | set(auto_discard))
+                step_3_call["discard_objs"] = ",".join(merged) if merged else None
+            elif filter_call.get("enabled", False):
+                log.debug("Running GAIA: Step 2.5 -- Scene Object Filter")
+                auto_discard = SceneObjectFilter(gpt=self.gpt, verbose=config["pipeline"]["verbose"])(
+                    step_1_output_path=step_1_output_path,
+                    step_2_output_path=step_2_output_path,
+                    goal_task=goal_task,
+                    save_dir=save_dir,
+                    use_cache=filter_call.get("use_cache", True),
+                )
+                step_3_call = config["pipeline"]["RealSceneGenerator"]["call"]
+                manual = [n for n in (step_3_call.get("discard_objs") or "").split(",") if n]
+                merged = sorted(set(manual) | set(auto_discard))
+                step_3_call["discard_objs"] = ",".join(merged) if merged else None
+
             log.debug("Running GAIA: Step 3 -- Simulated Scene Generation")
 
             step_3 = RealSceneGenerator(

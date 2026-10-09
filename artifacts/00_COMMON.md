@@ -42,9 +42,15 @@ python our_models_task_generation.py --config configs/<내_config>.yaml
   - 물리 검증: `task_scene_generation/physics_check.json`, `physics_settle_report.json`. 300스텝 안착 후 모든 물체의 이동이 1 mm 이하다. 비교 이미지는 `final_cam_view.png`, `final_closeup*.png`
   - config의 `pipeline_steps`는 Step 3·7만 켜져 있다. 다른 Step을 다시 돌릴 때는 해당 플래그를 켠다.
 - 처음 실행 결과(섹션 1·3·5 이전): `our_method_test/acdc_out_el40_recap/`. 비교용으로만 남겨 둔다.
-- Step 6(그릇 안 내용물 retrieval) 풀: `our_method_test/asset_pools_local/kist_el40_s3/`. 원본 풀을 카테고리별로 링크하고, 다음 두 가지만 실제 파일로 둔 풀이다.
-  - `instant_noodle_block/vnoodles`: 세운 라면사리. 생성 스크립트 `s3_build_upright_noodle.py`
-  - `soup_powder/kgrains`: 라면 스프. 디지털 트윈(`KIST_260928/.../load_scene.py`의 `add_soup_powder`)과 같은 조건으로 1.2 mm 알갱이 2000개를 6 cm 컵에 안착시켜, 그 모양을 강체 하나로 구운 에셋이다. 크기 4.3×4.3×3.6 cm, 20 g, 충돌은 볼록 껍질 하나. 생성 스크립트 `build_soup_grains_asset.py`
+- **asset pool은 하나다: `our_method_test/asset_pools_local/kist_twin/`** (Step 2 테이블 위 물체 매칭, Step 6 그릇 안 내용물 검색이 같이 쓴다). 링크 없이 실제 파일이라 원본 폴더 없이도 동작한다.
+  - 원본 풀 `kist_mujoco_final_el40`(카테고리 10개)을 복사한 뒤 두 가지를 바꿨다.
+  - `instant_noodle_block`: 눕힌 사리 `knoodles` 대신 세운 사리 `vnoodles`. 생성 스크립트 `s3_build_upright_noodle.py`
+  - `soup_powder/kgrains` 추가: 라면 스프. 디지털 트윈(`KIST_260928/.../load_scene.py`의 `add_soup_powder`)과 같은 조건으로 1.2 mm 알갱이 2000개를 6 cm 컵에 안착시킨 모양을 강체 하나로 구운 에셋이다. 4.3×4.3×3.6 cm, 20 g, 충돌은 볼록 껍질 하나. 생성 스크립트 `build_soup_grains_asset.py`
+  - 두 스크립트 모두 이 풀에 바로 쓴다.
+- **시뮬레이터 USD도 같은 풀에서 불러온다**: `kist_twin/og_dataset/objects/<카테고리>/<모델>/usd/` (14개 모델, 실제 파일).
+  - 파이프라인: config 최상위 `usd_pool: true` → `asset_pool.root` 풀의 USD를 먼저 쓴다. 풀에 없는 모델만 OG 데이터셋(`deps/.../og_dataset`)으로 간다.
+  - 도구(`render_with_extrinsic.py`, `view_scene.py`, `check_scene_physics.py`): 기본으로 `kist_twin`을 쓴다. `--usd_pool none`이면 OG 데이터셋만 쓴다.
+  - 구현: `our_method/utils/asset_pool.py`의 `use_pool_usd()`가 `DatasetObject.get_usd_path`를 바꾼다. 풀에 새 모델을 넣을 때는 렌더(`objects/`)와 USD(`og_dataset/objects/`)를 둘 다 넣는다.
 - 리사이즈 단계(`task_object_resizing.py`)는 섹션 3에서 제거됐다. 파이프라인은 Step 4·5 → 6 → 7로 이어진다.
 - 도구:
   - `check_scene_physics.py <scene_info.json>`: 관통과 안착 상태 측정
@@ -68,7 +74,7 @@ python our_models_task_generation.py --config configs/<내_config>.yaml
    | 4 | 새 스크립트(`our_method_test/build_asset_pool.py` 등), `our_method/utils/asset_pool.py`, `our_method_test/asset_pool_tool.py` |
 
 3. **새 기능은 config 옵션이나 환경변수로 켜고 끈다.** 끈 상태에서는 현재 기준 결과가 그대로 재현돼야 한다.
-4. 원본 폴더(`real2sim2real_pipeline`), 기준 결과 폴더 두 개, 원본 풀(`asset_pools/kist_mujoco_final_el40`), `asset_pools_local/kist_el40_s3`의 기존 카테고리는 수정하지 않는다.
+4. 원본 폴더(`real2sim2real_pipeline`), 기준 결과 폴더 두 개, 원본 풀(`asset_pools/kist_mujoco_final_el40`), 통합 풀 `asset_pools_local/kist_twin`의 기존 카테고리는 수정하지 않는다. 새 카테고리는 추가해도 된다.
 5. 커밋은 사용자가 요청할 때만 한다. 섹션 1·3·5와 스프 에셋 변경도 아직 커밋 전이다.
 
 ## 4. 알려진 무해한 로그

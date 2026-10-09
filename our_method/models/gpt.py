@@ -457,6 +457,89 @@ class GPT:
             "max_output_tokens": 16
         }
 
+    def payload_filter_scene_objects(self, annotated_img_path, objects, goal_task=None):
+        """
+        검출된 물체마다 트윈 씬에 넣을지(keep) 뺄지(discard) 판단한다 (Responses API).
+
+        Step 1 직후(SAM3D 로 만들 물체 고르기, 매칭 정보 없음) 또는 Step 2 뒤(매칭 정보 있음)에 쓴다.
+        배경(벽걸이 TV 등), 같은 물체를 쪼갠 중복 검출, 작업면 가구(테이블 — Step 1 이 그 윗면을
+        씬 바닥으로 쓴다), 엉뚱한 에셋으로 매칭된 배경 물체가 씬에 들어가는 것을 막는다.
+        규칙은 프롬프트에 고정해 두고, 결과는 JSON 으로 받는다.
+
+        Args:
+            annotated_img_path (str): 입력 사진에 물체 이름 박스를 그린 이미지
+            objects (list of dict): name, phrase, crop_path, (선택) match_category, match_model, snapshot_path
+            goal_task (None or str): 태스크 문장. 여기서 언급된 물체는 항상 keep
+
+        Returns:
+            dict: Prompt payload for client.responses.create(**payload)
+        """
+        instructions = (
+            "You are an expert in robot manipulation and in reconstructing real scenes as simulated digital twins.\n\n"
+            "The user will show an image of a manipulation scene with labeled object detections, and for each "
+            "detection a crop of the object (and, if available, the 3D asset it was matched to). Decide for every "
+            "detection whether it should be placed in the simulated twin of the manipulation workspace."
+        )
+        rules = (
+            "### Decision rules (apply in order) ###\n"
+            "KEEP:\n"
+            "K1. The object is mentioned in the task instruction, or is the same kind of object as one mentioned.\n"
+            "K2. The object rests on the main work surface the robot manipulates on (table, counter, desk), "
+            "including fixtures standing on it (microwave, cabinet, stove, basket, rack, caddy).\n"
+            "DISCARD:\n"
+            "D0. The work surface furniture itself (the table, counter or desk the objects rest on, or its top). "
+            "Its top surface is already used as the ground plane of the twin scene, so it must not be created.\n"
+            "D1. Background object outside the workspace: behind or beyond the work surface, hanging on or mounted to "
+            "a wall (television, monitor, picture, wall shelf, clock), or standing on a different piece of furniture "
+            "in the background.\n"
+            "D2. Room structure: wall, floor, ceiling, door, window, backsplash, curtain.\n"
+            "D3. Duplicate or fragment: the box covers only part of an object that another detection already covers. "
+            "Keep the more complete one (if it is kept at all) and discard the fragment.\n"
+            "D4. (Only when a matched asset is shown) The matched asset is clearly a different kind of object than the "
+            "detection (for example a television matched to a table) and the object is not required by K1. Placing it "
+            "would create a wrong object.\n"
+            "If none of the rules clearly applies and the object rests on the work surface, KEEP it.\n\n"
+            "### Output format ###\n"
+            "Return only JSON, no markdown:\n"
+            '{"objects": [{"name": "<detection name>", "decision": "keep" or "discard", '
+            '"rule": "<K1|K2|D0|D1|D2|D3|D4>", "reason": "<short reason>"}, ...]}\n'
+            "Every detection name must appear exactly once."
+        )
+        content = [
+            {"type": "input_text",
+             "text": ("### Task instruction ###\n"
+                      f"{goal_task if goal_task else '(none given)'}\n\n" + rules)},
+            {"type": "input_text",
+             "text": "Full scene. Each detection is drawn as a box labeled with its name:"},
+            {"type": "input_image",
+             "image_url": f"data:image/png;base64,{self.encode_image(annotated_img_path)}",
+             "detail": "high"},
+        ]
+        for o in objects:
+            if o.get("match_category"):
+                text = (f"Detection '{o['name']}' (caption: '{o['phrase']}'), matched to asset "
+                        f"category '{o['match_category']}' / model '{o['match_model']}'. "
+                        "First image: crop of the detection. Second image: the matched asset.")
+            else:
+                text = f"Detection '{o['name']}' (caption: '{o['phrase']}'). Image: crop of the detection."
+            content.append({"type": "input_text", "text": text})
+            content.append({"type": "input_image",
+                            "image_url": f"data:image/png;base64,{self.encode_image(o['crop_path'])}",
+                            "detail": "low"})
+            if o.get("snapshot_path"):
+                content.append({"type": "input_image",
+                                "image_url": f"data:image/png;base64,{self.encode_image(o['snapshot_path'])}",
+                                "detail": "low"})
+        content.append({"type": "input_text", "text": "Now decide for every detection and return the JSON."})
+
+        return {
+            "model": self.VERSIONS[self.version],
+            "instructions": instructions,
+            "input": [{"role": "user", "content": content}],
+            "temperature": 0,
+            "max_output_tokens": 2048,
+        }
+
     def payload_select_object_from_list(self, img_path, obj_list, bbox_img_path, nonproject_obj_img_path):
         """
         Generates custom prompt payload for selecting an object from a list of objects (Responses API)

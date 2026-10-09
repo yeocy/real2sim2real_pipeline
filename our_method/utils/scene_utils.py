@@ -7,6 +7,7 @@ import digital_cousins.utils.transform_utils as T
 from digital_cousins.utils.processing_utils import distance_to_plane, create_polygon_from_vertices
 import omnigibson as og
 from omnigibson.scenes import Scene
+from our_method.utils.asset_pool import is_scale_baked
 
 def create_scene(floor=True, sky=True):
     """
@@ -85,6 +86,7 @@ def align_model_pose(
         is_articulated,
         verbose=False,
         refine_yaw=True,
+        pose_cam=None,
 ):
     """
     Computes an object model's pose expressed in the OG world frame, given camera information, the object's model,
@@ -105,6 +107,9 @@ def align_model_pose(
         verbose (bool): Whether to use verbose print out or not
         refine_yaw (bool): Whether to refine @obj_z_angle with the point cloud's 2D oriented bounds. 호출 측이
             이미 외곽선 등으로 yaw 를 확정했다면 False 로 꺼서 그 값을 그대로 쓴다.
+        pose_cam (None or (4,4) array): 입력 카메라(opengl) 기준 에셋 원점 pose. SAM3D 에셋의 [align] 단계가
+            입력 이미지와 render-and-compare 로 맞춘 것 (asset_pool.sam3d_pose). 주어지면 점군 bbox/z_angle 대신
+            이 pose 의 위치와 yaw 로 바로 놓는다 (스케일은 그대로, 기울기는 OG 바닥에 맞춰 버린다).
 
     Returns:
         3-tuple:
@@ -115,6 +120,9 @@ def align_model_pose(
     """
     # Make sure sim is playing
     assert og.sim.is_playing()
+
+    if pose_cam is not None:
+        return _place_with_cam_pose(obj, pose_cam, cam_pos, cam_quat, verbose=verbose)
 
     # 포인트 클라우드를 정렬
     # x -> tilt, z -> yaw
@@ -174,9 +182,14 @@ def align_model_pose(
     obj.keep_still()
     og.sim.step_physics()
     obj_aabb_extent = obj.aabb_extent
-    # GAIA_NO_FIT_SCALE=1 이면 에셋을 점군에 맞춰 늘리지 않고 실치수를 쓴다.
-    # 변수를 주지 않으면 기존 동작 그대로다.
-    scale_factor = (th.ones_like(obj_aabb_extent) if os.environ.get('GAIA_NO_FIT_SCALE')
+    # 점군에 맞춰 늘리지 않고 에셋 실치수를 쓰는 경우:
+    #   - SAM3D 로 만들어 실치수를 구운 모델 (풀의 sam3d_assets.json, asset_pool.is_scale_baked). 자동.
+    #   - GAIA_NO_FIT_SCALE=1 이면 전부, 카테고리 목록(GAIA_NO_FIT_SCALE=bowl,pot)이면 그 카테고리만.
+    # 둘 다 아니면 기존 동작 그대로 점군 bbox 에 맞춘다 (기본 assets/ 의 가구 등).
+    no_fit = os.environ.get('GAIA_NO_FIT_SCALE', '')
+    no_fit = (is_scale_baked(obj.category, obj.model)
+              or no_fit.lower() in ('1', 'true', 'all') or obj.category in no_fit.split(','))
+    scale_factor = (th.ones_like(obj_aabb_extent) if no_fit
                     else input_obj_aabb_extent / obj_aabb_extent)
     og.sim.stop()
     obj_scale = obj.scale * scale_factor
@@ -238,6 +251,30 @@ def align_model_pose(
     ))
 
     return obj_scale.cpu().detach().numpy(), obj_bbox_extent, tf_from_cam
+
+def _place_with_cam_pose(obj, pose_cam, cam_pos, cam_quat, verbose=False):
+    """align_model_pose 의 pose_cam 경로. OG 카메라도 opengl 규약이므로 T_world = T_og_cam @ pose_cam.
+
+    Step 3 의 OG 월드는 Step 1 이 추정한 바닥 방향(z_dir)으로 세운 것이라 입력 월드와 기울기가 조금 다를 수 있다.
+    그래서 회전은 물체 x 축을 바닥면에 투영한 yaw 만 쓰고, 물체는 OG 바닥에 똑바로 세운다.
+    """
+    T_w = T.pose2mat((np.asarray(cam_pos, dtype=float), np.asarray(cam_quat, dtype=float))) @ np.asarray(pose_cam)
+    yaw = float(np.arctan2(T_w[1, 0], T_w[0, 0]))
+    obj.set_position_orientation(th.tensor([0, 0, 0], dtype=th.float), th.tensor([0, 0, 0, 1], dtype=th.float))
+    obj.keep_still()
+    og.sim.step_physics()
+    obj_bbox_extent = obj.aabb_extent.cpu().detach().numpy()
+    obj.set_position_orientation(th.tensor(T_w[:3, 3], dtype=th.float),
+                                 th.tensor(T.euler2quat(np.array([0.0, 0.0, yaw])), dtype=th.float))
+    og.sim.step_physics()
+    if verbose:
+        log.info(f"  [{obj.name}] 정렬 pose 로 배치: pos {np.round(T_w[:3, 3], 3)}, yaw {np.degrees(yaw):+.1f}° "
+                 f"(입력 이미지 render-and-compare)")
+    obj_pos, obj_quat = obj.get_position_orientation()
+    tf_from_cam = T.pose2mat(T.relative_pose_transform(
+        obj_pos.cpu().detach().numpy(), obj_quat.cpu().detach().numpy(), cam_pos, cam_quat))
+    return obj.scale.cpu().detach().numpy(), obj_bbox_extent, tf_from_cam
+
 
 def align_model_quat(cam_pos, cam_quat, tilt_angle=0.0, obj_z_angle=0.0):
     """

@@ -182,6 +182,34 @@ def gaia_step_1(args, config_path):
     del pipeline
 
 
+def gaia_step_sam3d(args, config):
+    """Step 1.5: 넣을 물체를 GPT 로 고르고(SceneObjectFilter), 그 물체를 SAM3D 로 만들어 풀을 짓는다.
+
+    사람이 물체/프롬프트/인스턴스 대응을 적지 않는다. 결과 풀은 sam3d_pool_root(config, save_dir).
+    """
+    from our_method.models.gpt import GPT
+    from our_method.pipeline.scene_object_filter import SceneObjectFilter
+    from our_method.pipeline.sam3d_asset_generation import (
+        SAM3DAssetGenerator, generator_call, sam3d_pool_root)
+    from our_method.utils.asset_pool import use_pool_usd
+
+    call = generator_call(config)
+    step_1_output_path = f"{args.save_dir}/step_1_output/step_1_output_info.json"
+    gpt = GPT(api_key=args.gpt_api_key, version=args.gpt_version, token_print=args.token_print,
+              log_dir_tail="_SceneObjectFilter")
+    discard = SceneObjectFilter(gpt)(step_1_output_path=step_1_output_path, goal_task=args.goal_task,
+                                     save_dir=args.save_dir, use_cache=call.get("use_cache", True))
+    det = json.load(open(json.load(open(step_1_output_path))["detected_categories"]))
+    keep = [n for n in det["names"] if n not in discard]
+    pool = SAM3DAssetGenerator()(
+        step_1_output_path=step_1_output_path, keep_names=keep, save_dir=args.save_dir,
+        inputs_dir=os.path.dirname(args.test_depth_img_path), pool_root=sam3d_pool_root(config, args.save_dir),
+        image=os.path.join(TEST_DIR, call["image"]) if call.get("image") else None,
+        gpus=call.get("gpus"), elevation=call.get("elevation", 40.0), title=args.goal_task,
+        use_cache=call.get("use_cache", True))
+    use_pool_usd(pool)
+
+
 def gaia_step_2(args, config_path):
     """Run GAIA pipeline step 2: Digital cousin matching."""
     pipeline = GAIA(config=config_path)
@@ -214,7 +242,8 @@ def gaia_step_3(args, config_path):
         step_2_output_path=f"{args.save_dir}/step_2_output/step_2_output_info.json",
         gpt_api_key=args.gpt_api_key,
         gpt_version=args.gpt_version,
-        gpt_token_print=args.token_print
+        gpt_token_print=args.token_print,
+        goal_task=args.goal_task,   # Step 2.5 SceneObjectFilter 가 태스크 물체를 keep 하는 데 쓴다
     )
     del pipeline
 
@@ -338,9 +367,22 @@ def main(config, config_path):
     
     log.info("Starting GAIA Pipeline...")
 
+    # 입력(사진, 깊이, camera_info 등)을 결과 폴더에 같이 남긴다: <save_dir>/inputs/
+    import shutil
+    input_dir = os.path.dirname(args.test_img_path)
+    os.makedirs(args.save_dir, exist_ok=True)
+    shutil.copytree(input_dir, os.path.join(args.save_dir, "inputs"), dirs_exist_ok=True)
+    log.info(f"입력 복사: {input_dir} -> {os.path.join(args.save_dir, 'inputs')}")
+
     # Run steps based on config
     if steps.get('run_step_1', False):
         gaia_step_1(args, config_path)
+
+    # Step 1.5: SAM3D 생성 모드면 Step 1 이 검출하고 GPT 가 남긴 물체를 SAM3D 로 만들어 풀을 짓는다
+    from our_method.pipeline.sam3d_asset_generation import sam3d_enabled
+    if sam3d_enabled(config) and steps.get('run_step_sam3d', True) and (
+            steps.get('run_step_2', False) or steps.get('run_step_3', False)):
+        gaia_step_sam3d(args, config)
 
     if steps.get('run_step_2', False):
         gaia_step_2(args, config_path)
@@ -409,6 +451,14 @@ if __name__ == "__main__":
 
     if ONLY_STEP_7:
         config['pipeline_steps'] = {'run_step_7': True}
+
+    # usd_pool: true 면 asset_pool.root 풀의 og_dataset 에서 USD 를 먼저 불러온다 (경로 문자열을 줘도 된다)
+    usd_pool = config.get('usd_pool')
+    from our_method.pipeline.sam3d_asset_generation import sam3d_enabled
+    if usd_pool and not sam3d_enabled(config):
+        from our_method.utils.asset_pool import use_pool_usd
+        use_pool_usd(config['asset_pool']['root'] if usd_pool is True else usd_pool)
+    # SAM3D 생성 모드의 풀은 Step 1.5(gaia_step_sam3d)가 만들고 그때 use_pool_usd 를 부른다
     
     
 

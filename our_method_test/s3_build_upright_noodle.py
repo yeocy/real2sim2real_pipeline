@@ -13,8 +13,8 @@ ig:nativeBB 에 축별 스케일을 곱해 bbox 를 목표 크기에 정확히 �
   1. og_dataset/objects/instant_noodle_block/vnoodle 을 복호화해 축별 스케일을 굽고
      암호화해서 .../vnoodles/usd/vnoodles.encrypted.usd 로 저장 (이미 있으면 --force 필요)
   2. 검은 배경, 앙각 40도, 1280x720 으로 뷰 100장(물체 yaw 3.6도 간격)과 스냅샷을 렌더
-  3. 섹션 3 전용 로컬 풀을 만든다. 다른 카테고리는 원본 풀로 심볼릭 링크, instant_noodle_block
-     만 vnoodles 로 채운다. 원본 풀은 건드리지 않는다.
+  3. 통합 풀(asset_pools_local/kist_twin)을 채운다. 다른 카테고리는 원본 풀에서 실제 파일로 복사하고
+     (이미 있으면 그대로 둔다), instant_noodle_block 만 vnoodles 로 채운다. 원본 풀은 건드리지 않는다.
 
 실행 (acdc env, PYTHONPATH 에 airlab_twin):
   python s3_build_upright_noodle.py [--force] [--skip-usd] [--skip-render]
@@ -35,7 +35,7 @@ import our_method.utils.transform_utils as T
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_POOL = ("/home/yeocy/robotics/LLMforMani/Simulation/real2sim2real_pipeline/"
             "our_method_test/asset_pools/kist_mujoco_final_el40")
-DST_POOL = os.path.join(TEST_DIR, "asset_pools_local", "kist_el40_s3")
+DST_POOL = os.path.join(TEST_DIR, "asset_pools_local", "kist_twin")
 CATEGORY = "instant_noodle_block"
 SRC_MODEL = "vnoodle"
 DST_MODEL = "vnoodles"
@@ -161,15 +161,16 @@ def render_views():
 
 
 def build_local_pool():
-    """원본 풀을 카테고리 단위로 링크하고 instant_noodle_block 만 실제 디렉터리로 둔다."""
+    """원본 풀의 카테고리를 통합 풀에 실제 파일로 복사한다 (instant_noodle_block 은 vnoodles 로 따로 채운다)."""
+    import shutil
     objects = os.path.join(DST_POOL, "objects")
     os.makedirs(objects, exist_ok=True)
     for cat in sorted(os.listdir(os.path.join(SRC_POOL, "objects"))):
         if cat == CATEGORY:
             continue
-        link = os.path.join(objects, cat)
-        if not os.path.lexists(link):
-            os.symlink(os.path.join(SRC_POOL, "objects", cat), link)
+        dst = os.path.join(objects, cat)
+        if not os.path.lexists(dst):
+            shutil.copytree(os.path.join(SRC_POOL, "objects", cat), dst)
     print(f"[pool] {DST_POOL}: {sorted(os.listdir(objects))}")
 
 

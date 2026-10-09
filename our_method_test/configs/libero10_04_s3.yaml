@@ -1,0 +1,186 @@
+# LIBERO-10 task 04 twin scene 생성 — Step 3 만 다시 (Step 1, 1.5, 2 결과 재사용)
+#   put the white mug on the left plate and put the yellow and white mug on the right plate
+#   입력: inputs_libero_10/04_...  (extract_libero10_inputs.py, 로봇 제거 + 씬 전체 framing)
+#
+# [SAM3D 생성 모드] 씬에 넣을 물체는 사람이 고르지 않는다. 고르는 것은 모두 GPT 다.
+#   Step 1   (GPT) 물체 캡션 + 마스크
+#   Step 1.5 (GPT) SceneObjectFilter 로 keep/discard (배경 D1, 작업면 테이블 D0 은 만들지 않는다)
+#            keep 된 물체마다 Step 1 마스크로 SAM3D 메시 -> 풀 <save_dir>/sam3d_pool
+#            (sam3d_asset_generation.py -> sam3d_asset_builder.py: 실치수 굽기, 텍스처, USD, 렌더, overview.png)
+#   Step 2   그 풀로 매칭 (yaw 추정)
+#   Step 3   배치. SAM3D 모델은 실치수가 구워져 있어 스케일을 바꾸지 않는다 (sam3d_assets.json 자동)
+#
+# 실행: python our_models_task_generation.py --config configs/libero10_04.yaml
+
+seed: 42
+
+paths:
+  save_dir: "libero_10_sam3d/04_LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate"
+  test_rgb_img_path: "inputs_libero_10/04_LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate/camera_rgb.png"
+  test_depth_img_path: "inputs_libero_10/04_LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate/camera_depth.npy"
+  camera_intrinsics_matrix_path: "inputs_libero_10/04_LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate/camera_info.json"
+
+gpt:
+  version: "5.1"
+  token_print: true
+
+scene:
+  find_front_view: true
+
+position:
+  inside_position_randomization: true
+  max_bound: 1.0
+
+rotation:
+  rotation_randomization: false
+  random_degree: 5.0
+
+distractor:
+  use_distractor_noise: false
+  use_distractor_category: 3
+  distractor_top_k: 1
+
+task:
+  goal_task: "put the white mug on the left plate and put the yellow and white mug on the right plate"
+
+# SAM3D 생성 모드(아래 SAM3DAssetGenerator)에서는 풀을 사람이 정하지 않는다.
+# Step 1.5 가 GPT 로 고른 물체를 SAM3D 로 만들어 <save_dir>/sam3d_pool 에 풀을 짓고, Step 2·3 가 그 풀을 쓴다.
+usd_pool: true
+asset_pool:
+  root: null
+  include_categories: null
+  include_categories_file: null
+  exclude_categories: []
+  strict: true
+
+pipeline_steps:
+  run_step_1: false  # Real-world extraction (이미 끝남)
+  run_step_2: false  # Digital cousin matching (이미 끝남)
+  run_step_3: true   # Scene generation (twin scene)
+  run_visualize_scene: false
+  run_step_4_and_5: false
+  run_step_6: false
+  run_step_7: false
+  run_og_test: false
+
+models:
+  FeatureMatcher:
+    encoder: DinoV2Encoder
+    encoder_kwargs: null
+    gsam_box_threshold: 0.25
+    gsam_text_threshold: 0.25
+
+pipeline:
+  verbose: true
+
+  RealWorldExtractor:
+    call:
+      captions: null
+      depth_model: "UniDepthV2"
+      filter_backsplash: true
+      infer_aligned_wall: true
+      visualize: false
+
+  DigitalCousinMatcher:
+    call:
+      top_k_categories: 3
+      # mug 3 / plate 1 모델. n_digital_cousins <= top_k_models 단언(matching.py:101) 만 지키면
+      # 카테고리 모델 수가 적어도 된다 (s5_tablefix 와 같은 값).
+      top_k_models: 3
+      top_k_poses: 3
+      n_digital_cousins: 2
+      n_cousins_reselect_cand: 1
+      remove_background: false
+      gpt_select_cousins: true
+      n_cousins_link_count_threshold: 10
+      start_at_name: null
+
+  RealSceneGenerator:
+    call:
+      n_scenes: 1
+      sampling_method: ordered   # scene 0 에서 전부 1순위 cousin
+      resolve_collision: true
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true
+      save_camera_info_extrinsic: false
+      # 배치에서 뺄 검출은 아래 SceneObjectFilter(Step 2.5)가 GPT 로 자동으로 고른다.
+      # 손으로 더 뺄 것이 있으면 쉼표 구분 문자열로 적는다 (자동 결과와 합쳐진다).
+      discard_objs: null
+      physics_settle:
+        enabled: true
+        steps: 300
+        check_steps: 150
+        # 카테고리 이름이 정확히 같아야 고정된다. LIBERO 테이블이 매칭될 법한 것들.
+        fixed_categories: []   # 테이블은 만들지 않는다 (필터 규칙 D0)
+        lift_margin_m: 0.001
+        xy_tol_m: 0.02
+        yaw_tol_deg: 5.0
+        revert_xy_yaw: true
+
+  # Step 1.5 (SAM3D 생성 모드): Step 1 직후 GPT 필터(SceneObjectFilter, 매칭 정보 없이)로 넣을 물체를 고르고,
+  # keep 된 물체마다 Step 1 마스크로 SAM3D 메시를 만들어 풀을 짓는다 (sam3d_asset_generation.py ->
+  # sam3d_asset_builder.py: 실치수 굽기, 텍스처, USD, 뷰 렌더, overview.png). 테이블은 규칙 D0 으로 만들지 않는다.
+  SAM3DAssetGenerator:
+    call:
+      enabled: true
+      image: sam3d_libero/04/libero04.png   # SAM3D 입력. 같은 카메라 2048px 렌더 (없으면 Step 1 입력 사용)
+      gpus: "6,7"                           # 원격 SAM3D 서버의 빈 GPU
+      elevation: 40
+      use_cache: true                       # 같은 물체면 필터 판단·풀을 다시 쓴다
+
+  # Step 2.5: Step 2 와 3 사이에서 배치하지 않을 검출(벽걸이 TV 같은 배경, 중복 박스, 엉뚱한 매칭)을
+  # 고정 규칙 프롬프트(GPT.payload_filter_scene_objects)로 고른다. 결과: <save_dir>/step_2_5_output/object_filter.json
+  # (2026-10-09 task 04: television_0/1 이 breakfast_table 로 매칭돼 손으로 빼던 것을 자동화)
+  SceneObjectFilter:   # SAM3D 생성 모드에서는 쓰지 않는다 (Step 1.5 필터 결과를 그대로 쓴다)
+    call:
+      enabled: false
+      use_cache: true   # 같은 검출·태스크면 이전 판단을 다시 쓴다 (GPT 재호출 안 함)
+
+  VisualizeScene:
+    call:
+      scene_idx: 0
+      output: null
+      n_render_steps: 10000000
+      visual_only: false
+
+  TaskObjectExtractionAndSpatialReasoning:
+    call:
+      mode: task
+
+  TaskObjectRetrieval:
+    call:
+      top_k_categories: 5
+      top_k_models: 5
+      n_digital_cousins: 2
+      n_cousins_reselect_cand: 3
+      remove_background: false
+      gpt_select_cousins: true
+      n_cousins_link_count_threshold: 10
+      start_at_name: null
+      exact_category_match: true
+      allow_no_match: true
+
+  TaskSceneGenerator:
+    call:
+      n_scenes: 1
+      sampling_method: ordered
+      resolve_collision: true
+      discard_objs: null
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true
+      inside_mode: legacy
+
+  SimulatedSceneVisualize:
+    call:
+      n_scenes: 1
+      sampling_method: ordered
+      resolve_collision: true
+      discard_objs: null
+      visualize_scene: true
+      visualize_scene_tilt_angle: 0
+      visualize_scene_radius: 5
+      save_visualization: true

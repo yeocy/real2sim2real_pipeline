@@ -10,6 +10,7 @@ import json
 import argparse
 
 import omnigibson as og
+from our_method.utils.asset_pool import use_pool_usd, DEFAULT_POOL_ROOT  # launch 전에 import (PIL 충돌)
 from omnigibson.macros import gm
 
 from our_method.utils.physics_settle import load_scene, PHYSICS_SETTLE_DEFAULTS
@@ -20,6 +21,8 @@ def main():
     ap.add_argument("scene_info")
     ap.add_argument("--fixed_categories", nargs="*", default=list(PHYSICS_SETTLE_DEFAULTS["fixed_categories"]))
     ap.add_argument("--no_physics", action="store_true", help="물리 없이 렌더링만 (visual_only + fixed_base)")
+    ap.add_argument("--usd_pool", default=None,
+                    help="USD 를 먼저 불러올 풀 (기본: 통합 풀 kist_twin). 'none' 이면 OG 데이터셋만 쓴다")
     args = ap.parse_args()
 
     with open(args.scene_info) as f:
@@ -27,6 +30,8 @@ def main():
 
     gm.HEADLESS = False
     og.launch()
+    if (args.usd_pool or "").lower() != "none":
+        use_pool_usd(args.usd_pool or DEFAULT_POOL_ROOT)
     load_scene(scene_info, "static" if args.no_physics else "dynamic", args.fixed_categories)
     print(f"[view_scene] {len(scene_info['objects'])} objects loaded from {os.path.abspath(args.scene_info)}. "
           f"창을 닫거나 Ctrl+C 로 종료.")

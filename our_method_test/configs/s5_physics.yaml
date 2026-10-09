@@ -71,8 +71,14 @@ task:
 # 이 풀은 크기를 이미 맞춰 놨으므로 GAIA_NO_FIT_SCALE=1 로 돌려야 한다.
 # 그래야 점군 AABB 에 맞춰 늘리지 않고 에셋 실치수를 쓴다 (scene_utils.py:176).
 #   GAIA_NO_FIT_SCALE=1 python our_models_task_generation.py --config configs/kist_mujoco_final.yaml
+# 통합 풀 kist_twin: kist_mujoco_final_el40 를 실제 파일로 복사하고, instant_noodle_block 을 세운 사리
+# (vnoodles, s3_build_upright_noodle.py)로 바꾸고, 라면 스프(soup_powder/kgrains, build_soup_grains_asset.py)를
+# 더했다. Step 2 와 Step 6 이 같은 풀을 쓴다.
+# 시뮬레이터 USD 도 위 풀(<root>/og_dataset)에서 먼저 불러온다. 없는 모델만 OG 데이터셋으로 간다.
+usd_pool: true
+
 asset_pool:
-  root: "/home/yeocy/robotics/LLMforMani/Simulation/real2sim2real_pipeline/our_method_test/asset_pools/kist_mujoco_final_el40"
+  root: "/home/yeocy/robotics/LLMforMani/Simulation/airlab_twin/our_method_test/asset_pools_local/kist_twin"
   include_categories: null      # null -> 전체. 리스트를 주면 그 카테고리만 후보
   include_categories_file: null # 위 목록을 .json/.txt 파일로 줄 때의 경로
   exclude_categories: []        # 추가로 제외할 카테고리
@@ -187,10 +193,9 @@ pipeline:
       gpt_select_cousins: true
       n_cousins_link_count_threshold: 10
       start_at_name: null
-      # Step 6 만 섹션 3 전용 풀을 쓴다. 원본 풀을 카테고리 단위로 링크하고
-      # instant_noodle_block 만 세운 라면사리(vnoodles)로 바꿨다 (s3_build_upright_noodle.py).
+      # Step 2 와 같은 통합 풀(kist_twin). 그릇 안 내용물(세운 사리 vnoodles, 스프 kgrains)도 여기 있다.
       asset_pool:
-        root: "/home/yeocy/robotics/LLMforMani/Simulation/airlab_twin/our_method_test/asset_pools_local/kist_el40_s3"
+        root: "/home/yeocy/robotics/LLMforMani/Simulation/airlab_twin/our_method_test/asset_pools_local/kist_twin"
         include_categories: null
         exclude_categories: []
         strict: true

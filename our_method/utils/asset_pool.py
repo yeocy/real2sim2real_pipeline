@@ -232,3 +232,164 @@ def resolve_asset_pool(spec, verbose=False):
     if verbose:
         log.info(f"Retrieval asset pool: {pool.describe()}")
     return pool
+
+
+# ---------------------------------------------------------------------------
+# 시뮬레이터 USD 도 풀에서 불러오기
+# ---------------------------------------------------------------------------
+# 풀 안에 OG 데이터셋과 같은 레이아웃으로 USD 를 둔다:
+#     <pool_root>/og_dataset/objects/<category>/<model>/usd/<model>.encrypted.usd (+ textures/)
+# use_pool_usd() 를 부르면 DatasetObject 가 이 경로를 먼저 보고, 풀에 없는 모델만 기존
+# gm.DATASET_PATH 로 간다. gm.DATASET_PATH 자체는 그대로 두므로 metadata 등은 영향이 없다.
+POOL_USD_SUBDIR = "og_dataset"
+DEFAULT_POOL_ROOT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "our_method_test", "asset_pools_local", "kist_twin")
+
+
+def use_pool_usd(pool_root=DEFAULT_POOL_ROOT, verbose=True):
+    """DatasetObject.get_usd_path 가 <pool_root>/og_dataset 를 먼저 찾게 한다. 다시 부르면 풀만 바꾼다."""
+    from omnigibson.objects.dataset_object import DatasetObject
+
+    usd_root = os.path.join(pool_root, POOL_USD_SUBDIR, "objects")
+    if not os.path.isdir(usd_root):
+        raise FileNotFoundError(f"풀에 USD 폴더가 없다: {usd_root}")
+    current = DatasetObject.__dict__["get_usd_path"].__func__
+    orig = getattr(current, "_orig", current)
+
+    def get_usd_path(cls, category, model):
+        path = os.path.join(usd_root, category, model, "usd", f"{model}.usd")
+        if os.path.exists(path.replace(".usd", ".encrypted.usd")) or os.path.exists(path):
+            return path
+        return orig(cls, category, model)
+
+    get_usd_path._orig = orig
+    get_usd_path._pool_root = pool_root
+    DatasetObject.get_usd_path = classmethod(get_usd_path)
+    _load_pool_usd_unencrypted(usd_root)
+    register_pool_categories(usd_root)
+    baked = register_scale_baked(pool_root)
+    posed = register_sam3d_poses(pool_root)
+    if verbose:
+        n = sum(len(os.listdir(os.path.join(usd_root, c))) for c in os.listdir(usd_root))
+        log.info(f"USD 를 풀에서 먼저 불러온다: {usd_root} (모델 {n}개, 없으면 OG 데이터셋)")
+        if baked:
+            log.info(f"실치수가 구워진 모델 {len(baked)}개는 Step 3 에서 스케일을 맞추지 않는다: "
+                     f"{sorted(f'{c}/{m}' for c, m in baked)}")
+        if posed:
+            log.info(f"입력 이미지에 yaw 를 맞춘 pose 가 있는 검출 {len(posed)}개는 Step 3 에서 그 pose 로 놓는다: "
+                     f"{sorted(posed)}")
+
+
+_POOL_USD_ROOTS = set()
+
+
+def _load_pool_usd_unencrypted(usd_root):
+    """풀 모델은 평문 <model>.usd 가 있으면 그것을 바로 연다 (복호화 임시 파일을 거치지 않는다).
+
+    DatasetObject 는 항상 encrypted=True 로 .encrypted.usd 를 og.tempdir 의 임시 파일로 풀어서 연다
+    (usd_object.py prebuild/_load). 그러면 USD 안의 상대경로가 임시 폴더 기준이 되어 텍스처를 못 찾는다.
+    평문 USD 를 제자리에서 열면 텍스처를 ./textures/... 상대경로로 둘 수 있어 풀 폴더를 옮겨도 된다.
+    """
+    from omnigibson.objects.usd_object import USDObject
+
+    _POOL_USD_ROOTS.add(os.path.abspath(usd_root))
+    for meth in ("prebuild", "_load"):
+        current = USDObject.__dict__[meth]
+        orig = getattr(current, "_orig", current)
+
+        def make(orig):
+            def wrapped(self, *args, **kwargs):
+                path = os.path.abspath(self._usd_path or "")
+                plain = (self._encrypted and os.path.exists(path)
+                         and any(path.startswith(r + os.sep) for r in _POOL_USD_ROOTS))
+                if not plain:
+                    return orig(self, *args, **kwargs)
+                self._encrypted = False
+                try:
+                    return orig(self, *args, **kwargs)
+                finally:
+                    self._encrypted = True
+            wrapped._orig = orig
+            return wrapped
+
+        setattr(USDObject, meth, make(orig))
+
+
+_POOL_CATEGORIES = set()
+
+
+def register_pool_categories(usd_root):
+    """풀의 카테고리를 OG semantic class 목록에 더한다.
+
+    OG 는 semantic class 를 gm.DATASET_PATH/objects 의 폴더 이름으로만 만든다
+    (constants.semantic_class_name_to_id). 풀에서 새 이름(예: Step 1 캡션에서 만든 small_plate)을
+    쓰면 렌더 시 'Class ... does not exist in the semantic class name to id mapping' 으로 죽는다.
+    """
+    import omnigibson.utils.constants as C
+
+    _POOL_CATEGORIES.update(c for c in os.listdir(usd_root) if not c.startswith("."))
+    current = C.get_all_object_categories
+    orig = getattr(current, "_orig", current)
+
+    def get_all_object_categories():
+        return sorted(set(orig()) | _POOL_CATEGORIES)
+
+    get_all_object_categories._orig = orig
+    C.get_all_object_categories = get_all_object_categories
+    C.semantic_class_name_to_id.cache_clear()
+    C.semantic_class_id_to_name.cache_clear()
+
+
+# SAM3D 로 만든 에셋(sam3d_asset_builder.py)은 깊이로 잰 실치수를 메시에 구워 넣는다.
+# 이런 모델은 Step 3 에서 점군 bbox 에 다시 맞추면(가려진 점군이라) 비율이 틀어지므로 스케일을 바꾸지 않는다.
+# 빌더가 풀 루트에 남기는 sam3d_assets.json 의 (category, model) 이 그 목록이다.
+SCALE_BAKED_FILE = "sam3d_assets.json"
+_SCALE_BAKED = set()
+
+
+def register_scale_baked(pool_root):
+    """<pool_root>/sam3d_assets.json 의 모델을 '실치수 구움' 으로 등록하고, 등록한 (category, model) 을 돌려준다."""
+    fpath = os.path.join(pool_root, SCALE_BAKED_FILE)
+    if not os.path.exists(fpath):
+        return set()
+    with open(fpath) as f:
+        rows = json.load(f)
+    found = {(r["category"], r["model"]) for r in rows if r.get("scale_baked", True)}
+    _SCALE_BAKED.update(found)
+    return found
+
+
+def is_scale_baked(category, model):
+    return (category, model) in _SCALE_BAKED
+
+
+# sam3d_asset_builder.py 의 [align] 단계는 입력 카메라 render-and-compare 로 에셋의 yaw(z_angle)와 바닥 xy 를
+# 맞춰서 행마다 registration.pose_cam (입력 카메라 opengl 기준 에셋 원점 pose)을 남긴다.
+# 검출(Step 1 이름) 기준으로 등록한다. 모델 기준이면 같은 카테고리 물체 둘이 Step 2 에서 한 모델로
+# 매칭될 때(04: 접시 둘 다 smallplate1) 섞인다. 검출마다 자기 메시를 만들었으므로 대응이 정해져 있다.
+_SAM3D_POSES = {}
+
+
+def register_sam3d_poses(pool_root):
+    """<pool_root>/sam3d_assets.json 의 정렬 pose 를 검출 이름으로 등록하고, 등록한 검출 이름 집합을 돌려준다."""
+    fpath = os.path.join(pool_root, SCALE_BAKED_FILE)
+    if not os.path.exists(fpath):
+        return set()
+    with open(fpath) as f:
+        rows = json.load(f)
+    found = set()
+    for r in rows:
+        reg = r.get("registration") or {}
+        if r.get("detection") and reg.get("pose_cam") is not None:
+            _SAM3D_POSES[r["detection"]] = {
+                "category": r["category"], "model": r["model"], "pose_cam": reg["pose_cam"],
+                "yaw": reg.get("yaw"), "symmetric": reg.get("symmetric", False),
+                "ambiguous": reg.get("ambiguous", False)}
+            found.add(r["detection"])
+    return found
+
+
+def sam3d_pose(detection):
+    """검출 이름 -> {category, model, pose_cam, ...} 또는 None."""
+    return _SAM3D_POSES.get(detection)
